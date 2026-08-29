@@ -1,0 +1,24 @@
+# Environment
+.env
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Hydra / MLflow / SLURM run artifacts
+mlruns/
+outputs_classifier/
+outputs_classifier_colon/
+outputs_deepspot/
+outputs_deepspot_gsm/
+slurm_logs/
+slurm_logs_colon/
+slurm_logs_deepspot/
+slurm_logs_deepspot_gsm/
+slurm_logs_compute_hvgs/
+
+# Precomputed HVG tables (regenerable via compute_hvgs.py)
+data/HVGsSplit/
+data/HVGsSplitGSM/

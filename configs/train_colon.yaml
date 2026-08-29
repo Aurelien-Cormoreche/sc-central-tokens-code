@@ -1,0 +1,241 @@
+# Top-level config for the LWO classifier evaluation pipeline.
+# Run via launcher.py (submits one SLURM job per split) or
+# directly via experiment.py for a single split.
+
+defaults:
+  - _self_
+
+# ── Reproducibility ────────────────────────────────────────────────────────
+# Single seed driving every source of randomness in the pipeline: WSI/cell-type
+# subsampling (experiment.py/grid_experiment.py data loading), the same_wsi_split
+# random permutation, PCA's randomized SVD solver, and model init/DataLoader
+# shuffling/dropout inside trainer.py. The same seed is reused for every grid
+# trial within a split -- this is intentional, so trials only differ by their
+# hyperparameters, not by init/shuffling noise. Re-running with the same
+# config_name and seed reproduces identical results.
+seed: 42
+
+# ── Mapping ────────────────────────────────────────────────────────────────
+# Must match a key in src/python/code_configs/mappings.py
+mapping: simplified_broad
+
+# ── WSI splits ─────────────────────────────────────────────────────────────
+# Each entry defines one Leave-One-WSI-Out (LWO) fold with train/val/test.
+# Values are the fraction of cells to keep from that WSI (1.0 = all cells).
+# Optionally add cell_type_proportions under train, val, or test to further
+# subsample by cell type (after mapping). Omitted cell types default to 1.0
+# (keep all). Example:
+#   - train:
+#       SomeWSI: 1.0
+#       cell_type_proportions:
+#         SomeWSI:
+#           Malignant: 0.8
+#           Lymphoid: 0.5
+#     val:
+#       AnotherWSI: 1.0
+#     test:
+#       OtherWSI: 1.0
+#
+# Scheme: 5 colon WSIs (4 cancer + 1 non-diseased). The non-diseased sample
+# (Xenium_V1_hColon_Non_diseased_Base_FFPE) is never used as val or test --
+# it is always part of train. Each fold uses train=3 / val=1 / test=1, cycling
+# over the 4 cancer WSIs: every cancer WSI serves as test exactly once, and
+# for each test WSI there are two folds that differ only in which of the
+# remaining 3 cancer WSIs is used as validation (deterministic circular
+# offset over the WSI order below); train = the other 2 cancer WSIs +
+# the non-diseased WSI.
+#   0 Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE
+#   1 Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE
+#   2 Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE
+#   3 Xenium_V1_hColon_Cancer_Add_on_FFPE
+# For i in 0..3: test=S[i]; val=S[(i+1)%4] then val=S[(i+2)%4];
+# train=remaining 2 cancer WSIs + Xenium_V1_hColon_Non_diseased_Base_FFPE.
+splits:
+  # split 0: test=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+
+  # split 1: test=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+
+  # split 2: test=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+
+  # split 3: test=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE, val=Xenium_V1_hColon_Cancer_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+
+  # split 4: test=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE, val=Xenium_V1_hColon_Cancer_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+
+  # split 5: test=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+
+  # split 6: test=Xenium_V1_hColon_Cancer_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+
+  # split 7: test=Xenium_V1_hColon_Cancer_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+
+
+# When true, the launcher also submits a same-WSI 70/15/15 train/val/test
+# split job (upper bound), pooled across all WSIs (see split_idx == -1
+# handling in experiment.py).
+same_wsi_split: true
+
+# ── Patch-grid spatial split ────────────────────────────────────────────────
+# Set enabled: true to use grid_experiment.py instead of experiment.py.
+# Cells are restricted to a 1/4 checkerboard of spatial patches so train and
+# test patches are never adjacent (prevents embedding-window leakage).
+# All 4 checkerboard offsets are evaluated in a single SLURM job.
+#
+# List the WSIs to include under `wsis` (name → fraction of cells to keep).
+# A single WSI gives a within-WSI spatial split; multiple WSIs give an
+# across-WSI split — the code is identical either way.
+#
+# patch_size: grid cell size in the same pixel units as x_centroid/y_centroid.
+#             Should be >= the foundation model's receptive field.
+patch_split:
+  enabled: False
+  patch_size: 224
+  wsis:              # map WSI name → fraction of cells to keep (1.0 = all)
+    { Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0,
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0,
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0,
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0,
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0}               # e.g. Xenium_V1_humanLung_Cancer_FFPE: 1.0
+
+# ── Output ─────────────────────────────────────────────────────────────────
+# Folder (relative to repo root) where experiment.py writes per-split results.
+output_dir: outputs_classifier_colon/
+
+# ── Data paths ─────────────────────────────────────────────────────────────
+# base_dir resolves from the DATASETS_ROOT env var (see src/python/code_configs/paths.py
+# and .env.example) -- set it before running, e.g. `export DATASETS_ROOT=/path/to/datasets`.
+data:
+  base_dir: ${oc.env:DATASETS_ROOT}
+  model_name: ???          # e.g. virchow_v2, UNI2, CellViT_SAM
+  correction_name: ???     # e.g. Base, rpca, scanorama
+  # Leave empty to average all embedding keys found in the h5 file.
+  embeddings_datasets: [bottom_left, bottom_right, top_left, top_right]
+  # If true (default), filter to only cells matched between CellViT and Xenium
+  # (requires a 'matching' dataset in the embeddings H5 file). If false, train
+  # on all detected cells, including non-matching ones.
+  consider_matching: False
+
+# ── MLflow ─────────────────────────────────────────────────────────────────
+mlflow:
+  tracking_uri: file:./mlruns
+  experiment_name: embeddings_eval_colon
+
+# ── Training ───────────────────────────────────────────────────────────────
+training:
+  num_epochs: 30
+  batch_size: 256
+
+# ── Hyperparameter search space ────────────────────────────────────────────
+# Set tune: false and provide a single-element values list to fix a hparam.
+hparams:
+  learning_rate:
+    tune: true
+    values: [5.0e-4, 1.0e-4]
+  dropout:
+    tune: true
+    values: [0.2]
+  hidden_dim:
+    tune: False
+    values: [0,32]   # 0 = logistic regression
+  pca_components:
+    tune: False
+    values: [null, 50]     # null = no PCA
+  normalization:
+    tune: False
+    values: ["none", "z_score"]
+  loss_weights:
+    tune: true
+    # "by_*" reweight the CE loss; "oversampling_*" instead draw train batches with a
+    # WeightedRandomSampler using the same balanced weights, leaving the loss unweighted.
+    values: ["none", "by_wsi", "by_cell_type"]
+
+# ── SLURM ──────────────────────────────────────────────────────────────────
+slurm:
+  partition: gpu
+  gres: gpu:1
+  mem: 128G
+  time: "05:00:00" #changed in the script
+  cpus_per_task: 32
+  conda_env: cellViT
+  output_dir: slurm_logs_colon
+  # If true, run all splits sequentially in a single SLURM job on one GPU
+  # instead of submitting one job per split.
+  sequential: false
+
+# ── Launcher flags ─────────────────────────────────────────────────────────
+dry_run: false       # Print SLURM scripts without submitting
+debug_split: null    # If set to an int, print logs of that split and exit
+
+# ── Set by launcher per SLURM job; do not set in this file ─────────────────
+split_idx: null
+
+# ── Hydra settings ─────────────────────────────────────────────────────────
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job_logging:
+    root:
+      level: WARNING
