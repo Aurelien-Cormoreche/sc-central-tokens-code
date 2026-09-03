@@ -339,3 +339,26 @@ if __name__ == "__main__":
         attn_100_configs, os.path.join(_OUTPUT_ROOT, 'attention_maps_UNI2_100'), n_samples=250,
         dataset_cls=ResizedCellDataset,
     )
+
+    # ── UNI2 native-resolution embeddings, cross-cancer cohort ─────────────────
+    # The 7 WSIs from configs/train.yaml's LWO splits (lung x2, colon, colorectal,
+    # ovarian, liver, skin) -- raw (non-GSM) samples, same 'converted': False
+    # convention as ATTN_COLON_SAMPLES above. Standard 224×224 native centre patch
+    # (PatchDataset default), saving the four central tokens + CLS (as usual) plus
+    # the boundary-overlap mean-pooled embeddings_cell / embeddings_nucleus
+    # (with_boundaries=True wires in each sample's cell_boundaries.csv.gz /
+    # nucleus_boundaries.parquet / alignment matrix). Written to its own
+    # UNI2_specific_tokens_folder_h5 root so it doesn't clash with any existing
+    # UNI2_h5 extraction that predates save_cell/save_nucleus.
+    CROSS_CANCER_SAMPLES = {
+        'Xenium_V1_humanLung_Cancer_FFPE':                 {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_V1_Human_Lung_Cancer_Addon_FFPE':          {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_V1_Human_Colorectal_Cancer_Addon_FFPE':    {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE':       {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_V1_hLiver_cancer_section_FFPE':            {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_Prime_Human_Skin_FFPE':                    {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+    }
+
+    specific_tokens_configs = build_configs('UNI2', CROSS_CANCER_SAMPLES, with_boundaries=True)
+    extract_embeddings(specific_tokens_configs, save_cls=True, save_cell=True, save_nucleus=True)

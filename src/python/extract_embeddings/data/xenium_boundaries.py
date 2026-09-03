@@ -15,7 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from os import PathLike
-from shapely.geometry import Polygon, box
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, box
+from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 # Xenium instrument pixel size (µm/px) -- matches ResizedCellDataset's _XENIUM_MPP.
@@ -50,7 +51,7 @@ class BoundaryPolygons:
         df['cell_id'] = df['cell_id'].astype(str)
         self._by_id = df.groupby('cell_id', sort=False)
 
-    def polygon_for(self, cell_id_raw) -> Polygon | None:
+    def polygon_for(self, cell_id_raw) -> Polygon | MultiPolygon | None:
         cell_id_str = _normalize_cell_id(cell_id_raw)
         try:
             vertices = self._by_id.get_group(cell_id_str)
@@ -76,11 +77,29 @@ class BoundaryPolygons:
                 poly = make_valid(poly)
         except Exception:
             return None
-        return None if poly.is_empty else poly
+        poly = _polygonal_only(poly)
+        return None if poly is None or poly.is_empty else poly
+
+
+def _polygonal_only(geom) -> Polygon | MultiPolygon | None:
+    """Reduce `geom` to just its polygonal area, dropping any degenerate
+    points/lines `make_valid` can introduce for a self-intersecting or
+    near-degenerate boundary ring (e.g. a bowtie collapses to a GeometryCollection
+    of two triangles plus the crossing point). Returns None if nothing polygonal
+    survives -- e.g. the ring degenerated entirely to a line.
+    """
+    if isinstance(geom, (Polygon, MultiPolygon)):
+        return geom
+    if isinstance(geom, GeometryCollection):
+        polys = [g for g in geom.geoms if isinstance(g, (Polygon, MultiPolygon))]
+        if not polys:
+            return None
+        return unary_union(polys)
+    return None
 
 
 def token_overlap_mask(
-    polygon: Polygon, x0: float, y0: float, token_size: float, grid_size: int,
+    polygon: Polygon | MultiPolygon, x0: float, y0: float, token_size: float, grid_size: int,
 ) -> np.ndarray:
     """Boolean (grid_size, grid_size) mask, True at (row, col) where that token's
     pixel footprint -- [x0+col*token_size, x0+(col+1)*token_size) x
@@ -104,7 +123,7 @@ def token_overlap_mask(
     return mask
 
 
-def nearest_token(polygon: Polygon, x0: float, y0: float, token_size: float, grid_size: int) -> tuple[int, int]:
+def nearest_token(polygon: Polygon | MultiPolygon, x0: float, y0: float, token_size: float, grid_size: int) -> tuple[int, int]:
     """Fallback (row, col) -- the grid token whose footprint center is closest to
     the polygon's centroid, clamped to the grid. Used when no token's footprint
     overlaps `polygon` (e.g. it pokes outside the fixed patch crop).
