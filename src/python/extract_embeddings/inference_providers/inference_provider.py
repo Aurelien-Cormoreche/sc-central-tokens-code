@@ -2,6 +2,7 @@ import torch
 import h5py
 from torch.utils.data import Dataset
 from ..data.patch_dataset import PatchDataset, MultiCellPatchDataset
+from ..data.xenium_boundaries import token_overlap_mask, nearest_token
 from abc import ABC, abstractmethod
 import json
 import os
@@ -26,7 +27,8 @@ class InferenceProvider(ABC):
     def run_attention_only(self, dataset: Dataset, output_path: str, n_samples: int = 10) -> None:
         pass
 
-    def save_embeddings(self, embeddings: list[torch.Tensor], cell_ids: torch.Tensor, cell_labels: torch.Tensor, output_path: str, start_idx: int = 0, cls_token: torch.Tensor | None = None):
+    def save_embeddings(self, embeddings: list[torch.Tensor], cell_ids: torch.Tensor, cell_labels: torch.Tensor, output_path: str, start_idx: int = 0,
+                         cls_token: torch.Tensor | None = None, cell_token: torch.Tensor | None = None, nucleus_token: torch.Tensor | None = None):
         embeddings = [embedding.cpu().numpy() for embedding in embeddings]
         n = embeddings[0].shape[0]
         with h5py.File(f'{output_path}/embeddings_dataset.h5', 'a') as f:
@@ -34,6 +36,10 @@ class InferenceProvider(ABC):
                 f[f'embeddings_{key}'][start_idx:start_idx + n] = embeddings[i]
             if cls_token is not None and 'embeddings_cls' in f:
                 f['embeddings_cls'][start_idx:start_idx + n] = cls_token.cpu().numpy()
+            if cell_token is not None and 'embeddings_cell' in f:
+                f['embeddings_cell'][start_idx:start_idx + n] = cell_token.cpu().numpy()
+            if nucleus_token is not None and 'embeddings_nucleus' in f:
+                f['embeddings_nucleus'][start_idx:start_idx + n] = nucleus_token.cpu().numpy()
             if isinstance(cell_ids[0], bytes):
                 cell_ids = [cell_id.decode('utf-8') for cell_id in cell_ids]
             if isinstance(cell_labels[0], bytes):
@@ -51,7 +57,8 @@ class InferenceProvider(ABC):
             f['cell_ids'][start_idx:start_idx + n]              = cell_ids_dec
             f['cell_labels'][start_idx:start_idx + n]           = cell_labels_dec
 
-    def create_output_file(self, output_path: str, num_samples: int, embedding_dim: int, dataset_stats: dict = None, save_cls: bool = False):
+    def create_output_file(self, output_path: str, num_samples: int, embedding_dim: int, dataset_stats: dict = None,
+                            save_cls: bool = False, save_cell: bool = False, save_nucleus: bool = False):
         os.makedirs(output_path, exist_ok=True)
 
         if dataset_stats is not None:
@@ -63,8 +70,68 @@ class InferenceProvider(ABC):
                 f.create_dataset(f'embeddings_{key}', shape=(num_samples, embedding_dim), dtype='float32')
             if save_cls:
                 f.create_dataset('embeddings_cls', shape=(num_samples, embedding_dim), dtype='float32')
+            if save_cell:
+                f.create_dataset('embeddings_cell', shape=(num_samples, embedding_dim), dtype='float32')
+            if save_nucleus:
+                f.create_dataset('embeddings_nucleus', shape=(num_samples, embedding_dim), dtype='float32')
             f.create_dataset('cell_ids', shape=(num_samples,), dtype=h5py.string_dtype(encoding='utf-8'))
             f.create_dataset('cell_labels', shape=(num_samples,), dtype=h5py.string_dtype(encoding='utf-8'))
+
+    def check_boundary_sources(self, dataset: PatchDataset, save_cell: bool, save_nucleus: bool) -> None:
+        """Fail fast if save_cell/save_nucleus is requested but `dataset` wasn't built
+        with the matching Xenium boundary file (see PatchDataset's cells_csv_path /
+        nucleus_boundaries_path / alignment_matrix_path)."""
+        if save_cell and not dataset.has_boundary_source('cell'):
+            raise ValueError(
+                "save_cell=True requires the dataset to be built with cells_csv_path "
+                "and alignment_matrix_path (see PatchDataset)."
+            )
+        if save_nucleus and not dataset.has_boundary_source('nucleus'):
+            raise ValueError(
+                "save_nucleus=True requires the dataset to be built with nucleus_boundaries_path "
+                "and alignment_matrix_path (see PatchDataset)."
+            )
+
+    def pool_boundary_tokens(
+        self,
+        dataset: PatchDataset,
+        indices: range,
+        spatial: torch.Tensor,
+        token_size: float,
+        save_cell: bool,
+        save_nucleus: bool,
+    ) -> dict[str, torch.Tensor]:
+        """Mean-pool `spatial` (B, S, S, D) over the grid tokens whose pixel footprint
+        overlaps each sample's Xenium cell/nucleus boundary polygon (see
+        data.xenium_boundaries.token_overlap_mask). Falls back to the single
+        nearest-to-centroid token when no footprint overlaps (e.g. the boundary pokes
+        outside the fixed patch crop). `indices` are the dataset-global sample indices
+        for this batch, in the same order as `spatial`'s batch dimension.
+
+        Returns {'cell': (B, D)} / {'nucleus': (B, D)} for each kind requested via
+        save_cell/save_nucleus; call check_boundary_sources first to ensure `dataset`
+        actually has the corresponding boundary source configured.
+        """
+        grid_size = spatial.shape[1]
+        kinds = [k for k, want in (('cell', save_cell), ('nucleus', save_nucleus)) if want]
+        pooled: dict[str, list[torch.Tensor]] = {kind: [] for kind in kinds}
+        for b, idx in enumerate(indices):
+            x0, y0 = dataset.origin(idx)
+            for kind in kinds:
+                polygon = dataset.boundary_polygon(idx, kind)
+                if polygon is None:
+                    print(f"WARNING: no {kind} boundary polygon for sample idx={idx} -- using a zero vector.")
+                    pooled[kind].append(torch.zeros(spatial.shape[-1], device=spatial.device, dtype=spatial.dtype))
+                    continue
+                mask = token_overlap_mask(polygon, x0, y0, token_size, grid_size)
+                if not mask.any():
+                    r, c = nearest_token(polygon, x0, y0, token_size, grid_size)
+                    print(f"WARNING: no {kind} token overlap for sample idx={idx} -- falling back to nearest token (row={r}, col={c}).")
+                    pooled[kind].append(spatial[b, r, c])
+                else:
+                    mask_t = torch.from_numpy(mask).to(spatial.device)
+                    pooled[kind].append(spatial[b][mask_t].mean(dim=0))
+        return {kind: torch.stack(vecs, dim=0) for kind, vecs in pooled.items()}
 
     def create_output_file_multicell(self, output_path: str, num_cells: int, embedding_dim: int, dataset_stats: dict = None):
         os.makedirs(output_path, exist_ok=True)

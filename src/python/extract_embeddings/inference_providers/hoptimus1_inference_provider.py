@@ -106,12 +106,16 @@ class HOptimus1InferenceProvider(InferenceProvider):
         attention_output_path: PathLike | None = None,
         n_attention_samples: int = 10,
         save_cls: bool = False,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
         assert dataset.x_size == 224 and dataset.y_size == 224 and dataset.offset_x == 0 and dataset.offset_y == 0, \
             f"H-optimus-1 requires 224×224 patches with no offset, got {dataset.x_size}×{dataset.y_size} offset=({dataset.offset_x},{dataset.offset_y})"
+        self.check_boundary_sources(dataset, save_cell, save_nucleus)
 
         self.create_output_file(output_path, num_samples=len(dataset), embedding_dim=self.embedding_dim,
-                                dataset_stats=self.compute_dataset_statistics(dataset), save_cls=save_cls)
+                                dataset_stats=self.compute_dataset_statistics(dataset), save_cls=save_cls,
+                                save_cell=save_cell, save_nucleus=save_nucleus)
         dataset.transform = self.transforms
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
 
@@ -139,8 +143,19 @@ class HOptimus1InferenceProvider(InferenceProvider):
                 x, y = self.patches_to_save[key]
                 tokens_to_save.append(patch_tokens[:, x * self.num_patches_per_side + y])
             cls_token = outputs[:, _CLS_TOKEN_IDX] if save_cls else None
+
+            cell_token = nucleus_token = None
+            if save_cell or save_nucleus:
+                S = self.num_patches_per_side
+                spatial = patch_tokens.reshape(patch_tokens.shape[0], S, S, patch_tokens.shape[-1])
+                indices = range(batch_idx * batch_size, batch_idx * batch_size + len(patches))
+                pooled = self.pool_boundary_tokens(dataset, indices, spatial, self.patch_size, save_cell, save_nucleus)
+                cell_token = pooled.get('cell')
+                nucleus_token = pooled.get('nucleus')
+
             self.save_embeddings(tokens_to_save, cell_ids, labels, output_path,
-                                 start_idx=batch_idx * batch_size, cls_token=cls_token)
+                                 start_idx=batch_idx * batch_size, cls_token=cls_token,
+                                 cell_token=cell_token, nucleus_token=nucleus_token)
 
             if visualize_attention and capture.weights is not None:
                 start = batch_idx * batch_size

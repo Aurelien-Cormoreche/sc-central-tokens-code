@@ -5,11 +5,25 @@ from torch.utils.data import Dataset
 import openslide as Openslide
 from os import PathLike
 from PIL import Image
+from shapely.geometry import Polygon
+
+from .xenium_boundaries import BoundaryPolygons, load_alignment_matrix_inv, XENIUM_MPP
 
 
 class PatchDataset(Dataset):
     def __init__(self, wsi_path: PathLike, cells_info_path: PathLike, x_size: int = 224, y_size: int = 224, transform: callable = None,
-                 offset_x: int = 0, offset_y: int = 0):
+                 offset_x: int = 0, offset_y: int = 0,
+                 cells_csv_path: PathLike | None = None,
+                 nucleus_boundaries_path: PathLike | None = None,
+                 alignment_matrix_path: PathLike | None = None,
+                 xenium_mpp: float = XENIUM_MPP):
+            """
+            cells_csv_path / nucleus_boundaries_path: optional Xenium cell_boundaries.csv.gz
+                / nucleus_boundaries.parquet, enabling boundary_polygon(idx, 'cell'/'nucleus')
+                (used by InferenceProvider.pool_boundary_tokens for the embeddings_cell /
+                embeddings_nucleus mean-pooled tokens). alignment_matrix_path is required
+                when either is given.
+            """
             self.wsi_path = wsi_path
             self.cells_info_path = cells_info_path
             self.x_size = x_size
@@ -26,8 +40,43 @@ class PatchDataset(Dataset):
                 self.cell_ids_dataset = f['cell_id'][:]
                 self.labels_dataset = f['cell_type'][:]
 
+            self._cell_boundaries: BoundaryPolygons | None = None
+            self._nucleus_boundaries: BoundaryPolygons | None = None
+            if cells_csv_path is not None or nucleus_boundaries_path is not None:
+                if alignment_matrix_path is None:
+                    raise ValueError(
+                        "alignment_matrix_path is required when cells_csv_path or "
+                        "nucleus_boundaries_path is set"
+                    )
+                M_inv = load_alignment_matrix_inv(alignment_matrix_path)
+                if cells_csv_path is not None:
+                    self._cell_boundaries = BoundaryPolygons(cells_csv_path, M_inv, xenium_mpp)
+                if nucleus_boundaries_path is not None:
+                    self._nucleus_boundaries = BoundaryPolygons(nucleus_boundaries_path, M_inv, xenium_mpp)
+
     def __len__(self):
         return len(self.labels_dataset)
+
+    def has_boundary_source(self, kind: str) -> bool:
+        """kind: 'cell' or 'nucleus'. Whether this dataset was built with the
+        corresponding boundary file (cells_csv_path / nucleus_boundaries_path)."""
+        store = self._cell_boundaries if kind == 'cell' else self._nucleus_boundaries
+        return store is not None
+
+    def boundary_polygon(self, idx: int, kind: str) -> Polygon | None:
+        """kind: 'cell' or 'nucleus'. The Xenium boundary polygon for sample `idx`,
+        in absolute WSI pixel coordinates (same frame as origin(idx)). None if that
+        boundary source wasn't configured, or no polygon was found for this cell."""
+        store = self._cell_boundaries if kind == 'cell' else self._nucleus_boundaries
+        if store is None:
+            return None
+        return store.polygon_for(self.cell_ids_dataset[idx])
+
+    def origin(self, idx: int) -> tuple[int, int]:
+        """Absolute WSI-pixel (x, y) top-left corner of this sample's crop -- the
+        same frame boundary_polygon() returns polygons in. Public alias for
+        _clamped_origin, used by InferenceProvider.pool_boundary_tokens."""
+        return self._clamped_origin(idx)
 
     def _clamped_origin(self, idx):
         """Corner of the crop, shifted (not padded) to stay within WSI bounds.

@@ -64,9 +64,13 @@ class DummyInferenceProvider(InferenceProvider):
         attention_output_path: PathLike | None = None,
         n_attention_samples: int = 10,
         save_cls: bool = False,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
         if save_cls:
             print("[DummyInferenceProvider] WARNING: no CLS token available — save_cls ignored.")
+        if save_cell or save_nucleus:
+            print("[DummyInferenceProvider] WARNING: no spatial token grid available — save_cell/save_nucleus ignored.")
 
         if self.use_pca and self.pca is None:
             raise RuntimeError("use_pca=True but fit_pca(datasets) was never called.")

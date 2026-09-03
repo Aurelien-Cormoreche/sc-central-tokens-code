@@ -61,6 +61,8 @@ def extract_embeddings(
     attention_output_path: str | None = None,
     n_attention_samples: int = 10,
     save_cls: bool = True,
+    save_cell: bool = False,
+    save_nucleus: bool = False,
     dataset_cls: type[Dataset] = PatchDataset,
 ):
     """Extract per-cell embeddings using the centre-patch approach (one patch per cell).
@@ -69,6 +71,14 @@ def extract_embeddings(
         (default, reads fixed-size patches from an H5 coordinate file) or
         ResizedCellDataset (crops a per-cell or fixed-size box around Xenium cell
         boundaries and resizes it). Must yield (patch, label, cell_id) triples.
+
+    save_cell / save_nucleus: in addition to the fixed four-central-token patches
+        (self.patches_to_save on the inference provider), mean-pool the tokens whose
+        pixel footprint overlaps that cell's/nucleus's Xenium boundary polygon and
+        save them as embeddings_cell / embeddings_nucleus. Requires each run's
+        dataset_configs to include cells_csv_path / nucleus_boundaries_path and
+        alignment_matrix_path (see build_configs(..., with_boundaries=True) and
+        PatchDataset).
     """
     for model_name, model_cfg in configs.items():
         inference_provider = select_inference_provider(model_name)
@@ -91,6 +101,8 @@ def extract_embeddings(
                 attention_output_path=run_attn_path,
                 n_attention_samples=n_attention_samples,
                 save_cls=save_cls,
+                save_cell=save_cell,
+                save_nucleus=save_nucleus,
             )
             print('-' * 20)
 
@@ -151,6 +163,9 @@ def build_configs(
     offset_x: int = 0,
     offset_y: int = 0,
     cells_info_root: str | os.PathLike = _CELLS_INFO_ROOT,
+    with_boundaries: bool = False,
+    cell_boundaries_root: str | os.PathLike = _CELL_BOUNDARIES_ROOT,
+    alignment_matrix_root: str | os.PathLike = _ALIGNMENT_MATRIX_ROOT,
 ) -> dict:
     """Build a config dict for extract_embeddings / run_attention_only.
 
@@ -166,6 +181,14 @@ def build_configs(
             Defaults to _CELLS_INFO_ROOT (Marc's ground-truth pipeline output); pass
             _POSITIONS_CONVERTED_ROOT to use the CellViT-centroid-corrected patch
             coordinates from src/python/OT/export_matched_patch_coordinates.py instead.
+        with_boundaries: if True, also wire in each dataset_name's Xenium
+            cell_boundaries.csv.gz / nucleus_boundaries.parquet and alignment matrix
+            (same layout as build_resized_cell_configs), so PatchDataset can compute
+            boundary_polygon(idx, 'cell'/'nucleus') for extract_embeddings(save_cell=...,
+            save_nucleus=...). No-op unless those flags are also passed to
+            extract_embeddings().
+        cell_boundaries_root / alignment_matrix_root: roots for the boundary files
+            (only used when with_boundaries=True).
 
     Returns:
         {model_name: {'inference_runs': [{'dataset_configs': ..., 'output_path': ...}]}}
@@ -174,17 +197,24 @@ def build_configs(
     for dataset_name, info in infos.items():
         wsi_root = _WSI_ROOT_CONVERTED if info['converted'] else _WSI_ROOT_RAW
         wsi_filename = info.get('wsi_filename', f'{dataset_name}_he_image.ome.tif')
+        dataset_configs = {
+            'wsi_path': os.path.join(wsi_root, wsi_filename),
+            'cells_info_path': os.path.join(cells_info_root, dataset_name, 'patch_coordinates.h5'),
+            'x_size': x_size,
+            'y_size': y_size,
+            'transform': None,
+            'offset_x': offset_x,
+            'offset_y': offset_y,
+        }
+        if with_boundaries:
+            dataset_configs.update({
+                'cells_csv_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'cell_boundaries.csv.gz'),
+                'nucleus_boundaries_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'nucleus_boundaries.parquet'),
+                'alignment_matrix_path': os.path.join(alignment_matrix_root, f'{dataset_name}_he_imagealignment.csv'),
+            })
         runs.append({
             'output_path': os.path.join(_OUTPUT_ROOT, f"{info['model_output_dir']}{output_suffix}", dataset_name),
-            'dataset_configs': {
-                'wsi_path': os.path.join(wsi_root, wsi_filename),
-                'cells_info_path': os.path.join(cells_info_root, dataset_name, 'patch_coordinates.h5'),
-                'x_size': x_size,
-                'y_size': y_size,
-                'transform': None,
-                'offset_x': offset_x,
-                'offset_y': offset_y,
-            },
+            'dataset_configs': dataset_configs,
         })
     return {model_name: {'inference_runs': runs}}
 

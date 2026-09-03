@@ -116,6 +116,8 @@ class CTransPathInferenceProvider(InferenceProvider):
         attention_output_path: PathLike | None = None,
         n_attention_samples: int = 10,
         save_cls: bool = False,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
         if save_cls:
             print("[CTransPathInferenceProvider] WARNING: CTransPath is a Swin Transformer with no CLS token — save_cls ignored.")
@@ -125,12 +127,15 @@ class CTransPathInferenceProvider(InferenceProvider):
             raise ValueError(
                 f"CTransPathInferenceProvider requires 224×224 patches, got {dataset.x_size}×{dataset.y_size}."
             )
+        self.check_boundary_sources(dataset, save_cell, save_nucleus)
 
         self.create_output_file(
             output_path,
             num_samples=len(dataset),
             embedding_dim=self.embedding_dim,
             dataset_stats=self.compute_dataset_statistics(dataset),
+            save_cell=save_cell,
+            save_nucleus=save_nucleus,
         )
         dataset.transform = self.transforms
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)
@@ -144,7 +149,16 @@ class CTransPathInferenceProvider(InferenceProvider):
             spatial = features.reshape(B, self.spatial_grid, self.spatial_grid, C)
 
             tokens_to_save = [spatial[:, x, y, :] for x, y in self.patches_to_save.values()]
-            self.save_embeddings(tokens_to_save, cell_ids, labels, output_path, start_idx=batch_idx * batch_size)
+
+            cell_token = nucleus_token = None
+            if save_cell or save_nucleus:
+                indices = range(batch_idx * batch_size, batch_idx * batch_size + len(patches))
+                pooled = self.pool_boundary_tokens(dataset, indices, spatial, self.effective_stride, save_cell, save_nucleus)
+                cell_token = pooled.get('cell')
+                nucleus_token = pooled.get('nucleus')
+
+            self.save_embeddings(tokens_to_save, cell_ids, labels, output_path, start_idx=batch_idx * batch_size,
+                                 cell_token=cell_token, nucleus_token=nucleus_token)
 
     def inference_multicell(
         self,
