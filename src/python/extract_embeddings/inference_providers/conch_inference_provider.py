@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from .inference_provider import InferenceProvider
 from ..data.patch_dataset import PatchDataset, MultiCellPatchDataset, multicell_collate_fn
+from ..data.resized_cell_dataset import ResizedCellDataset
 from os import PathLike
 from tqdm import tqdm
 import os
@@ -50,8 +51,15 @@ class CONCHInferenceProvider(InferenceProvider):
         save_cell: bool = False,
         save_nucleus: bool = False,
     ) -> None:
-        assert dataset.x_size == 448 and dataset.y_size == 448 and dataset.offset_x == -224 and dataset.offset_y == -224, \
-            f"CONCH requires 448×448 patches with offset (-224, -224), got {dataset.x_size}×{dataset.y_size} offset=({dataset.offset_x},{dataset.offset_y})"
+        if isinstance(dataset, ResizedCellDataset):
+            # ResizedCellDataset centers its own crop (via cell_offset_x/y) regardless
+            # of offset_x/offset_y, which it always reports as 0 -- so the PatchDataset
+            # centering check below doesn't apply here.
+            assert dataset.x_size == 448 and dataset.y_size == 448, \
+                f"CONCH requires 448×448 patches, got {dataset.x_size}×{dataset.y_size}"
+        else:
+            assert dataset.x_size == 448 and dataset.y_size == 448 and dataset.offset_x == -224 and dataset.offset_y == -224, \
+                f"CONCH requires 448×448 patches with offset (-224, -224), got {dataset.x_size}×{dataset.y_size} offset=({dataset.offset_x},{dataset.offset_y})"
         self.check_boundary_sources(dataset, save_cell, save_nucleus)
         self.create_output_file(
             output_path,

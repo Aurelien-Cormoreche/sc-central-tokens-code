@@ -5,6 +5,10 @@ from torch.utils.data import Dataset
 from PIL import Image
 import openslide as Openslide
 from os import PathLike
+from shapely.geometry import Polygon, MultiPolygon
+from shapely.affinity import affine_transform
+
+from .xenium_boundaries import BoundaryPolygons, load_alignment_matrix_inv
 
 # Xenium instrument pixel size (µm/px) — used as the homogeneous scale factor
 # in the alignment transform.  Matches XENIUM_MPP in the alignment notebook.
@@ -36,6 +40,20 @@ class ResizedCellDataset(Dataset):
     Either way the crop is clamped to the WSI boundary and resized to
     (size × size).
 
+    cells_csv_path / nucleus_boundaries_path: optionally also enable
+    boundary_polygon(idx, 'cell'/'nucleus') (used by
+    InferenceProvider.pool_boundary_tokens for the embeddings_cell /
+    embeddings_nucleus mean-pooled tokens), the same feature PatchDataset
+    offers. alignment_matrix_path is required whenever either is given (as well
+    as whenever size_side is None, for the vertex-based bounding box above).
+    Since the crop is resized from its native `side` down to `size`,
+    boundary_polygon() returns each polygon already mapped into the resized
+    (size × size) frame -- i.e. scaled by size/side -- and origin() always
+    returns (0, 0) to match; pool_boundary_tokens' token grid math (which lays
+    a token_size × token_size grid over [0, size) using the model's native
+    patch pixel size as token_size) then lines up correctly without needing
+    to know about the resize at all.
+
     Returns:
         patch    – PIL Image (or transformed tensor) of size (size × size)
         label    – cell type, as stored in the H5 file
@@ -47,6 +65,7 @@ class ResizedCellDataset(Dataset):
         wsi_path: PathLike,
         cells_info_path: PathLike,
         cells_csv_path: PathLike | None = None,
+        nucleus_boundaries_path: PathLike | None = None,
         alignment_matrix_path: PathLike | None = None,
         size: int = 224,
         size_side: int | None = None,
@@ -82,17 +101,29 @@ class ResizedCellDataset(Dataset):
         # ── vertex-based bounding box (only needed when size_side is None) ─────
         self.cells_by_id = None
         self.M_inv = None
+        needs_alignment = size_side is None or cells_csv_path is not None or nucleus_boundaries_path is not None
+        if needs_alignment:
+            if alignment_matrix_path is None:
+                raise ValueError(
+                    "alignment_matrix_path is required when size_side is None, or when "
+                    "cells_csv_path / nucleus_boundaries_path is set"
+                )
+            self.M_inv = load_alignment_matrix_inv(alignment_matrix_path)
+
         if size_side is None:
-            if cells_csv_path is None or alignment_matrix_path is None:
-                raise ValueError("cells_csv_path and alignment_matrix_path are required when size_side is None")
-
-            M = np.genfromtxt(str(alignment_matrix_path), delimiter=',')
-            assert M.shape == (3, 3), f"Expected a 3×3 alignment matrix, got {M.shape}"
-            self.M_inv = np.linalg.inv(M)
-
+            if cells_csv_path is None:
+                raise ValueError("cells_csv_path is required when size_side is None")
             df = pd.read_csv(cells_csv_path)
             df['cell_id'] = df['cell_id'].astype(str)
             self.cells_by_id = df.groupby('cell_id')
+
+        # ── boundary polygons, for save_cell / save_nucleus (see PatchDataset) ──
+        self._cell_boundaries: BoundaryPolygons | None = None
+        self._nucleus_boundaries: BoundaryPolygons | None = None
+        if cells_csv_path is not None:
+            self._cell_boundaries = BoundaryPolygons(cells_csv_path, self.M_inv, xenium_mpp)
+        if nucleus_boundaries_path is not None:
+            self._nucleus_boundaries = BoundaryPolygons(nucleus_boundaries_path, self.M_inv, xenium_mpp)
 
         print(f"Loaded {len(self.cell_ids_dataset)} cells from {cells_info_path}")
 
@@ -147,6 +178,34 @@ class ResizedCellDataset(Dataset):
         x0 = max(0, min(x0, self.wsi_w - side))
         y0 = max(0, min(y0, self.wsi_h - side))
         return x0, y0, side
+
+    def has_boundary_source(self, kind: str) -> bool:
+        """kind: 'cell' or 'nucleus'. Whether this dataset was built with the
+        corresponding boundary file (cells_csv_path / nucleus_boundaries_path)."""
+        store = self._cell_boundaries if kind == 'cell' else self._nucleus_boundaries
+        return store is not None
+
+    def origin(self, idx: int) -> tuple[int, int]:
+        """Always (0, 0) -- boundary_polygon() already maps polygons into the
+        resized (size × size) patch frame, so pool_boundary_tokens' token grid
+        (laid out over [0, size)) lines up without an origin offset."""
+        return 0, 0
+
+    def boundary_polygon(self, idx: int, kind: str) -> Polygon | MultiPolygon | None:
+        """kind: 'cell' or 'nucleus'. The Xenium boundary polygon for sample `idx`,
+        mapped into this sample's resized (size × size) patch frame -- i.e. the
+        WSI-pixel polygon shifted by this crop's (x0, y0) and scaled by size/side,
+        matching origin()'s (0, 0). None if that boundary source wasn't configured,
+        or no polygon was found for this cell."""
+        store = self._cell_boundaries if kind == 'cell' else self._nucleus_boundaries
+        if store is None:
+            return None
+        polygon = store.polygon_for(self.cell_ids_dataset[idx])
+        if polygon is None:
+            return None
+        x0, y0, side = self._crop_box(idx)
+        scale = self.size / side
+        return affine_transform(polygon, [scale, 0, 0, scale, -x0 * scale, -y0 * scale])
 
     def __getitem__(self, idx: int):
         cell_id = self.cell_ids_dataset[idx]

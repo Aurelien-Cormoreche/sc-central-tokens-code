@@ -226,6 +226,8 @@ def build_resized_cell_configs(
     size_side: int | None = None,
     output_suffix: str = '_resized_h5',
     cells_info_root: str | os.PathLike = _CELLS_INFO_ROOT,
+    cell_boundaries_root: str | os.PathLike = _CELL_BOUNDARIES_ROOT,
+    alignment_matrix_root: str | os.PathLike = _ALIGNMENT_MATRIX_ROOT,
 ) -> dict:
     """Build a config dict wired for extract_embeddings(dataset_cls=ResizedCellDataset).
 
@@ -236,12 +238,21 @@ def build_resized_cell_configs(
             (e.g. for GSM samples named '{dataset_name}_registered_HE.ome.tif').
         size: output patch size (patches are resized to size × size).
         size_side: if None, crop side is derived per-cell from its Xenium
-            boundary polygon; otherwise every cell uses a fixed size_side ×
-            size_side crop around its centroid (see ResizedCellDataset).
+            boundary polygon; otherwise every cell uses a fixed size_side x
+            size_side crop around its centroid (see ResizedCellDataset). E.g. for
+            a 40x-scanned WSI, size_side=2*size crops at native (40x) pixel
+            density over the same field of view a size x size crop would cover
+            on a 20x scan, then resizes down to size x size.
         cells_info_root: root directory containing {dataset_name}/patch_coordinates.h5.
             Defaults to _CELLS_INFO_ROOT (Marc's ground-truth pipeline output); pass
             _POSITIONS_CONVERTED_ROOT to use the CellViT-centroid-corrected patch
             coordinates from src/python/OT/export_matched_patch_coordinates.py instead.
+        cell_boundaries_root / alignment_matrix_root: roots for each dataset_name's
+            Xenium cell_boundaries.csv.gz / nucleus_boundaries.parquet / alignment
+            matrix (same layout as build_configs), wired in unconditionally so
+            ResizedCellDataset can compute boundary_polygon(idx, 'cell'/'nucleus')
+            for extract_embeddings(save_cell=..., save_nucleus=...). No-op unless
+            those flags are also passed to extract_embeddings().
 
     Returns:
         {model_name: {'inference_runs': [{'dataset_configs': ..., 'output_path': ...}]}}
@@ -255,8 +266,9 @@ def build_resized_cell_configs(
             'dataset_configs': {
                 'wsi_path': os.path.join(wsi_root, wsi_filename),
                 'cells_info_path': os.path.join(cells_info_root, dataset_name, 'patch_coordinates.h5'),
-                'cells_csv_path': os.path.join(_CELL_BOUNDARIES_ROOT, f'{dataset_name}_out', 'cell_boundaries.csv.gz'),
-                'alignment_matrix_path': os.path.join(_ALIGNMENT_MATRIX_ROOT, f'{dataset_name}_he_imagealignment.csv'),
+                'cells_csv_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'cell_boundaries.csv.gz'),
+                'nucleus_boundaries_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'nucleus_boundaries.parquet'),
+                'alignment_matrix_path': os.path.join(alignment_matrix_root, f'{dataset_name}_he_imagealignment.csv'),
                 'size': size,
                 'size_side': size_side,
                 'transform': None,
@@ -361,5 +373,6 @@ if __name__ == "__main__":
 
      
     specific_tokens_configs = build_resized_cell_configs('UNI2', CROSS_CANCER_SAMPLES, size_side=448,)
-    extract_embeddings(specific_tokens_configs, batch_size=64,save_cls=True, dataset_cls=ResizedCellDataset)
+    extract_embeddings(specific_tokens_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
+                        dataset_cls=ResizedCellDataset)
 
