@@ -324,9 +324,7 @@ if __name__ == "__main__":
         build_configs('UNI2', ATTN_COLON_SAMPLES),
         build_configs('UNI2', ATTN_GSM_SAMPLES, cells_info_root=_POSITIONS_CONVERTED_ROOT),
     )
-    run_attention_only(
-        attn_normal_configs, os.path.join(_OUTPUT_ROOT, 'attention_maps_UNI2'), n_samples=250,
-    )
+
 
     # 100 size_side: fixed 100×100 crop around each cell centroid, resized up to
     # 224×224 (ResizedCellDataset). Saved to its own attention_maps_UNI2_100 root
@@ -335,10 +333,7 @@ if __name__ == "__main__":
         build_resized_cell_configs('UNI2', ATTN_COLON_SAMPLES, size_side=100),
         build_resized_cell_configs('UNI2', ATTN_GSM_SAMPLES, size_side=100, cells_info_root=_POSITIONS_CONVERTED_ROOT),
     )
-    run_attention_only(
-        attn_100_configs, os.path.join(_OUTPUT_ROOT, 'attention_maps_UNI2_100'), n_samples=250,
-        dataset_cls=ResizedCellDataset,
-    )
+
 
     # ── UNI2 native-resolution embeddings, cross-cancer cohort ─────────────────
     # The 7 WSIs from configs/train.yaml's LWO splits (lung x2, colon, colorectal,
@@ -351,14 +346,20 @@ if __name__ == "__main__":
     # UNI2_specific_tokens_folder_h5 root so it doesn't clash with any existing
     # UNI2_h5 extraction that predates save_cell/save_nucleus.
     CROSS_CANCER_SAMPLES = {
-        'Xenium_V1_humanLung_Cancer_FFPE':                 {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
-        'Xenium_V1_Human_Lung_Cancer_Addon_FFPE':          {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
-        'Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
-        'Xenium_V1_Human_Colorectal_Cancer_Addon_FFPE':    {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
-        'Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE':       {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
-        'Xenium_V1_hLiver_cancer_section_FFPE':            {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
-        'Xenium_Prime_Human_Skin_FFPE':                    {'converted': False, 'model_output_dir': 'UNI2_specific_tokens_folder'},
+        'Xenium_V1_humanLung_Cancer_FFPE':                 {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_Human_Lung_Cancer_Addon_FFPE':          {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_Human_Colorectal_Cancer_Addon_FFPE':    {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE':       {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_hLiver_cancer_section_FFPE':            {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_Prime_Human_Skin_FFPE':                    {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_hColon_Cancer_Add_on_FFPE':             {'converted': False, 'model_output_dir': 'UNI2_448'},
+        'Xenium_V1_hColon_Non_diseased_Base_FFPE':         {'converted': False, 'model_output_dir': 'UNI2_448'},
     }
 
-    specific_tokens_configs = build_configs('UNI2', CROSS_CANCER_SAMPLES, with_boundaries=True)
-    extract_embeddings(specific_tokens_configs, save_cls=True, save_cell=True, save_nucleus=True)
+     
+    specific_tokens_configs = build_resized_cell_configs('UNI2', CROSS_CANCER_SAMPLES, size_side=448,)
+    extract_embeddings(specific_tokens_configs, batch_size=64,save_cls=True, dataset_cls=ResizedCellDataset)
+

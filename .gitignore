@@ -18,7 +18,9 @@ slurm_logs_colon/
 slurm_logs_deepspot/
 slurm_logs_deepspot_gsm/
 slurm_logs_compute_hvgs/
+*.txt
 
 # Precomputed HVG tables (regenerable via compute_hvgs.py)
 data/HVGsSplit/
 data/HVGsSplitGSM/
+
