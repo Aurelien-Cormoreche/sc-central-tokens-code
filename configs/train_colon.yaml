@@ -171,7 +171,7 @@ data:
   model_name: ???          # e.g. virchow_v2, UNI2, CellViT_SAM
   correction_name: ???     # e.g. Base, rpca, scanorama
   # Leave empty to average all embedding keys found in the h5 file.
-  embeddings_datasets: [bottom_left, bottom_right, top_left, top_right]
+  embeddings_datasets: [nucleus]
   # If true (default), filter to only cells matched between CellViT and Xenium
   # (requires a 'matching' dataset in the embeddings H5 file). If false, train
   # on all detected cells, including non-matching ones.
