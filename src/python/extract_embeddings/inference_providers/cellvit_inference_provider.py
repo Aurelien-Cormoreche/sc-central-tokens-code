@@ -224,12 +224,18 @@ class CellViTInferenceProvider(InferenceProvider):
         dataset: MultiCellPatchDataset,
         output_path: PathLike,
         batch_size: int = 4,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
+        self.check_boundary_sources(dataset, save_cell, save_nucleus)
+
         self.create_output_file_multicell(
             output_path,
             num_cells=dataset.total_cells,
             embedding_dim=self.embedding_dim,
             dataset_stats=self.compute_dataset_statistics_multicell(dataset),
+            save_cell=save_cell,
+            save_nucleus=save_nucleus,
         )
         dataset.transform = self.inference_transforms
         dataloader = DataLoader(
@@ -241,10 +247,9 @@ class CellViTInferenceProvider(InferenceProvider):
             collate_fn=multicell_collate_fn,
         )
 
-
         cell_write_idx = 0
 
-        for patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels in tqdm(dataloader, desc="Multicell Inference"):
+        for batch_idx, (patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels) in enumerate(tqdm(dataloader, desc="Multicell Inference")):
             patches = patches.to(self.device)
             outputs = self._forward(patches)  # (B, N, C) or (B, H, W, C) depending on backbone
 
@@ -258,17 +263,13 @@ class CellViTInferenceProvider(InferenceProvider):
             H = W = int(N ** 0.5)
             spatial = spatial.reshape(B, H, W, C) if spatial.dim() == 3 else spatial
 
-            for i in range(B):
-                rel_xs      = batch_rel_xs[i]
-                rel_ys      = batch_rel_ys[i]
-                cell_ids    = batch_cell_ids[i]
-                cell_labels = batch_cell_labels[i]
-
-                token_cols = rel_xs // self.patch_size
-                token_rows = rel_ys // self.patch_size
-
-                cell_tokens = spatial[i, token_rows, token_cols, :]  # (N_cells, C)
-                self.save_embeddings_multicell(cell_tokens, cell_ids, cell_labels, output_path, start_idx=cell_write_idx)
+            patch_indices = range(batch_idx * batch_size, batch_idx * batch_size + B)
+            results = self.select_multicell_tokens(dataset, patch_indices, spatial, batch_rel_xs, batch_rel_ys,
+                                                     self.patch_size, self.patch_size, save_cell, save_nucleus)
+            for i, res in enumerate(results):
+                cell_ids, cell_labels = batch_cell_ids[i], batch_cell_labels[i]
+                self.save_embeddings_multicell(res['cell_tokens'], cell_ids, cell_labels, output_path, start_idx=cell_write_idx,
+                                                cell_token=res['cell_boundary'], nucleus_token=res['nucleus_boundary'])
                 cell_write_idx += len(cell_ids)
 
     def _load_inference_transforms(self):

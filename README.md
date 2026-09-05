@@ -240,6 +240,20 @@ Three extraction modes, all consuming the same `configs` shape:
   (`MultiCellPatchDataset`, via `build_multicell_configs`) and reads off each cell's
   token by position instead of a separate forward pass per cell. Much faster for dense
   slides; writes a single `embeddings_cell_token` dataset (no CLS, no four-corner split).
+  `build_multicell_configs` supports the same optional features as the per-cell path:
+  - `size_side_x` / `size_side_y`: crop each tile at this native pixel size and resize
+    it down (or up) to `x_size × y_size` before it hits the model — the multicell
+    analogue of `build_resized_cell_configs`'s `size_side`.
+  - `central_size_x` / `central_size_y`: restrict cell extraction to a centred
+    sub-window of each tile (e.g. the central 112×112 of a 224×224 patch) so no
+    extracted cell sits near a tile's edge, where its field of view would otherwise be
+    lopsided/truncated. Tiles still tile the WSI exactly once per cell — the central
+    window just steps by its own (smaller) size while each tile keeps reading the full
+    `x_size × y_size` (or `size_side_x × size_side_y`) neighbourhood around it.
+  - `with_boundaries=True` (+ `extract_embeddings_multicell(..., save_cell=True,
+    save_nucleus=True)`): also mean-pool the tokens overlapping each cell's/nucleus's
+    Xenium boundary polygon, written as `embeddings_cell` / `embeddings_nucleus` (same
+    convention as the per-cell path's `save_cell`/`save_nucleus`).
 - `run_attention_only(configs, output_path, n_samples=...)` — no embeddings; dumps
   per-head attention-map visualizations for a stratified sample of cells (this is what
   produced the paper's 24-head UNI2 attention figures, at both the native-tile and
@@ -257,6 +271,8 @@ expects on top of this). Datasets:
 - `embeddings_{key}` for each `patches_to_save` key (`top_left`, `top_right`,
   `bottom_left`, `bottom_right`, or `cell_token` in multicell mode) — `(N, D)` float32
 - `embeddings_cls` — `(N, D)` float32, only if `save_cls=True`
+- `embeddings_cell` / `embeddings_nucleus` — `(N, D)` float32, only if
+  `save_cell=True` / `save_nucleus=True` (both extraction modes)
 - `cell_ids`, `cell_labels` — `(N,)` UTF-8 strings
 - `dataset_stats.json` alongside it — patch size, class distribution, etc.
 

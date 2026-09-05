@@ -193,12 +193,20 @@ class UNI2InferenceProvider(InferenceProvider):
         dataset: MultiCellPatchDataset,
         output_path: PathLike,
         batch_size: int = 4,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
+        assert dataset.x_size == 224 and dataset.y_size == 224, \
+            f"UNI2 requires 224×224 patches for multicell inference, got {dataset.x_size}×{dataset.y_size}"
+        self.check_boundary_sources(dataset, save_cell, save_nucleus)
+
         self.create_output_file_multicell(
             output_path,
             num_cells=dataset.total_cells,
             embedding_dim=self.embedding_dim,
             dataset_stats=self.compute_dataset_statistics_multicell(dataset),
+            save_cell=save_cell,
+            save_nucleus=save_nucleus,
         )
         dataset.transform = self.transforms
         dataloader = DataLoader(
@@ -210,26 +218,22 @@ class UNI2InferenceProvider(InferenceProvider):
             collate_fn=multicell_collate_fn,
         )
 
-        num_token_cols = dataset.x_size // self.patch_size
+        S = self.num_patches_per_side
         cell_write_idx = 0
 
-        for patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels in tqdm(dataloader, desc="Multicell Inference"):
+        for batch_idx, (patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels) in enumerate(tqdm(dataloader, desc="Multicell Inference")):
             patches = patches.to(self.device)
             with torch.inference_mode():
                 outputs = self.model.forward_features(patches)
 
             spatial_tokens = outputs[:, self.tokens_to_remove:]  # (B, N_spatial, D)
+            spatial = spatial_tokens.reshape(spatial_tokens.shape[0], S, S, spatial_tokens.shape[-1])
 
-            for i in range(len(patches)):
-                rel_xs      = batch_rel_xs[i]
-                rel_ys      = batch_rel_ys[i]
-                cell_ids    = batch_cell_ids[i]
-                cell_labels = batch_cell_labels[i]
-
-                token_cols    = rel_xs // self.patch_size
-                token_rows    = rel_ys // self.patch_size
-                token_indices = token_rows * num_token_cols + token_cols
-
-                cell_tokens = spatial_tokens[i, token_indices]  # (N_cells, D)
-                self.save_embeddings_multicell(cell_tokens, cell_ids, cell_labels, output_path, start_idx=cell_write_idx)
+            patch_indices = range(batch_idx * batch_size, batch_idx * batch_size + len(patches))
+            results = self.select_multicell_tokens(dataset, patch_indices, spatial, batch_rel_xs, batch_rel_ys,
+                                                     self.patch_size, self.patch_size, save_cell, save_nucleus)
+            for i, res in enumerate(results):
+                cell_ids, cell_labels = batch_cell_ids[i], batch_cell_labels[i]
+                self.save_embeddings_multicell(res['cell_tokens'], cell_ids, cell_labels, output_path, start_idx=cell_write_idx,
+                                                cell_token=res['cell_boundary'], nucleus_token=res['nucleus_boundary'])
                 cell_write_idx += len(cell_ids)

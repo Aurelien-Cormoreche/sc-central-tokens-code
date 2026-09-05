@@ -93,5 +93,7 @@ class DummyInferenceProvider(InferenceProvider):
         dataset: MultiCellPatchDataset,
         output_path: PathLike,
         batch_size: int = 4,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
         raise NotImplementedError("DummyInferenceProvider does not support multicell inference.")

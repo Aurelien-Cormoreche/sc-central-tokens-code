@@ -165,12 +165,20 @@ class CTransPathInferenceProvider(InferenceProvider):
         dataset: MultiCellPatchDataset,
         output_path: PathLike,
         batch_size: int = 4,
+        save_cell: bool = False,
+        save_nucleus: bool = False,
     ) -> None:
+        assert dataset.x_size == 224 and dataset.y_size == 224, \
+            f"CTransPathInferenceProvider requires 224×224 patches for multicell inference, got {dataset.x_size}×{dataset.y_size}."
+        self.check_boundary_sources(dataset, save_cell, save_nucleus)
+
         self.create_output_file_multicell(
             output_path,
             num_cells=dataset.total_cells,
             embedding_dim=self.embedding_dim,
             dataset_stats=self.compute_dataset_statistics_multicell(dataset),
+            save_cell=save_cell,
+            save_nucleus=save_nucleus,
         )
         dataset.transform = self.transforms
         dataloader = DataLoader(
@@ -184,7 +192,7 @@ class CTransPathInferenceProvider(InferenceProvider):
 
         cell_write_idx = 0
 
-        for patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels in tqdm(dataloader, desc="Multicell Inference"):
+        for batch_idx, (patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels) in enumerate(tqdm(dataloader, desc="Multicell Inference")):
             patches = patches.to(self.device)
             with torch.inference_mode():
                 features = self._spatial_forward(patches)
@@ -192,15 +200,11 @@ class CTransPathInferenceProvider(InferenceProvider):
             B, N, C = features.shape
             spatial = features.reshape(B, self.spatial_grid, self.spatial_grid, C)
 
-            for i in range(B):
-                rel_xs      = batch_rel_xs[i]
-                rel_ys      = batch_rel_ys[i]
-                cell_ids    = batch_cell_ids[i]
-                cell_labels = batch_cell_labels[i]
-
-                token_cols = torch.clamp(rel_xs // self.effective_stride, 0, self.spatial_grid - 1)
-                token_rows = torch.clamp(rel_ys // self.effective_stride, 0, self.spatial_grid - 1)
-
-                cell_tokens = spatial[i, token_rows, token_cols, :]  # (N_cells, 768)
-                self.save_embeddings_multicell(cell_tokens, cell_ids, cell_labels, output_path, start_idx=cell_write_idx)
+            patch_indices = range(batch_idx * batch_size, batch_idx * batch_size + B)
+            results = self.select_multicell_tokens(dataset, patch_indices, spatial, batch_rel_xs, batch_rel_ys,
+                                                     self.effective_stride, self.effective_stride, save_cell, save_nucleus)
+            for i, res in enumerate(results):
+                cell_ids, cell_labels = batch_cell_ids[i], batch_cell_labels[i]
+                self.save_embeddings_multicell(res['cell_tokens'], cell_ids, cell_labels, output_path, start_idx=cell_write_idx,
+                                                cell_token=res['cell_boundary'], nucleus_token=res['nucleus_boundary'])
                 cell_write_idx += len(cell_ids)
