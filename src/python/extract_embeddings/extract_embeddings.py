@@ -107,8 +107,19 @@ def extract_embeddings(
             print('-' * 20)
 
 
-def extract_embeddings_multicell(configs: dict, batch_size: int = 4):
-    """Extract per-cell embeddings by tiling WSIs into patches and selecting each cell's token."""
+def extract_embeddings_multicell(
+    configs: dict,
+    batch_size: int = 4,
+    save_cell: bool = False,
+    save_nucleus: bool = False,
+):
+    """Extract per-cell embeddings by tiling WSIs into patches and selecting each cell's token.
+
+    save_cell / save_nucleus: forwarded to each provider's inference_multicell (see
+        InferenceProvider.pool_boundary_tokens_multicell) -- requires each run's
+        dataset_configs to include cells_csv_path / nucleus_boundaries_path /
+        alignment_matrix_path (see build_multicell_configs(..., with_boundaries=True)).
+    """
     for model_name, model_cfg in configs.items():
         inference_provider = select_inference_provider(model_name)
         inference_provider.load_model()
@@ -116,7 +127,10 @@ def extract_embeddings_multicell(configs: dict, batch_size: int = 4):
             dataset = MultiCellPatchDataset(**inference_run['dataset_configs'])
             print(f"Running multicell inference [{model_name}] on {inference_run['dataset_configs']['wsi_path']}, patches: {len(dataset)}, cells: {dataset.total_cells}")
             print('-' * 20)
-            inference_provider.inference_multicell(dataset, inference_run['output_path'], batch_size=batch_size)
+            inference_provider.inference_multicell(
+                dataset, inference_run['output_path'], batch_size=batch_size,
+                save_cell=save_cell, save_nucleus=save_nucleus,
+            )
             print('-' * 20)
 
 
@@ -286,9 +300,83 @@ def build_multicell_configs(
     x_size: int = 224,
     y_size: int = 224,
     output_suffix: str = '_multicell_h5',
+    cell_offset_x: int = 112,
+    cell_offset_y: int = 112,
+    size_side_x: int | None = None,
+    size_side_y: int | None = None,
+    central_size_x: int | None = None,
+    central_size_y: int | None = None,
+    cells_info_root: str | os.PathLike = _CELLS_INFO_ROOT,
+    with_boundaries: bool = False,
+    cell_boundaries_root: str | os.PathLike = _CELL_BOUNDARIES_ROOT,
+    alignment_matrix_root: str | os.PathLike = _ALIGNMENT_MATRIX_ROOT,
 ) -> dict:
-    """Like build_configs but wired for extract_embeddings_multicell."""
-    return build_configs(model_name, infos, x_size=x_size, y_size=y_size, output_suffix=output_suffix)
+    """Build a config dict wired for extract_embeddings_multicell (MultiCellPatchDataset).
+
+    Args:
+        model_name: key used by select_inference_provider (e.g. 'UNI2').
+        infos: {dataset_name: {'converted': bool, 'model_output_dir': str, 'wsi_filename': str (optional)}}
+            'wsi_filename' overrides the default '{dataset_name}_he_image.ome.tif' naming
+            (e.g. for GSM samples named '{dataset_name}_registered_HE.ome.tif').
+        x_size / y_size: model input tile size (the size fed to the model).
+        cell_offset_x / cell_offset_y: pixel offset from each cell's H5 x_start/y_start
+            to its centroid (see MultiCellPatchDataset).
+        size_side_x / size_side_y: if set, each tile is cropped at this native
+            WSI-pixel size and resized down (or up) to x_size × y_size before it hits
+            the model -- e.g. size_side_x=size_side_y=448 with x_size=y_size=224 crops
+            a wider field of view per tile at native resolution then resizes it back
+            down to the model's native 224×224 input, same "magnification-corrected"
+            idea as build_resized_cell_configs' size_side, applied to the multicell
+            tiling loop instead of a per-cell crop. Defaults (None) to x_size/y_size,
+            i.e. no resize.
+        central_size_x / central_size_y: restrict cell claiming to a centred
+            sub-window of each (post-resize) tile, avoiding edge-of-tile field-of-view
+            truncation for cells near a tile boundary (see MultiCellPatchDataset).
+            Defaults (None) to x_size/y_size, i.e. no restriction.
+        cells_info_root: root directory containing {dataset_name}/patch_coordinates.h5.
+            Defaults to _CELLS_INFO_ROOT (Marc's ground-truth pipeline output); pass
+            _POSITIONS_CONVERTED_ROOT to use the CellViT-centroid-corrected patch
+            coordinates from src/python/OT/export_matched_patch_coordinates.py instead.
+        with_boundaries: if True, also wire in each dataset_name's Xenium
+            cell_boundaries.csv.gz / nucleus_boundaries.parquet and alignment matrix
+            (same layout as build_configs), so MultiCellPatchDataset can compute
+            boundary_polygon(...) for extract_embeddings_multicell(save_cell=...,
+            save_nucleus=...). No-op unless those flags are also passed to
+            extract_embeddings_multicell().
+        cell_boundaries_root / alignment_matrix_root: roots for the boundary files
+            (only used when with_boundaries=True).
+
+    Returns:
+        {model_name: {'inference_runs': [{'dataset_configs': ..., 'output_path': ...}]}}
+    """
+    runs = []
+    for dataset_name, info in infos.items():
+        wsi_root = _WSI_ROOT_CONVERTED if info['converted'] else _WSI_ROOT_RAW
+        wsi_filename = info.get('wsi_filename', f'{dataset_name}_he_image.ome.tif')
+        dataset_configs = {
+            'wsi_path': os.path.join(wsi_root, wsi_filename),
+            'cells_info_path': os.path.join(cells_info_root, dataset_name, 'patch_coordinates.h5'),
+            'x_size': x_size,
+            'y_size': y_size,
+            'transform': None,
+            'cell_offset_x': cell_offset_x,
+            'cell_offset_y': cell_offset_y,
+            'size_side_x': size_side_x,
+            'size_side_y': size_side_y,
+            'central_size_x': central_size_x,
+            'central_size_y': central_size_y,
+        }
+        if with_boundaries:
+            dataset_configs.update({
+                'cells_csv_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'cell_boundaries.csv.gz'),
+                'nucleus_boundaries_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'nucleus_boundaries.parquet'),
+                'alignment_matrix_path': os.path.join(alignment_matrix_root, f'{dataset_name}_he_imagealignment.csv'),
+            })
+        runs.append({
+            'output_path': os.path.join(_OUTPUT_ROOT, f"{info['model_output_dir']}{output_suffix}", dataset_name),
+            'dataset_configs': dataset_configs,
+        })
+    return {model_name: {'inference_runs': runs}}
 
 
 def merge_configs(*configs: dict) -> dict:
@@ -380,4 +468,23 @@ if __name__ == "__main__":
 
     extract_embeddings(specific_tokens_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
                         dataset_cls=ResizedCellDataset)
+
+
+    # ── UNI2 multicell embeddings at native 448 crop, same cross-cancer cohort ─
+    # Same "magnification-corrected" resize as the per-cell UNI2_448 run above
+    # (native size_side crop resized down to UNI2's native 224×224 input), but tiling
+    # the WSI and selecting each cell's own grid token (MultiCellPatchDataset) instead
+    # of centring a fresh crop on every cell. Uses a plain 'UNI2' model_output_dir
+    # (not CROSS_CANCER_SAMPLES' 'UNI2_896') so output_suffix alone names the run:
+    # written to its own UNI2_448_multicell_h5 root.
+    MULTICELL_448_SAMPLES = {
+        dataset_name: {**info, 'model_output_dir': 'UNI2'}
+        for dataset_name, info in CROSS_CANCER_SAMPLES.items()
+    }
+    multicell_448_configs = build_multicell_configs(
+        'UNI2', MULTICELL_448_SAMPLES, output_suffix='_448_multicell_h5',
+        size_side_x=448, size_side_y=448, with_boundaries=True,
+    )
+
+    extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
 

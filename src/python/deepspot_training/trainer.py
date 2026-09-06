@@ -1,11 +1,15 @@
 """
 Layer 3 — Trainer for the DeepCell embedding-evaluation pipeline.
 
-Pure training logic: given a preloaded train/val CustomDeepCellDataLoader pair and a config,
-train DeepSpot's own `DeepCell` LightningModule (deepspot.cell.model.DeepCell, unmodified) with
-`lightning.Trainer`, exactly as DeepSpot/he2st do (see he2st/workflows/models/DeepCell.py), then
-report per-gene Pearson correlation on the val split. Stateless and MLflow-free — call
-train_and_evaluate() from experiment.py.
+Pure training logic: given preloaded train/val/test CustomDeepCellDataLoader instances and a
+config, train DeepSpot's own `DeepCell` LightningModule (deepspot.cell.model.DeepCell, unmodified)
+with `lightning.Trainer`, exactly as DeepSpot/he2st do (see he2st/workflows/models/DeepCell.py).
+Early stopping and per-gene Pearson correlation for hyperparameter selection (experiment.py's grid
+search) are both computed on the val split; test is evaluated once, purely for reporting, mirroring
+classifier_training/trainer.py's val/test split. Pass the same object as `val_dataset` and
+`test_dataset` to fall back to the old behavior (no held-out test set — the model-selection split
+*is* the reported metric); test evaluation is then skipped and reuses val's result. Stateless and
+MLflow-free — call train_and_evaluate() from experiment.py.
 """
 from dataclasses import dataclass
 from typing import Optional
@@ -58,26 +62,50 @@ def _per_gene_pearson(y_pred: np.ndarray, y_true: np.ndarray, gene_names: np.nda
     return per_gene
 
 
+def _evaluate(model, loader: DataLoader, dataset, gene_names: np.ndarray, device: str) -> dict:
+    """Run inference over `loader` and compute per-gene Pearson against `dataset`'s targets."""
+    predictions = run_inference_from_dataloader(model, loader, device)
+    y_true = dataset.transcriptomics_df.values
+
+    per_gene_pearson = _per_gene_pearson(predictions, y_true, gene_names)
+    valid_r = np.array([r for r in per_gene_pearson.values() if not np.isnan(r)])
+
+    return {
+        "mean_pearson": float(np.mean(valid_r)) if len(valid_r) else float("nan"),
+        "median_pearson": float(np.median(valid_r)) if len(valid_r) else float("nan"),
+        "per_gene_pearson": per_gene_pearson,
+    }
+
+
+def _prefix_metrics(metrics: dict, prefix: str) -> dict:
+    return {f"{prefix}_{k}": v for k, v in metrics.items()}
+
+
 def train_and_evaluate(
     train_dataset,
     val_dataset,
+    test_dataset,
     gene_names: np.ndarray,
     config: TrainConfig,
     device: str,
 ) -> dict:
     """
-    Train a DeepCell model on `train_dataset` and evaluate per-gene Pearson correlation on
-    `val_dataset`.
+    Train a DeepCell model on `train_dataset`, monitor + select hyperparameters on `val_dataset`
+    (early stopping during `trainer.fit`, and grid-search selection back in experiment.py), then
+    report per-gene Pearson correlation once on `test_dataset`.
 
     Args:
-        train_dataset / val_dataset: CustomDeepCellDataLoader instances (already loaded/normalized).
+        train_dataset / val_dataset / test_dataset: CustomDeepCellDataLoader instances
+            (already loaded/normalized). Pass the same object for val_dataset and test_dataset to
+            skip the separate test pass and reuse val's metrics (no real held-out test set).
         gene_names: gene names in the same column order as the datasets' transcriptomics.
         config: training hyperparameters.
         device: "cuda" or "cpu".
 
     Returns:
-        dict with keys: mean_pearson, median_pearson, per_gene_pearson, train_loss_curve,
-                        val_loss_curve
+        dict with keys: val_mean_pearson, val_median_pearson, val_per_gene_pearson,
+                        test_mean_pearson, test_median_pearson, test_per_gene_pearson,
+                        train_loss_curve, val_loss_curve
     """
     train_loader = DataLoader(
         train_dataset, batch_size=config.batch_size, shuffle=True,
