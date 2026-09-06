@@ -375,7 +375,7 @@ if __name__ == "__main__":
     }
 
      
-    specific_tokens_configs = build_resized_cell_configs('UNI2', CROSS_CANCER_SAMPLES, size_side=896, offset=84)
+    specific_tokens_configs = build_resized_cell_configs('UNI2', CROSS_CANCER_SAMPLES, size_side=1344, offset=70)
 
 
     extract_embeddings(specific_tokens_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
