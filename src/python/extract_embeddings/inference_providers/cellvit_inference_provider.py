@@ -155,6 +155,7 @@ class CellViTInferenceProvider(InferenceProvider):
             print("[CellViTInferenceProvider] WARNING: CellViT-SAM has no CLS token — save_cls ignored.")
             save_cls = False
         self.check_boundary_sources(dataset, save_cell, save_nucleus)
+        self.check_mask_support(dataset)
 
         self.create_output_file(output_path, num_samples=len(dataset), embedding_dim=self.embedding_dim,
                                 dataset_stats=self.compute_dataset_statistics(dataset), save_cls=save_cls,

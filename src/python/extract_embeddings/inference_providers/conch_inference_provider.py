@@ -63,6 +63,7 @@ class CONCHInferenceProvider(InferenceProvider):
             assert dataset.x_size == 448 and dataset.y_size == 448 and dataset.offset_x == -224 and dataset.offset_y == -224, \
                 f"CONCH requires 448×448 patches with offset (-224, -224), got {dataset.x_size}×{dataset.y_size} offset=({dataset.offset_x},{dataset.offset_y})"
         self.check_boundary_sources(dataset, save_cell, save_nucleus)
+        self.check_mask_support(dataset)
         self.create_output_file(
             output_path,
             num_samples=len(dataset),

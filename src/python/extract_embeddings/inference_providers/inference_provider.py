@@ -11,6 +11,10 @@ class InferenceProvider(ABC):
 
     def __init__(self, patches_to_save: dict):
         self.patches_to_save = patches_to_save
+        # Set by load_mask_token() in providers that support dataset.mask (DINOv2-family
+        # models with a learned iBOT mask token -- UNI2, H-optimus-1, VirchowV2). Stays
+        # None otherwise, in which case check_mask_support() rejects dataset.mask=True.
+        self.mask_token: torch.Tensor | None = None
 
     @abstractmethod
     def load_model(self)-> torch.nn.Module:
@@ -98,6 +102,99 @@ class InferenceProvider(ABC):
                 "save_nucleus=True requires the dataset to be built with nucleus_boundaries_path "
                 "and alignment_matrix_path (see PatchDataset)."
             )
+
+    def load_mask_token(self, hf_repo_id: str) -> torch.Tensor | None:
+        """Fetch this model's own learned mask token -- the iBOT/DINOv2 embedding
+        substituted for masked patches during pretraining -- straight from the raw
+        Hugging Face Hub checkpoint, for use by register_mask_token_hook().
+
+        timm's hf-hub loader (used by e.g. UNI2/H-optimus-1/VirchowV2's load_model())
+        silently drops this weight when converting a DINOv2-format checkpoint to its
+        own VisionTransformer layout (see timm.models.vision_transformer._convert_dinov2,
+        which does `state_dict.pop("mask_token", None)`), so self.model never has it --
+        it has to be read directly from the checkpoint file instead. hf_hub_download
+        reuses the local cache timm's own pretrained=True load already populated, so
+        this doesn't trigger a second download.
+
+        Returns a flat (embedding_dim,) CPU tensor, or None (with a printed warning)
+        if the checkpoint has no 'mask_token' key or couldn't be fetched -- callers
+        should treat that as "this provider doesn't support dataset.mask=True" (see
+        check_mask_support).
+        """
+        from huggingface_hub import hf_hub_download, list_repo_files
+
+        try:
+            files = list_repo_files(hf_repo_id)
+            filename = next((f for f in ("model.safetensors", "pytorch_model.bin") if f in files), None)
+            if filename is None:
+                print(f"WARNING: no model.safetensors/pytorch_model.bin in {hf_repo_id} ({files}) -- "
+                      f"cannot load mask_token; dataset.mask=True will not be supported for this model.")
+                return None
+            path = hf_hub_download(hf_repo_id, filename)
+
+            if filename.endswith(".safetensors"):
+                from safetensors import safe_open
+                with safe_open(path, framework="pt", device="cpu") as f:
+                    if "mask_token" not in f.keys():
+                        print(f"WARNING: 'mask_token' not found in {hf_repo_id}/{filename} "
+                              f"(keys sample: {list(f.keys())[:20]}) -- dataset.mask=True will not be supported.")
+                        return None
+                    tensor = f.get_tensor("mask_token")
+            else:
+                try:
+                    state_dict = torch.load(path, map_location="cpu", mmap=True, weights_only=True)
+                except TypeError:
+                    state_dict = torch.load(path, map_location="cpu")
+                if "mask_token" not in state_dict:
+                    print(f"WARNING: 'mask_token' not found in {hf_repo_id}/{filename} "
+                          f"(keys sample: {list(state_dict.keys())[:20]}) -- dataset.mask=True will not be supported.")
+                    return None
+                tensor = state_dict["mask_token"]
+            return tensor.reshape(-1).float()
+        except Exception as e:
+            print(f"WARNING: failed to load mask_token from {hf_repo_id}: {e} -- "
+                  f"dataset.mask=True will not be supported for this model.")
+            return None
+
+    def check_mask_support(self, dataset) -> None:
+        """Fail fast if dataset.mask=True but this provider has no mask_token (see
+        load_mask_token) -- i.e. it isn't a DINOv2-family model with a learned iBOT
+        mask token, or the checkpoint fetch failed."""
+        if getattr(dataset, 'mask', False) and self.mask_token is None:
+            raise ValueError(
+                f"{type(self).__name__} does not support dataset.mask=True -- no mask_token "
+                "was loaded for this model (see the load_mask_token warning printed during "
+                "load_model())."
+            )
+
+    def register_mask_token_hook(self, grid_size: int) -> "torch.utils.hooks.RemovableHandle":
+        """Register a forward hook on self.model.patch_embed that overwrites the
+        centred grid_size x grid_size block of patch tokens (same token-boundary
+        convention as data.central_mask.central_mask_box, e.g. grid_size=3 on a
+        16x16 grid -> tokens {6,7,8}x{6,7,8}) with self.mask_token -- the model's
+        real learned mask token, applied in embedding space exactly like DINOv2/iBOT
+        pretraining does, regardless of what the dataset drew into those pixels.
+
+        patch_embed's output is (B, N, D) in row-major (row * S + col) order, matching
+        the token-indexing convention used by patches_to_save / pool_boundary_tokens
+        elsewhere in this class. Caller must call handle.remove() when done (e.g. in a
+        `finally` block) -- the hook stays registered on self.model otherwise.
+        """
+        if self.mask_token is None:
+            raise ValueError(f"{type(self).__name__}.mask_token is not set -- call check_mask_support first.")
+        S = self.num_patches_per_side
+        start = (S - grid_size) // 2
+        rows = torch.arange(start, start + grid_size)
+        cols = torch.arange(start, start + grid_size)
+        idx = (rows.unsqueeze(1) * S + cols.unsqueeze(0)).reshape(-1).to(self.device)
+        mask_token = self.mask_token.to(self.device)
+
+        def _hook(module, inputs, output):
+            output = output.clone()
+            output[:, idx, :] = mask_token.to(output.dtype)
+            return output
+
+        return self.model.patch_embed.register_forward_hook(_hook)
 
     def pool_boundary_tokens(
         self,

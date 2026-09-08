@@ -9,6 +9,7 @@ from shapely.geometry import Polygon, MultiPolygon
 from shapely.affinity import affine_transform
 
 from .xenium_boundaries import BoundaryPolygons, load_alignment_matrix_inv
+from .central_mask import apply_central_mask
 
 # Xenium instrument pixel size (µm/px) — used as the homogeneous scale factor
 # in the alignment transform.  Matches XENIUM_MPP in the alignment notebook.
@@ -54,6 +55,13 @@ class ResizedCellDataset(Dataset):
     patch pixel size as token_size) then lines up correctly without needing
     to know about the resize at all.
 
+    mask: if True, replace the centred mask_grid_size x mask_grid_size block of
+    mask_token_size x mask_token_size pixels (the central mask_grid_size x
+    mask_grid_size model tokens -- see data.central_mask.central_mask_box) with
+    mask_value. Applied to the resized (size × size) output, after the
+    size_side -> size resize, so the masked region always covers the central
+    tokens of the model's actual input grid regardless of size_side.
+
     Returns:
         patch    – PIL Image (or transformed tensor) of size (size × size)
         label    – cell type, as stored in the H5 file
@@ -73,6 +81,10 @@ class ResizedCellDataset(Dataset):
         xenium_mpp: float = _XENIUM_MPP,
         cell_offset_x: int = 112,
         cell_offset_y: int = 112,
+        mask: bool = False,
+        mask_grid_size: int = 3,
+        mask_token_size: int = 14,
+        mask_value: tuple[int, int, int] = (127, 127, 127),
     ):
         self.size = size
         self.size_side = size_side
@@ -80,6 +92,10 @@ class ResizedCellDataset(Dataset):
         self.xenium_mpp = xenium_mpp
         self.cell_offset_x = cell_offset_x
         self.cell_offset_y = cell_offset_y
+        self.mask = mask
+        self.mask_grid_size = mask_grid_size
+        self.mask_token_size = mask_token_size
+        self.mask_value = mask_value
         # interface parity with PatchDataset, consumed by InferenceProvider
         self.x_size = size
         self.y_size = size
@@ -185,6 +201,11 @@ class ResizedCellDataset(Dataset):
         store = self._cell_boundaries if kind == 'cell' else self._nucleus_boundaries
         return store is not None
 
+    def _maybe_mask(self, patch: Image.Image) -> Image.Image:
+        if not self.mask:
+            return patch
+        return apply_central_mask(patch, self.mask_token_size, self.mask_grid_size, self.mask_value)
+
     def origin(self, idx: int) -> tuple[int, int]:
         """Always (0, 0) -- boundary_polygon() already maps polygons into the
         resized (size × size) patch frame, so pool_boundary_tokens' token grid
@@ -214,6 +235,7 @@ class ResizedCellDataset(Dataset):
 
         patch = self.wsi.read_region((x0, y0), 0, (side, side)).convert('RGB')
         patch = patch.resize((self.size, self.size), Image.BICUBIC)
+        patch = self._maybe_mask(patch)
 
         if self.transform is not None:
             patch = self.transform(patch)
@@ -221,7 +243,9 @@ class ResizedCellDataset(Dataset):
         return patch, label, cell_id
 
     def get_raw_patch(self, idx: int):
-        """Return the un-transformed, resized RGB PIL Image for a given sample index."""
+        """Return the un-transformed, resized RGB PIL Image for a given sample index
+        (masked, if `mask=True`, matching what __getitem__ feeds the model)."""
         x0, y0, side = self._crop_box(idx)
         patch = self.wsi.read_region((x0, y0), 0, (side, side)).convert('RGB')
-        return patch.resize((self.size, self.size), Image.BICUBIC)
+        patch = patch.resize((self.size, self.size), Image.BICUBIC)
+        return self._maybe_mask(patch)

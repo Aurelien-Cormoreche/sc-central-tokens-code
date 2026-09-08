@@ -128,6 +128,7 @@ class CTransPathInferenceProvider(InferenceProvider):
                 f"CTransPathInferenceProvider requires 224×224 patches, got {dataset.x_size}×{dataset.y_size}."
             )
         self.check_boundary_sources(dataset, save_cell, save_nucleus)
+        self.check_mask_support(dataset)
 
         self.create_output_file(
             output_path,

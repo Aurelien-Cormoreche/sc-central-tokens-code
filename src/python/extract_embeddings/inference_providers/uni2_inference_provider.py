@@ -49,6 +49,7 @@ class UNI2InferenceProvider(InferenceProvider):
         self.model.eval()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
+        self.mask_token = self.load_mask_token("MahmoodLab/UNI2-h")
 
     # ── shared attention helper ────────────────────────────────────────────────
 
@@ -129,6 +130,7 @@ class UNI2InferenceProvider(InferenceProvider):
         assert dataset.x_size == 224 and dataset.y_size == 224 and dataset.offset_x == 0 and dataset.offset_y == 0, \
             f"UNI2 requires 224×224 patches with no offset, got {dataset.x_size}×{dataset.y_size} offset=({dataset.offset_x},{dataset.offset_y})"
         self.check_boundary_sources(dataset, save_cell, save_nucleus)
+        self.check_mask_support(dataset)
 
         self.create_output_file(output_path, num_samples=len(dataset), embedding_dim=self.embedding_dim,
                                 dataset_stats=self.compute_dataset_statistics(dataset), save_cls=save_cls,
@@ -147,44 +149,48 @@ class UNI2InferenceProvider(InferenceProvider):
             else:
                 vis_indices = sample_vis_indices(dataset.labels_dataset, n_attention_samples)
 
-        for batch_idx, (patches, labels, cell_ids) in enumerate(tqdm(dataloader, desc="Inference", total=len(dataloader))):
-            patches = patches.to(self.device)
-            with torch.inference_mode():
-                outputs = self.model.forward_features(patches)
+        mask_handle = self.register_mask_token_hook(dataset.mask_grid_size) if getattr(dataset, 'mask', False) else None
+        try:
+            for batch_idx, (patches, labels, cell_ids) in enumerate(tqdm(dataloader, desc="Inference", total=len(dataloader))):
+                patches = patches.to(self.device)
+                with torch.inference_mode():
+                    outputs = self.model.forward_features(patches)
 
-            patch_tokens = outputs[:, self.tokens_to_remove:]
-            tokens_to_save = []
-            for key in self.patches_to_save:
-                x, y = self.patches_to_save[key]
-                tokens_to_save.append(patch_tokens[:, x * self.num_patches_per_side + y])
-            cls_token = outputs[:, _CLS_TOKEN_IDX] if save_cls else None
+                patch_tokens = outputs[:, self.tokens_to_remove:]
+                tokens_to_save = []
+                for key in self.patches_to_save:
+                    x, y = self.patches_to_save[key]
+                    tokens_to_save.append(patch_tokens[:, x * self.num_patches_per_side + y])
+                cls_token = outputs[:, _CLS_TOKEN_IDX] if save_cls else None
 
-            cell_token = nucleus_token = None
-            if save_cell or save_nucleus:
-                S = self.num_patches_per_side
-                spatial = patch_tokens.reshape(patch_tokens.shape[0], S, S, patch_tokens.shape[-1])
-                indices = range(batch_idx * batch_size, batch_idx * batch_size + len(patches))
-                pooled = self.pool_boundary_tokens(dataset, indices, spatial, self.patch_size, save_cell, save_nucleus)
-                cell_token = pooled.get('cell')
-                nucleus_token = pooled.get('nucleus')
+                cell_token = nucleus_token = None
+                if save_cell or save_nucleus:
+                    S = self.num_patches_per_side
+                    spatial = patch_tokens.reshape(patch_tokens.shape[0], S, S, patch_tokens.shape[-1])
+                    indices = range(batch_idx * batch_size, batch_idx * batch_size + len(patches))
+                    pooled = self.pool_boundary_tokens(dataset, indices, spatial, self.patch_size, save_cell, save_nucleus)
+                    cell_token = pooled.get('cell')
+                    nucleus_token = pooled.get('nucleus')
 
-            self.save_embeddings(tokens_to_save, cell_ids, labels, output_path, start_idx=batch_idx * batch_size,
-                                 cls_token=cls_token, cell_token=cell_token, nucleus_token=nucleus_token)
+                self.save_embeddings(tokens_to_save, cell_ids, labels, output_path, start_idx=batch_idx * batch_size,
+                                     cls_token=cls_token, cell_token=cell_token, nucleus_token=nucleus_token)
 
-            if visualize_attention and capture.weights is not None:
-                start = batch_idx * batch_size
-                for local_idx in range(len(patches)):
-                    if start + local_idx not in vis_indices:
-                        continue
-                    attn_by_query = self._collect_attention_maps(capture, local_idx)
-                    if not attn_by_query:
-                        continue
-                    raw_patch   = dataset.get_raw_patch(start + local_idx)
-                    label_str   = labels[local_idx].decode()   if isinstance(labels[local_idx],   bytes) else str(labels[local_idx])
-                    cell_id_str = cell_ids[local_idx].decode() if isinstance(cell_ids[local_idx], bytes) else str(cell_ids[local_idx])
-                    save_cell_attention_maps(raw_patch, attn_by_query, cell_id_str, label_str, str(attention_output_path))
-
-        capture.remove()
+                if visualize_attention and capture.weights is not None:
+                    start = batch_idx * batch_size
+                    for local_idx in range(len(patches)):
+                        if start + local_idx not in vis_indices:
+                            continue
+                        attn_by_query = self._collect_attention_maps(capture, local_idx)
+                        if not attn_by_query:
+                            continue
+                        raw_patch   = dataset.get_raw_patch(start + local_idx)
+                        label_str   = labels[local_idx].decode()   if isinstance(labels[local_idx],   bytes) else str(labels[local_idx])
+                        cell_id_str = cell_ids[local_idx].decode() if isinstance(cell_ids[local_idx], bytes) else str(cell_ids[local_idx])
+                        save_cell_attention_maps(raw_patch, attn_by_query, cell_id_str, label_str, str(attention_output_path))
+        finally:
+            if mask_handle is not None:
+                mask_handle.remove()
+            capture.remove()
 
     # ── multicell patch inference ─────────────────────────────────────────────
 

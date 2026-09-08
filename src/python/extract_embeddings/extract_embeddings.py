@@ -180,6 +180,10 @@ def build_configs(
     with_boundaries: bool = False,
     cell_boundaries_root: str | os.PathLike = _CELL_BOUNDARIES_ROOT,
     alignment_matrix_root: str | os.PathLike = _ALIGNMENT_MATRIX_ROOT,
+    mask: bool = False,
+    mask_grid_size: int = 3,
+    mask_token_size: int = 14,
+    mask_value: tuple[int, int, int] = (127, 127, 127),
 ) -> dict:
     """Build a config dict for extract_embeddings / run_attention_only.
 
@@ -203,6 +207,10 @@ def build_configs(
             extract_embeddings().
         cell_boundaries_root / alignment_matrix_root: roots for the boundary files
             (only used when with_boundaries=True).
+        mask / mask_grid_size / mask_token_size / mask_value: forwarded to PatchDataset
+            to mask the central mask_grid_size x mask_grid_size model tokens (see
+            PatchDataset and data.central_mask). mask_token_size should match the
+            target model's ViT patch size (default 14).
 
     Returns:
         {model_name: {'inference_runs': [{'dataset_configs': ..., 'output_path': ...}]}}
@@ -219,6 +227,10 @@ def build_configs(
             'transform': None,
             'offset_x': offset_x,
             'offset_y': offset_y,
+            'mask': mask,
+            'mask_grid_size': mask_grid_size,
+            'mask_token_size': mask_token_size,
+            'mask_value': mask_value,
         }
         if with_boundaries:
             dataset_configs.update({
@@ -242,7 +254,11 @@ def build_resized_cell_configs(
     cells_info_root: str | os.PathLike = _CELLS_INFO_ROOT,
     cell_boundaries_root: str | os.PathLike = _CELL_BOUNDARIES_ROOT,
     alignment_matrix_root: str | os.PathLike = _ALIGNMENT_MATRIX_ROOT,
-    offset: int = 112
+    offset: int = 112,
+    mask: bool = False,
+    mask_grid_size: int = 3,
+    mask_token_size: int = 14,
+    mask_value: tuple[int, int, int] = (127, 127, 127),
 ) -> dict:
     """Build a config dict wired for extract_embeddings(dataset_cls=ResizedCellDataset).
 
@@ -268,6 +284,11 @@ def build_resized_cell_configs(
             ResizedCellDataset can compute boundary_polygon(idx, 'cell'/'nucleus')
             for extract_embeddings(save_cell=..., save_nucleus=...). No-op unless
             those flags are also passed to extract_embeddings().
+        mask / mask_grid_size / mask_token_size / mask_value: forwarded to
+            ResizedCellDataset to mask the central mask_grid_size x mask_grid_size
+            model tokens of the resized (size × size) output (see ResizedCellDataset
+            and data.central_mask). mask_token_size should match the target model's
+            ViT patch size (default 14).
 
     Returns:
         {model_name: {'inference_runs': [{'dataset_configs': ..., 'output_path': ...}]}}
@@ -288,7 +309,11 @@ def build_resized_cell_configs(
                 'size_side': size_side,
                 'transform': None,
                 'cell_offset_x': offset,
-                'cell_offset_y': offset
+                'cell_offset_y': offset,
+                'mask': mask,
+                'mask_grid_size': mask_grid_size,
+                'mask_token_size': mask_token_size,
+                'mask_value': mask_value,
             },
         })
     return {model_name: {'inference_runs': runs}}

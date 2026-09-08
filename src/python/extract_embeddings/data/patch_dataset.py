@@ -9,6 +9,7 @@ from shapely.geometry import Polygon, MultiPolygon
 from shapely.affinity import affine_transform
 
 from .xenium_boundaries import BoundaryPolygons, load_alignment_matrix_inv, XENIUM_MPP
+from .central_mask import apply_central_mask
 
 
 class PatchDataset(Dataset):
@@ -17,13 +18,23 @@ class PatchDataset(Dataset):
                  cells_csv_path: PathLike | None = None,
                  nucleus_boundaries_path: PathLike | None = None,
                  alignment_matrix_path: PathLike | None = None,
-                 xenium_mpp: float = XENIUM_MPP):
+                 xenium_mpp: float = XENIUM_MPP,
+                 mask: bool = False,
+                 mask_grid_size: int = 3,
+                 mask_token_size: int = 14,
+                 mask_value: tuple[int, int, int] = (127, 127, 127)):
             """
             cells_csv_path / nucleus_boundaries_path: optional Xenium cell_boundaries.csv.gz
                 / nucleus_boundaries.parquet, enabling boundary_polygon(idx, 'cell'/'nucleus')
                 (used by InferenceProvider.pool_boundary_tokens for the embeddings_cell /
                 embeddings_nucleus mean-pooled tokens). alignment_matrix_path is required
                 when either is given.
+            mask: if True, replace the centred mask_grid_size x mask_grid_size block of
+                mask_token_size x mask_token_size pixels (i.e. the central mask_grid_size x
+                mask_grid_size model tokens -- see data.central_mask.central_mask_box) with
+                mask_value before any transform is applied. mask_token_size should match the
+                target model's ViT patch size (default 14, matching UNI2 / H-optimus-1 /
+                VirchowV2's patch_size=14).
             """
             self.wsi_path = wsi_path
             self.cells_info_path = cells_info_path
@@ -32,6 +43,10 @@ class PatchDataset(Dataset):
             self.transform = transform
             self.offset_x = offset_x
             self.offset_y = offset_y
+            self.mask = mask
+            self.mask_grid_size = mask_grid_size
+            self.mask_token_size = mask_token_size
+            self.mask_value = mask_value
             print(f"Loading WSI from {wsi_path} and cell info from {cells_info_path}...")
             self.wsi = Openslide.OpenSlide(self.wsi_path)
             self.wsi_w, self.wsi_h = self.wsi.dimensions
@@ -92,6 +107,11 @@ class PatchDataset(Dataset):
         min_y = max(0, min(min_y, self.wsi_h - self.y_size))
         return min_x, min_y
 
+    def _maybe_mask(self, patch: Image.Image) -> Image.Image:
+        if not self.mask:
+            return patch
+        return apply_central_mask(patch, self.mask_token_size, self.mask_grid_size, self.mask_value)
+
     def __getitem__(self, idx):
         min_x, min_y = self._clamped_origin(idx)
         cell_id = self.cell_ids_dataset[idx]
@@ -107,15 +127,18 @@ class PatchDataset(Dataset):
             )
             patch = Image.new('RGB', (self.x_size, self.y_size))
 
+        patch = self._maybe_mask(patch)
         if self.transform:
             patch = self.transform(patch)
 
         return patch, label, cell_id
 
     def get_raw_patch(self, idx):
-        """Return the un-transformed RGB PIL Image for a given sample index."""
+        """Return the un-transformed RGB PIL Image for a given sample index
+        (masked, if `mask=True`, matching what __getitem__ feeds the model)."""
         min_x, min_y = self._clamped_origin(idx)
-        return self.wsi.read_region((min_x, min_y), 0, (self.x_size, self.y_size)).convert('RGB')
+        patch = self.wsi.read_region((min_x, min_y), 0, (self.x_size, self.y_size)).convert('RGB')
+        return self._maybe_mask(patch)
 
 
 class MultiCellPatchDataset(Dataset):
