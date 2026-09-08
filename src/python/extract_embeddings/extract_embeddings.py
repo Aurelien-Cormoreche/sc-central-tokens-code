@@ -466,8 +466,8 @@ if __name__ == "__main__":
     specific_tokens_configs = build_resized_cell_configs('UNI2', CROSS_CANCER_SAMPLES, size_side=1344, offset=70)
 
 
-    extract_embeddings(specific_tokens_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
-                        dataset_cls=ResizedCellDataset)
+    #extract_embeddings(specific_tokens_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
+    #                    dataset_cls=ResizedCellDataset)
 
 
     # ── UNI2 multicell embeddings at native 448 crop, same cross-cancer cohort ─
@@ -482,8 +482,8 @@ if __name__ == "__main__":
         for dataset_name, info in CROSS_CANCER_SAMPLES.items()
     }
     multicell_448_configs = build_multicell_configs(
-        'UNI2', MULTICELL_448_SAMPLES, output_suffix='_448_multicell_h5',
-        size_side_x=448, size_side_y=448, with_boundaries=True,
+        'UNI2', MULTICELL_448_SAMPLES, output_suffix='_448_224_multicell_h5',
+        size_side_x=448, size_side_y=448, with_boundaries=True, central_size_x=224, central_size_y=224
     )
 
     extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
