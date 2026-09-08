@@ -116,22 +116,46 @@ class InferenceProvider(ABC):
         reuses the local cache timm's own pretrained=True load already populated, so
         this doesn't trigger a second download.
 
+        Deliberately avoids huggingface_hub.list_repo_files -- unlike hf_hub_download,
+        it's a pure Hub-API call with no local-cache fallback, so it fails outright on
+        an offline compute node (no outbound internet, or HF_HUB_OFFLINE=1) even though
+        the checkpoint is already sitting in the local cache from timm's pretrained=True
+        load two lines above this call in load_model(). Instead this tries each
+        candidate filename directly via hf_hub_download(local_files_only=True) (cache
+        only, never touches the network) and only falls back to a normal
+        hf_hub_download (which may attempt a network refresh) if nothing is cached
+        under that name yet.
+
         Returns a flat (embedding_dim,) CPU tensor, or None (with a printed warning)
         if the checkpoint has no 'mask_token' key or couldn't be fetched -- callers
         should treat that as "this provider doesn't support dataset.mask=True" (see
         check_mask_support).
         """
-        from huggingface_hub import hf_hub_download, list_repo_files
+        from huggingface_hub import hf_hub_download
+
+        def _resolve(filename: str) -> str | None:
+            try:
+                return hf_hub_download(hf_repo_id, filename, local_files_only=True)
+            except Exception:
+                pass
+            try:
+                return hf_hub_download(hf_repo_id, filename)
+            except Exception:
+                return None
+
+        path = filename = None
+        for candidate in ("model.safetensors", "pytorch_model.bin"):
+            resolved = _resolve(candidate)
+            if resolved is not None:
+                path, filename = resolved, candidate
+                break
+        if path is None:
+            print(f"WARNING: could not resolve model.safetensors/pytorch_model.bin for {hf_repo_id} "
+                  f"from the local Hub cache or network -- dataset.mask=True will not be supported "
+                  f"for this model.")
+            return None
 
         try:
-            files = list_repo_files(hf_repo_id)
-            filename = next((f for f in ("model.safetensors", "pytorch_model.bin") if f in files), None)
-            if filename is None:
-                print(f"WARNING: no model.safetensors/pytorch_model.bin in {hf_repo_id} ({files}) -- "
-                      f"cannot load mask_token; dataset.mask=True will not be supported for this model.")
-                return None
-            path = hf_hub_download(hf_repo_id, filename)
-
             if filename.endswith(".safetensors"):
                 from safetensors import safe_open
                 with safe_open(path, framework="pt", device="cpu") as f:
@@ -152,7 +176,7 @@ class InferenceProvider(ABC):
                 tensor = state_dict["mask_token"]
             return tensor.reshape(-1).float()
         except Exception as e:
-            print(f"WARNING: failed to load mask_token from {hf_repo_id}: {e} -- "
+            print(f"WARNING: failed to read mask_token from {hf_repo_id}/{filename}: {e} -- "
                   f"dataset.mask=True will not be supported for this model.")
             return None
 
