@@ -511,5 +511,29 @@ if __name__ == "__main__":
         size_side_x=448, size_side_y=448, with_boundaries=True, central_size_x=224, central_size_y=224
     )
 
-    extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
+    #extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
+
+
+    # ── UNI2 448→224 embeddings, central 3x3 tokens masked with the real mask token ──
+    # Same per-cell native 448 crop resized down to UNI2's native 224×224 input as
+    # specific_tokens_configs above (ResizedCellDataset, size_side=448, size=224,
+    # default cell_offset=112), but with the central 3x3 tokens of the *resized*
+    # 224×224 output masked (mask=True, mask_grid_size=3 -- see data.central_mask and
+    # ResizedCellDataset's mask_* params). The dataset only draws a grey box at those
+    # pixels for visualization; the actual masking UNI2InferenceProvider.inference()
+    # applies is in embedding space, overwriting those tokens' patch embeddings with
+    # UNI2's own learned mask token (see InferenceProvider.load_mask_token /
+    # register_mask_token_hook) exactly like its DINOv2/iBOT pretraining did. Written
+    # to its own UNI2_448_224_masked_h5 root.
+    MASKED_448_SAMPLES = {
+        dataset_name: {**info, 'model_output_dir': 'UNI2'}
+        for dataset_name, info in CROSS_CANCER_SAMPLES.items()
+    }
+    masked_448_configs = build_resized_cell_configs(
+        'UNI2', MASKED_448_SAMPLES, size=224, size_side=448,
+        output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3,
+    )
+
+    extract_embeddings(masked_448_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
+                        dataset_cls=ResizedCellDataset)
 
