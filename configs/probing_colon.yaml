@@ -1,0 +1,223 @@
+# Top-level config for the embedding-probing pipeline (src/python/probing) --
+# "how much cell-level and context-level information is linearly recoverable
+# from a frozen embedding". Run via launcher.py (submits one SLURM job per
+# split) or directly via experiment.py for a single split.
+#
+# Same colon-cohort Leave-WSI-Out (LWO) split scheme as configs/train_colon.yaml
+# (5 colon WSIs, train=3 / val=1 / test=1 per fold, every cancer WSI serving as
+# test exactly once) -- see that file's header comment for the full scheme
+# rationale. Probing reuses it unmodified so results are directly comparable to
+# the classifier_training runs over the same cohort/splits.
+
+defaults:
+  - _self_
+
+# ── Reproducibility ────────────────────────────────────────────────────────
+seed: 42
+
+# ── Mapping ────────────────────────────────────────────────────────────────
+# Must match a key in src/python/code_configs/mappings.py. Drives both the
+# cell's own reported type and the cell_type_composition probe's class space
+# (which, unlike classifier_training, keeps "Unknown" as an explicit class --
+# see data/cell_population.py).
+mapping: simplified_broad
+
+# ── WSI splits (identical to configs/train_colon.yaml) ────────────────────
+splits:
+  # split 0: test=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+
+  # split 1: test=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+
+  # split 2: test=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+
+  # split 3: test=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE, val=Xenium_V1_hColon_Cancer_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+
+  # split 4: test=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE, val=Xenium_V1_hColon_Cancer_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+
+  # split 5: test=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+
+  # split 6: test=Xenium_V1_hColon_Cancer_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+
+  # split 7: test=Xenium_V1_hColon_Cancer_Add_on_FFPE, val=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    val:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+    test:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+
+# When true, the launcher also submits a same-WSI 70/15/15 train/val/test split
+# job pooled across all WSIs (see split_idx == -1 handling in experiment.py).
+same_wsi_split: false
+
+# ── Output ─────────────────────────────────────────────────────────────────
+output_dir: outputs_probing_colon/
+
+# ── Data paths ─────────────────────────────────────────────────────────────
+# base_dir/cells_info_root/cell_boundaries_root/alignment_matrix_root all resolve
+# from env vars (see src/python/code_configs/paths.py and .env.example) -- set
+# them before running, e.g. `export DATASETS_ROOT=/path/to/datasets`.
+data:
+  base_dir: ${oc.env:DATASETS_ROOT}
+  model_name: ???          # e.g. UNI2, virchow_v2, CellViT_SAM
+  correction_name: ???     # e.g. Base, rpca, scanorama
+  embeddings_datasets: []  # empty = average every embedding key found in the h5 file
+  # If true, filter to only cells matched between CellViT and Xenium (requires a
+  # 'matching' dataset in the embeddings H5 file).
+  consider_matching: false
+  # Root containing {wsi}/patch_coordinates.h5 -- every detected cell's id/position/
+  # type for a WSI, used by the context probes and to resolve a probed cell's own
+  # position (see data/cell_population.py). Matches extract_embeddings.py's
+  # _CELLS_INFO_ROOT default (XENIUM_PROCESSED_OUTPUT_ROOT); point this at
+  # POSITIONS_CONVERTED_ROOT instead for a GSM/CellViT-centroid-corrected cohort.
+  cells_info_root: ${oc.env:XENIUM_PROCESSED_OUTPUT_ROOT}
+  # Root containing {wsi}_out/cell_boundaries.csv.gz and {wsi}_out/nucleus_boundaries.parquet
+  # (see data/boundary_cache.py) -- matches extract_embeddings.py's _CELL_BOUNDARIES_ROOT.
+  cell_boundaries_root: ${oc.env:XENIUM_OUTPUT_ROOT}
+  # Root containing {wsi}_he_imagealignment.csv -- matches _ALIGNMENT_MATRIX_ROOT.
+  alignment_matrix_root: ${oc.env:ALIGNMENT_MATRIX_ROOT}
+  # 'cell' (whole-cell segmentation, cell_boundaries.csv.gz) or 'nucleus'
+  # (nucleus_boundaries.parquet) -- which Xenium boundary polygon the
+  # area/eccentricity/orientation probes measure.
+  boundary_kind: nucleus
+
+# ── MLflow ─────────────────────────────────────────────────────────────────
+mlflow:
+  tracking_uri: file:./mlruns
+  experiment_name: probing_colon
+
+# ── Ridge regularization sweep ──────────────────────────────────────────────
+# Default lambda grid every probe sweeps, unless that probe's own block below
+# sets its own `lambdas`. Best lambda is picked by validation performance (see
+# each Probe's eval_metrics -> "selection_metric"), then evaluated once on test
+# with that same train-only-fitted model (no refit on train+val).
+lambdas: [0.0, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+
+# ── Probes ───────────────────────────────────────────────────────────────────
+# Set enabled: true/false per probe type to choose which ones a run computes --
+# every enabled probe runs in the same job (see experiment.py's probe loop).
+# Add a new probe type by subclassing Probe (src/python/probing/probes/base.py)
+# and registering a factory under a new key here.
+probes:
+  # Cell-level probes: target comes from the probed cell's own Xenium boundary
+  # polygon (boundary_kind above), independent of any context window.
+  area:
+    enabled: true
+    log_transform: true    # regress log1p(area) -- area is positively skewed
+    # lambdas: [...]        # optional per-probe override of the default sweep above
+
+  eccentricity:
+    enabled: true
+
+  orientation:
+    enabled: true
+    # Only cells at or above this eccentricity are used -- a near-circular
+    # cell's major-axis angle is dominated by boundary-detection noise (see
+    # src/python/probing/geometry.py / src/python/ot/centering_correction.py's
+    # identical reasoning for orientation_confidence).
+    eccentricity_threshold: 0.5
+
+  # Context probes: target is computed from every OTHER detected cell (regardless
+  # of embedding availability) within a context_px x context_px window centred on
+  # the probed cell (see data/cell_population.py) -- one probe instance per
+  # context_px entry, all trained against the same embeddings.
+  cell_type_composition:
+    enabled: true
+    context_px: [224, 448, 1344]
+
+  cell_count:
+    enabled: true
+    context_px: [224, 448, 1344]
+    log_transform: true
+
+  cell_density:
+    enabled: true
+    context_px: [224, 448, 1344]
+    log_transform: true
+
+# ── SLURM ──────────────────────────────────────────────────────────────────
+slurm:
+  partition: compute
+  gres: gpu:1              # only used when partition: gpu
+  mem: 64G
+  time: "02:00:00"
+  cpus_per_task: 128
+  conda_env: cellViT
+  output_dir: slurm_logs_probing_colon
+  # If true, run all splits sequentially in a single SLURM job on one node
+  # instead of submitting one job per split.
+  sequential: false
+
+# ── Launcher flags ─────────────────────────────────────────────────────────
+dry_run: false       # Print SLURM scripts without submitting
+debug_split: null    # If set to an int, print logs of that split and exit
+
+# ── Set by launcher per SLURM job; do not set in this file ─────────────────
+split_idx: null
+
+# ── Hydra settings ─────────────────────────────────────────────────────────
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job_logging:
+    root:
+      level: WARNING
