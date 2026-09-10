@@ -32,7 +32,7 @@ class VirchowV2InferenceProvider(InferenceProvider):
         self.transforms = create_transform(**resolve_data_config(self.model.pretrained_cfg, model=self.model))
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
-        self.mask_token = self.load_mask_token("paige-ai/Virchow2")
+        self.mask_token = self.load_mask_token_or_zero("paige-ai/Virchow2")
 
     # ── shared attention helper ────────────────────────────────────────────────
 

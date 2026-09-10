@@ -49,7 +49,7 @@ class UNI2InferenceProvider(InferenceProvider):
         self.model.eval()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
-        self.mask_token = self.load_mask_token("MahmoodLab/UNI2-h")
+        self.mask_token = self.load_mask_token_or_zero("MahmoodLab/UNI2-h")
 
     # ── shared attention helper ────────────────────────────────────────────────
 

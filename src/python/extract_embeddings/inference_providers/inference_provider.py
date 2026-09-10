@@ -108,6 +108,13 @@ class InferenceProvider(ABC):
         substituted for masked patches during pretraining -- straight from the raw
         Hugging Face Hub checkpoint, for use by register_mask_token_hook().
 
+        Matches the key by exact name ("mask_token") or by suffix (any key ending
+        in ".mask_token"), since layout differs by release pipeline: MahmoodLab's /
+        Bioptimus's / Paige's own hf-hub conversions (UNI2-h, H-optimus-1, Virchow2)
+        strip it entirely, while a checkpoint saved via HF `transformers` itself
+        (e.g. Owkin/Phikon-v2, whose Dinov2Model nests it at "embeddings.mask_token")
+        keeps it under a module-prefixed name.
+
         timm's hf-hub loader (used by e.g. UNI2/H-optimus-1/VirchowV2's load_model())
         silently drops this weight when converting a DINOv2-format checkpoint to its
         own VisionTransformer layout (see timm.models.vision_transformer._convert_dinov2,
@@ -155,30 +162,58 @@ class InferenceProvider(ABC):
                   f"for this model.")
             return None
 
+        def _find_mask_token_key(keys) -> str | None:
+            for k in keys:
+                if k == "mask_token" or k.endswith(".mask_token"):
+                    return k
+            return None
+
         try:
             if filename.endswith(".safetensors"):
                 from safetensors import safe_open
                 with safe_open(path, framework="pt", device="cpu") as f:
-                    if "mask_token" not in f.keys():
+                    key = _find_mask_token_key(f.keys())
+                    if key is None:
                         print(f"WARNING: 'mask_token' not found in {hf_repo_id}/{filename} "
                               f"(keys sample: {list(f.keys())[:20]}) -- dataset.mask=True will not be supported.")
                         return None
-                    tensor = f.get_tensor("mask_token")
+                    tensor = f.get_tensor(key)
             else:
                 try:
                     state_dict = torch.load(path, map_location="cpu", mmap=True, weights_only=True)
                 except TypeError:
                     state_dict = torch.load(path, map_location="cpu")
-                if "mask_token" not in state_dict:
+                key = _find_mask_token_key(state_dict.keys())
+                if key is None:
                     print(f"WARNING: 'mask_token' not found in {hf_repo_id}/{filename} "
                           f"(keys sample: {list(state_dict.keys())[:20]}) -- dataset.mask=True will not be supported.")
                     return None
-                tensor = state_dict["mask_token"]
+                tensor = state_dict[key]
             return tensor.reshape(-1).float()
         except Exception as e:
             print(f"WARNING: failed to read mask_token from {hf_repo_id}/{filename}: {e} -- "
                   f"dataset.mask=True will not be supported for this model.")
             return None
+
+    def load_mask_token_or_zero(self, hf_repo_id: str) -> torch.Tensor:
+        """load_mask_token(hf_repo_id), falling back to a zero vector -- the standard
+        "no signal" proxy used in ViT/MAE-style masking studies when a model has no
+        trained mask token of its own -- if the checkpoint doesn't have one.
+
+        Confirmed (2026-09) that UNI2-h, H-optimus-1 and VirchowV2's published
+        checkpoints have all been stripped of their mask_token weight before release
+        (their state dicts are already in timm-native key format -- reg_token,
+        cls_token, etc. -- with no mask_token at all), so for all three of them this
+        fallback is not merely defensive: it's what dataset.mask=True actually uses
+        today. self.mask_token stays honestly documented either way -- see
+        register_mask_token_hook, which doesn't distinguish the two cases.
+        """
+        token = self.load_mask_token(hf_repo_id)
+        if token is None:
+            print(f"[{type(self).__name__}] No mask_token in {hf_repo_id}'s published checkpoint "
+                  f"-- falling back to a zero vector for dataset.mask=True.")
+            token = torch.zeros(self.embedding_dim)
+        return token
 
     def check_mask_support(self, dataset) -> None:
         """Fail fast if dataset.mask=True but this provider has no mask_token (see
@@ -191,13 +226,25 @@ class InferenceProvider(ABC):
                 "load_model())."
             )
 
+    def _patch_embed_module(self) -> torch.nn.Module:
+        """Submodule whose forward output is (B, N_spatial, D) -- the pure patch-token
+        grid, row-major, with no prefix (CLS/register) tokens prepended yet. Defaults
+        to timm's `self.model.patch_embed` convention (UNI2/H-optimus-1/Virchow2/
+        CellViT); override for a model whose patch-embedding submodule lives
+        elsewhere, e.g. HF `transformers`' Dinov2Model nests it at
+        `self.model.embeddings.patch_embeddings` (see PhikonV2InferenceProvider)."""
+        return self.model.patch_embed
+
     def register_mask_token_hook(self, grid_size: int) -> "torch.utils.hooks.RemovableHandle":
-        """Register a forward hook on self.model.patch_embed that overwrites the
+        """Register a forward hook on _patch_embed_module() that overwrites the
         centred grid_size x grid_size block of patch tokens (same token-boundary
         convention as data.central_mask.central_mask_box, e.g. grid_size=3 on a
-        16x16 grid -> tokens {6,7,8}x{6,7,8}) with self.mask_token -- the model's
-        real learned mask token, applied in embedding space exactly like DINOv2/iBOT
-        pretraining does, regardless of what the dataset drew into those pixels.
+        16x16 grid -> tokens {6,7,8}x{6,7,8}) with self.mask_token, applied in
+        embedding space regardless of what the dataset drew into those pixels.
+        self.mask_token is the model's own learned mask token when its published
+        checkpoint has one, else a zero-vector fallback (see load_mask_token_or_zero) --
+        as of 2026-09 that's a zero vector for UNI2/H-optimus-1/VirchowV2, none of
+        which ship a mask_token weight.
 
         patch_embed's output is (B, N, D) in row-major (row * S + col) order, matching
         the token-indexing convention used by patches_to_save / pool_boundary_tokens
@@ -218,7 +265,7 @@ class InferenceProvider(ABC):
             output[:, idx, :] = mask_token.to(output.dtype)
             return output
 
-        return self.model.patch_embed.register_forward_hook(_hook)
+        return self._patch_embed_module().register_forward_hook(_hook)
 
     def pool_boundary_tokens(
         self,

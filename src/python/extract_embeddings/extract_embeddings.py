@@ -159,6 +159,9 @@ def select_inference_provider(model_name: str) -> InferenceProvider:
         case 'HOptimus1':
             from .inference_providers.hoptimus1_inference_provider import HOptimus1InferenceProvider
             return HOptimus1InferenceProvider()
+        case 'PhikonV2':
+            from .inference_providers.phikon_v2_inference_provider import PhikonV2InferenceProvider
+            return PhikonV2InferenceProvider()
         case 'Dummy':
             from .inference_providers.dummy_inference_provider import DummyInferenceProvider
             return DummyInferenceProvider(use_pca=True)
@@ -514,17 +517,20 @@ if __name__ == "__main__":
     #extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
 
 
-    # ── UNI2 448→224 embeddings, central 3x3 tokens masked with the real mask token ──
+    # ── UNI2 448→224 embeddings, central 3x3 tokens masked ─────────────────────
     # Same per-cell native 448 crop resized down to UNI2's native 224×224 input as
     # specific_tokens_configs above (ResizedCellDataset, size_side=448, size=224,
     # default cell_offset=112), but with the central 3x3 tokens of the *resized*
     # 224×224 output masked (mask=True, mask_grid_size=3 -- see data.central_mask and
     # ResizedCellDataset's mask_* params). The dataset only draws a grey box at those
     # pixels for visualization; the actual masking UNI2InferenceProvider.inference()
-    # applies is in embedding space, overwriting those tokens' patch embeddings with
-    # UNI2's own learned mask token (see InferenceProvider.load_mask_token /
-    # register_mask_token_hook) exactly like its DINOv2/iBOT pretraining did. Written
-    # to its own UNI2_448_224_masked_h5 root.
+    # applies is in embedding space, overwriting those tokens' patch embeddings via
+    # register_mask_token_hook. UNI2's published checkpoint has no learned mask_token
+    # of its own (confirmed 2026-09 -- MahmoodLab/UNI2-h's pytorch_model.bin has none,
+    # nor do H-optimus-1 / VirchowV2's), so load_mask_token_or_zero falls back to a
+    # zero vector -- the standard "no signal" proxy in ViT/MAE masking studies -- for
+    # those positions, not a value from UNI2's own pretraining. Written to its own
+    # UNI2_448_224_masked_h5 root.
     MASKED_448_SAMPLES = {
         dataset_name: {**info, 'model_output_dir': 'UNI2'}
         for dataset_name, info in CROSS_CANCER_SAMPLES.items()
@@ -534,6 +540,35 @@ if __name__ == "__main__":
         output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3,
     )
 
-    extract_embeddings(masked_448_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
+    #extract_embeddings(masked_448_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
+    #                    dataset_cls=ResizedCellDataset)
+
+
+    # ── Phikon-v2 448→224 embeddings, cross-cancer + colon cohort, normal + masked ──
+    # Same per-cell native 448 crop resized down to 224×224 as UNI2's masked_448_configs
+    # above (ResizedCellDataset, size_side=448, size=224, default cell_offset=112), run
+    # twice for Phikon-v2 (Owkin, ViT-L/16, patch_size=16 -- note mask_token_size=16
+    # here, not the 14 default that matches UNI2/H-optimus-1/Virchow2's patch size):
+    # once unmasked (phikon_v2_normal_configs) and once with the central 3x3 tokens
+    # masked (phikon_v2_masked_configs). Unlike UNI2/H-optimus-1/Virchow2, Phikon-v2's
+    # public checkpoint keeps its own trained iBOT mask_token (see
+    # PhikonV2InferenceProvider.load_model), so the masked run substitutes the model's
+    # real pretraining-time mask embedding rather than a zero-vector fallback.
+    PHIKON_V2_SAMPLES = {
+        dataset_name: {**info, 'model_output_dir': 'PhikonV2'}
+        for dataset_name, info in CROSS_CANCER_SAMPLES.items()
+    }
+    phikon_v2_normal_configs = build_resized_cell_configs(
+        'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=448,
+        output_suffix='_448_224_h5', mask_token_size=16,
+    )
+    phikon_v2_masked_configs = build_resized_cell_configs(
+        'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=448,
+        output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3, mask_token_size=16,
+    )
+
+    extract_embeddings(phikon_v2_normal_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
+                        dataset_cls=ResizedCellDataset)
+    extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
                         dataset_cls=ResizedCellDataset)
 

@@ -37,7 +37,7 @@ class HOptimus1InferenceProvider(InferenceProvider):
         self.model.eval()
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model.to(self.device)
-        self.mask_token = self.load_mask_token("bioptimus/H-optimus-1")
+        self.mask_token = self.load_mask_token_or_zero("bioptimus/H-optimus-1")
 
         self.transforms = transforms.Compose([
             transforms.ToTensor(),
