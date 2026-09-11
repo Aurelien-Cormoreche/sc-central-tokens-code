@@ -57,9 +57,12 @@ def polygon_shape_descriptors(geom: Polygon | MultiPolygon) -> tuple[float, floa
     same convention as src/python/ot/centering_correction.py's
     `_orientation_and_elongation`).
 
-    Returns None for a degenerate shape: zero area, or a perfectly symmetric one
-    (e.g. a circle or square) where the principal axis is undefined -- callers
-    should drop the cell rather than invent an arbitrary orientation.
+    Returns None only for a truly degenerate (zero-area) shape -- callers should
+    drop the cell entirely in that case. A rotationally symmetric shape (circle,
+    or a regular-n-gon approximation of one) still returns a real area and an
+    eccentricity of 0.0; only its orientation_deg is a meaningless placeholder
+    (OrientationProbe's own eccentricity_threshold filters such cells out before
+    they'd ever be trained on).
     """
     A = Mx = My = Ixx = Iyy = Ixy = 0.0
     for part in _polygon_parts(geom):
@@ -93,13 +96,22 @@ def polygon_shape_descriptors(geom: Polygon | MultiPolygon) -> tuple[float, floa
     cov_xx, cov_yy, cov_xy = iyy_c, ixx_c, ixy_c
 
     common = np.hypot(cov_xx - cov_yy, 2 * cov_xy)
-    lam_max = 0.5 * (cov_xx + cov_yy) + 0.5 * common
-    lam_min = 0.5 * (cov_xx + cov_yy) - 0.5 * common
-    if lam_max <= 1e-9 or common < 1e-9:
+    lam_sum = cov_xx + cov_yy
+    if lam_sum <= 1e-9 or common < 1e-9:
         # common ~ 0 -> cov_xx == cov_yy and cov_xy == 0: rotationally symmetric
-        # (circle/square-like), no well-defined major axis.
-        return None
+        # (circle, or a regular-n-gon approximation of one -- not unusual for a
+        # round nucleus polygon), so the major axis is undefined. Area and
+        # eccentricity are still perfectly well-defined here (eccentricity = 0
+        # for a circle) -- only orientation is meaningless, so this must NOT drop
+        # the cell from area/eccentricity the way returning None here used to.
+        # The reported orientation_deg=0.0 is an arbitrary placeholder that's
+        # never actually trained on: OrientationProbe filters cells by its own
+        # eccentricity_threshold (default 0.5), which a circle's eccentricity=0
+        # always fails.
+        return float(area), 0.0, 0.0
 
+    lam_max = 0.5 * lam_sum + 0.5 * common
+    lam_min = 0.5 * lam_sum - 0.5 * common
     eccentricity = float(np.sqrt(max(0.0, 1.0 - lam_min / lam_max)))
     orientation_deg = float(np.degrees(0.5 * np.arctan2(2 * cov_xy, cov_xx - cov_yy)) % 180.0)
     return float(area), eccentricity, orientation_deg
