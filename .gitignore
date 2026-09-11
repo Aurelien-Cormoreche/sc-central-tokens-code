@@ -13,11 +13,13 @@ outputs_classifier/
 outputs_classifier_colon/
 outputs_deepspot/
 outputs_deepspot_gsm/
+outputs_probing_colon/
 slurm_logs/
 slurm_logs_colon/
 slurm_logs_deepspot/
 slurm_logs_deepspot_gsm/
 slurm_logs_compute_hvgs/
+slurm_logs_probing_colon/
 *.txt
 
 # Precomputed HVG tables (regenerable via compute_hvgs.py)
