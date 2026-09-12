@@ -559,16 +559,16 @@ if __name__ == "__main__":
         for dataset_name, info in CROSS_CANCER_SAMPLES.items()
     }
     phikon_v2_normal_configs = build_resized_cell_configs(
-        'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=448,
-        output_suffix='_448_224_h5', mask_token_size=16,
+        'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=100,
+        output_suffix='_100_resized_h5', mask_token_size=16,
     )
     phikon_v2_masked_configs = build_resized_cell_configs(
         'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=448,
         output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3, mask_token_size=16,
     )
 
-    extract_embeddings(phikon_v2_normal_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
+    extract_embeddings(phikon_v2_normal_configs, batch_size=512, save_cls=True, save_cell=True, save_nucleus=True,
                         dataset_cls=ResizedCellDataset)
-    extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
-                        dataset_cls=ResizedCellDataset)
+    #extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
+    #                    dataset_cls=ResizedCellDataset)
 
