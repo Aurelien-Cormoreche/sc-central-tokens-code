@@ -283,8 +283,20 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
                 print(f"[probing] probe '{probe.name}': best_lambda={result.best_lambda} "
                       f"val_selection_metric={result.val_fit.metrics['selection_metric']:.4f}")
 
-    with open(output_dir / "probes_summary.yaml", "w") as f:
-        yaml.dump(probe_summaries, f, default_flow_style=False)
+    # Merge onto any existing probes_summary.yaml rather than overwriting it, so
+    # a re-run with only a subset of probes enabled (e.g. adding
+    # cell_type_classification after the fact) appends/updates just those
+    # probes' entries instead of erasing every other probe's recorded summary --
+    # each probe's own directory/files are similarly untouched when that probe
+    # doesn't run this invocation.
+    summary_path = output_dir / "probes_summary.yaml"
+    existing_summary: dict[str, Any] = {}
+    if summary_path.exists():
+        with open(summary_path) as f:
+            existing_summary = yaml.safe_load(f) or {}
+    merged_summary = {**existing_summary, **probe_summaries}
+    with open(summary_path, "w") as f:
+        yaml.dump(merged_summary, f, default_flow_style=False)
     print(f"[probing] Done. {split_label} probe summary: {probe_summaries}")
 
 

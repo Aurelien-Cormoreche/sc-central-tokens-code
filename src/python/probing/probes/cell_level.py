@@ -1,14 +1,19 @@
-"""Cell-level morphology probes: area, eccentricity, and orientation (the latter
-regressed only for cells at or above an eccentricity threshold, where "long
-axis" is a meaningful, low-noise quantity -- see geometry.polygon_shape_descriptors
-and src/python/ot/centering_correction.py's identical reasoning for
-orientation_confidence). Targets come straight from each cell's own Xenium
-boundary polygon (see data/boundary_cache.py), independent of any context window.
+"""Cell-level probes: area, eccentricity, and orientation (the latter regressed
+only for cells at or above an eccentricity threshold, where "long axis" is a
+meaningful, low-noise quantity -- see geometry.polygon_shape_descriptors and
+src/python/ot/centering_correction.py's identical reasoning for
+orientation_confidence), plus cell_type_classification. The morphology probes'
+targets come straight from each cell's own Xenium boundary polygon (see
+data/boundary_cache.py); cell_type_classification's target is the cell's own
+mapped type (ctx.cell_types). All are independent of any context window --
+contrast with probes/context.py's cell_type_composition, which targets the
+*neighbourhood's* type fractions rather than the cell's own identity.
 """
 from __future__ import annotations
 
 import numpy as np
 import torch
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 
 from src.python.probing import geometry, solvers
 from src.python.probing.probes.base import Probe, ProbeContext, ProbeTargets, group_ranges, register_probe_factory
@@ -111,6 +116,78 @@ class OrientationProbe(Probe):
             "pred_orientation_deg": angle_pred,
             "angular_error_deg": geometry.circular_angle_error_deg(angle_true, angle_pred),
         }
+
+
+class CellTypeProbe(Probe):
+    """Multinomial-logistic-regression classification of the probed cell's own
+    mapped type (ctx.cell_types) from its embedding -- "how much of a cell's own
+    identity is linearly decodable", as opposed to cell_type_composition
+    (probes/context.py), which regresses the *neighbourhood's* type fractions.
+
+    "Unknown" cells are excluded entirely (not a real class to classify into),
+    same convention as classifier_training/experiment.py's _build_label_encoder /
+    _load_wsi_data -- so results are directly comparable to that pipeline's MLP
+    classification metrics. The class list is read from the run's population
+    cache (mapping-derived, identical for every WSI -- see
+    data/cell_population.py's WSIPopulation.class_names / CompositionProbe's
+    identical lazy-discovery pattern), minus "Unknown", the first time
+    compute_targets() is called; see Probe's docstring re: target_columns()
+    only being meaningful after that.
+    """
+    name = "cell_type_classification"
+    task_type = "classification"
+
+    def __init__(self):
+        self._class_names: list[str] = []
+
+    def target_columns(self) -> list[str]:
+        return ["class_idx"]
+
+    @property
+    def num_classes(self) -> int:
+        return len(self._class_names)
+
+    def compute_targets(self, ctx: ProbeContext) -> ProbeTargets:
+        if not self._class_names and len(ctx):
+            all_classes = ctx.population_cache.get(ctx.wsi_names[0]).class_names
+            self._class_names = [c for c in all_classes if c != "Unknown"]
+        name_to_idx = {name: i for i, name in enumerate(self._class_names)}
+        idx = np.array([name_to_idx.get(ct, -1) for ct in ctx.cell_types], dtype=np.int64)
+        valid = idx >= 0
+        return ProbeTargets(idx.astype(np.float64).reshape(-1, 1), valid)
+
+    def eval_metrics(self, y_true: torch.Tensor, y_pred: torch.Tensor) -> dict[str, float]:
+        # y_true: (N, 1) class indices (float, see compute_targets). y_pred: (N, C)
+        # class probabilities (runner._fit_predict's classification path returns
+        # predict_proba, not hard labels) -- argmax before any label-based metric.
+        true_idx = y_true.squeeze(-1).long().cpu().numpy()
+        pred_idx = y_pred.argmax(dim=1).cpu().numpy()
+        labels = list(range(self.num_classes))
+        macro_f1 = float(f1_score(true_idx, pred_idx, average="macro", zero_division=0, labels=labels))
+        return {
+            "accuracy": float(accuracy_score(true_idx, pred_idx)),
+            "macro_f1": macro_f1,
+            "weighted_f1": float(f1_score(true_idx, pred_idx, average="weighted", zero_division=0, labels=labels)),
+            "balanced_accuracy": float(balanced_accuracy_score(true_idx, pred_idx)),
+            # macro F1 (not accuracy) so lambda selection isn't dominated by the
+            # majority class on an imbalanced cell-type population.
+            "selection_metric": macro_f1,
+        }
+
+    def predictions_to_report(self, y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, np.ndarray]:
+        true_idx = y_true[:, 0].astype(np.int64)
+        pred_idx = y_pred.argmax(axis=1).astype(np.int64)
+        names = np.array(self._class_names)
+        return {
+            "true_cell_type": names[true_idx],
+            "pred_cell_type": names[pred_idx],
+            "pred_confidence": y_pred[np.arange(len(pred_idx)), pred_idx],
+        }
+
+
+@register_probe_factory("cell_type_classification")
+def _build_cell_type_classification(block: dict) -> list[Probe]:
+    return [CellTypeProbe()]
 
 
 @register_probe_factory("area")
