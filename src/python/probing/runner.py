@@ -49,18 +49,30 @@ def _select_valid(
     return features[mask], targets_values[mask], ctx.cell_ids[mask], ctx.wsi_names[mask]
 
 
-def _fit_predict(
-    probe: Probe, X_train: torch.Tensor, y_train: torch.Tensor, X_eval: torch.Tensor, lam: float,
-) -> torch.Tensor:
+def _fit(probe: Probe, X_train: torch.Tensor, y_train: torch.Tensor, lam: float):
+    """One model, fit once per lambda -- shared between the val and test
+    predictions below (they must come from the *same* train-only fit; see
+    run_probe's docstring). Split out from prediction so a lambda's fit cost is
+    paid once regardless of how many eval sets it's scored against: cheap
+    redundancy for ridge_fit's closed-form solve, but solvers.logistic_fit's
+    L-BFGS optimization is iterative and re-running it a second time on
+    identical train data for no reason used to roughly double
+    cell_type_classification's wall time (see probes/cell_level.py:CellTypeProbe)."""
     if probe.task_type == "regression":
-        model = solvers.ridge_fit(X_train, y_train, lam)
-        return model.predict(X_eval)
+        return solvers.ridge_fit(X_train, y_train, lam)
     if probe.task_type == "classification":
         # Extension point for a future classification probe (see solvers.logistic_fit's
         # docstring) -- expects target_columns() == ["class_idx"] and a `num_classes`
-        # attribute on the probe; none of the probes shipped today take this path.
+        # attribute on the probe.
         num_classes = getattr(probe, "num_classes")
-        model = solvers.logistic_fit(X_train, y_train.squeeze(-1).long(), lam, num_classes)
+        return solvers.logistic_fit(X_train, y_train.squeeze(-1).long(), lam, num_classes)
+    raise ValueError(f"Unknown probe.task_type={probe.task_type!r} for probe {probe.name!r}")
+
+
+def _predict(probe: Probe, model, X_eval: torch.Tensor) -> torch.Tensor:
+    if probe.task_type == "regression":
+        return model.predict(X_eval)
+    if probe.task_type == "classification":
         return model.predict_proba(X_eval)
     raise ValueError(f"Unknown probe.task_type={probe.task_type!r} for probe {probe.name!r}")
 
@@ -118,11 +130,12 @@ def run_probe(
     best_trial: Optional[dict] = None
 
     for lam in lambdas:
-        val_pred = _fit_predict(probe, train_Xs, train_y_t, val_Xs, lam)
+        model = _fit(probe, train_Xs, train_y_t, lam)
+        val_pred = _predict(probe, model, val_Xs)
         val_metrics = probe.eval_metrics(val_y_t, val_pred)
 
         if has_test:
-            test_pred = _fit_predict(probe, train_Xs, train_y_t, test_Xs, lam)
+            test_pred = _predict(probe, model, test_Xs)
             test_metrics = probe.eval_metrics(test_y_t, test_pred)
         else:
             test_pred = test_y_t.new_zeros((0, len(cols)))

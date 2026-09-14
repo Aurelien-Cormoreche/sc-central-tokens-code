@@ -225,7 +225,8 @@ def _run_one_offset(
                 flat_metrics = {
                     k: v for k, v in metrics.items()
                     if k not in ("per_class_f1", "confusion_matrix",
-                                 "train_loss_curve", "test_loss_curve")
+                                 "train_loss_curve", "test_loss_curve",
+                                 "predictions", "probabilities")
                 }
                 mlflow.log_metrics(flat_metrics)
                 for epoch, (trl, tel) in enumerate(

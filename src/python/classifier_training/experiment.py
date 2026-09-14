@@ -51,13 +51,17 @@ def _load_wsi_data(
     rng: np.random.Generator,
     wsi_cell_type_proportions: Optional[dict[str, dict[str, float]]] = None,
     consider_matching: bool = True,
-) -> tuple[np.ndarray, torch.Tensor, torch.Tensor]:
-    """Load cells from a set of WSIs, subsample by WSI proportion then per-WSI cell-type proportions, encode labels."""
+) -> tuple[np.ndarray, torch.Tensor, torch.Tensor, np.ndarray]:
+    """Load cells from a set of WSIs, subsample by WSI proportion then per-WSI cell-type
+    proportions, encode labels. Also returns each kept cell's own cell_id (str), carried
+    through the same subsampling as everything else -- lets callers identify individual
+    cells later (see run_split_experiment's save_test_predictions)."""
     wsi_names = list(wsi_proportions.keys())
 
-    embeddings, cell_labels, _, wsi_origin, _, wsi_idx_map = load_data(
+    embeddings, cell_labels, cell_ids, wsi_origin, _, wsi_idx_map = load_data(
         base_path, embeddings_datasets, wsi_names, mapping, consider_matching=consider_matching
     )
+    cell_ids = np.asarray([c.decode("utf-8") if isinstance(c, bytes) else c for c in cell_ids])
 
     # Drop "Unknown" cells before any proportion sampling, so e.g. proportion=1.0
     # keeps 100% of the WSI's typed cells rather than 100% of everything.
@@ -65,6 +69,7 @@ def _load_wsi_data(
     embeddings = embeddings[known_mask]
     cell_labels = cell_labels[known_mask]
     wsi_origin = wsi_origin[known_mask]
+    cell_ids = cell_ids[known_mask]
 
     keep_indices: list[np.ndarray] = []
     for wsi_idx, wsi_name in enumerate(wsi_idx_map):
@@ -104,13 +109,14 @@ def _load_wsi_data(
     emb = embeddings[keep]
     labels_str = cell_labels[keep]
     wsi_orig = wsi_origin[keep]
+    ids = cell_ids[keep]
 
     labels_int = torch.tensor(
         [label_enc[lbl] for lbl in labels_str],
         dtype=torch.long,
     )
     wsi_orig_t = torch.tensor(wsi_orig, dtype=torch.long)
-    return emb, labels_int, wsi_orig_t
+    return emb, labels_int, wsi_orig_t, ids
 
 
 def _build_grid(hparams_cfg: DictConfig) -> list[dict[str, Any]]:
@@ -134,9 +140,9 @@ def _class_counts(labels: torch.Tensor, num_classes: int, class_names: list[str]
 
 def _restrict_to_train_classes(
     train_labels: torch.Tensor,
-    eval_sets: dict[str, tuple[np.ndarray, torch.Tensor, torch.Tensor]],
+    eval_sets: dict[str, tuple[np.ndarray, torch.Tensor, torch.Tensor, np.ndarray]],
     class_names: list[str],
-) -> tuple[torch.Tensor, dict[str, tuple[np.ndarray, torch.Tensor, torch.Tensor, int]], list[str]]:
+) -> tuple[torch.Tensor, dict[str, tuple[np.ndarray, torch.Tensor, torch.Tensor, np.ndarray, int]], list[str]]:
     """Restrict the model's label space to classes actually present in train_labels.
 
     Remaps train and every eval set's labels onto a compact 0..k-1 encoding over just those
@@ -145,10 +151,10 @@ def _restrict_to_train_classes(
     rather than silently scored as a permanent miss.
 
     Args:
-        eval_sets: name -> (embeddings, labels, wsi_origins), e.g. {"val": ..., "test": ...}
+        eval_sets: name -> (embeddings, labels, wsi_origins, cell_ids), e.g. {"val": ..., "test": ...}
 
     Returns:
-        (new_train_labels, {name: (emb, labels, wsi_origins, n_dropped)}, new_class_names)
+        (new_train_labels, {name: (emb, labels, wsi_origins, cell_ids, n_dropped)}, new_class_names)
     """
     present = sorted(int(c) for c in torch.unique(train_labels).tolist())
     new_class_names = [class_names[i] for i in present]
@@ -158,18 +164,19 @@ def _restrict_to_train_classes(
         [remap[int(l)] for l in train_labels.tolist()], dtype=torch.long
     )
 
-    new_eval_sets: dict[str, tuple[np.ndarray, torch.Tensor, torch.Tensor, int]] = {}
-    for name, (emb, labels, wsi) in eval_sets.items():
+    new_eval_sets: dict[str, tuple[np.ndarray, torch.Tensor, torch.Tensor, np.ndarray, int]] = {}
+    for name, (emb, labels, wsi, ids) in eval_sets.items():
         labels_list = [int(l) for l in labels.tolist()]
         keep_mask = np.array([l in remap for l in labels_list])
         n_dropped = int((~keep_mask).sum())
 
         new_emb = emb[keep_mask]
         new_wsi = wsi[keep_mask]
+        new_ids = ids[keep_mask]
         new_labels = torch.tensor(
             [remap[l] for l in np.asarray(labels_list)[keep_mask]], dtype=torch.long
         )
-        new_eval_sets[name] = (new_emb, new_labels, new_wsi, n_dropped)
+        new_eval_sets[name] = (new_emb, new_labels, new_wsi, new_ids, n_dropped)
 
     return new_train_labels, new_eval_sets, new_class_names
 
@@ -201,6 +208,7 @@ def run_split_experiment(
     consider_matching: bool = bool(OmegaConf.select(cfg, "data.consider_matching", default=True))
     seed = int(OmegaConf.select(cfg, "seed", default=42))
     rng = np.random.default_rng(seed)
+    save_test_predictions: bool = bool(OmegaConf.select(cfg, "training.save_test_predictions", default=False))
 
     def _parse_wsi_ct_props(sp_side) -> Optional[dict[str, dict[str, float]]]:
         raw = OmegaConf.select(sp_side, "cell_type_proportions")
@@ -224,7 +232,7 @@ def run_split_experiment(
                 if parsed:
                     all_ct_props.update(parsed)
 
-        emb, labels, wsi_orig = _load_wsi_data(
+        emb, labels, wsi_orig, ids = _load_wsi_data(
             all_wsi_props, base_path, embeddings_datasets, mapping, label_enc, rng,
             wsi_cell_type_proportions=all_ct_props or None,
             consider_matching=consider_matching,
@@ -239,9 +247,15 @@ def run_split_experiment(
         val_emb = emb[perm[cut_train:cut_val]]
         val_labels = labels[perm[cut_train:cut_val]]
         val_wsi = wsi_orig[perm[cut_train:cut_val]]
+        val_ids = ids[perm[cut_train:cut_val]]
         test_emb = emb[perm[cut_val:]]
         test_labels = labels[perm[cut_val:]]
         test_wsi = wsi_orig[perm[cut_val:]]
+        test_ids = ids[perm[cut_val:]]
+        # wsi_orig indices (train/val/test alike) index into this same list, since all three
+        # were sliced from one _load_wsi_data call over all_wsi_props -- see _load_wsi_data's
+        # wsi_idx_map (== wsi_proportions.keys() order, load_data preserves input order).
+        test_wsi_name_list = list(all_wsi_props.keys())
         split_label = "same_wsi_split"
         split_info: dict[str, Any] = {
             "mode": "same_wsi_split",
@@ -257,17 +271,20 @@ def run_split_experiment(
         train_ct_props = _parse_wsi_ct_props(sp.train)
         test_ct_props = _parse_wsi_ct_props(sp.test)
 
-        train_emb, train_labels, train_wsi = _load_wsi_data(
+        train_emb, train_labels, train_wsi, _ = _load_wsi_data(
             train_props, base_path, embeddings_datasets, mapping, label_enc, rng,
             wsi_cell_type_proportions=train_ct_props,
             consider_matching=consider_matching,
         )
 
-        test_emb, test_labels, test_wsi = _load_wsi_data(
+        test_emb, test_labels, test_wsi, test_ids = _load_wsi_data(
             test_props, base_path, embeddings_datasets, mapping, label_enc, rng,
             wsi_cell_type_proportions=test_ct_props,
             consider_matching=consider_matching,
         )
+        # test_wsi indices index into this list (see _load_wsi_data's wsi_idx_map ==
+        # wsi_proportions.keys() order) -- used to decode test predictions back to WSI names.
+        test_wsi_name_list = list(test_props.keys())
 
         # Splits with no `val` key (e.g. configs/unbalanced/train_unbalanced_alpha_*.yaml,
         # which predate the train/val/test refactor and can't cheaply grow a val slide --
@@ -278,14 +295,14 @@ def run_split_experiment(
         if has_val:
             val_props = {k: float(v) for k, v in sp.val.items() if k != "cell_type_proportions"}
             val_ct_props = _parse_wsi_ct_props(sp.val)
-            val_emb, val_labels, val_wsi = _load_wsi_data(
+            val_emb, val_labels, val_wsi, val_ids = _load_wsi_data(
                 val_props, base_path, embeddings_datasets, mapping, label_enc, rng,
                 wsi_cell_type_proportions=val_ct_props,
                 consider_matching=consider_matching,
             )
         else:
             val_props, val_ct_props = test_props, test_ct_props
-            val_emb, val_labels, val_wsi = test_emb, test_labels, test_wsi
+            val_emb, val_labels, val_wsi, val_ids = test_emb, test_labels, test_wsi, test_ids
 
         split_label = f"split_{split_idx}"
         split_info = {
@@ -313,11 +330,11 @@ def run_split_experiment(
     # val/test cells of classes with zero train support are dropped (see docstring) ──
     train_labels, restricted, class_names = _restrict_to_train_classes(
         train_labels,
-        {"val": (val_emb, val_labels, val_wsi), "test": (test_emb, test_labels, test_wsi)},
+        {"val": (val_emb, val_labels, val_wsi, val_ids), "test": (test_emb, test_labels, test_wsi, test_ids)},
         class_names,
     )
-    val_emb, val_labels, val_wsi, n_val_dropped = restricted["val"]
-    test_emb, test_labels, test_wsi, n_test_dropped = restricted["test"]
+    val_emb, val_labels, val_wsi, val_ids, n_val_dropped = restricted["val"]
+    test_emb, test_labels, test_wsi, test_ids, n_test_dropped = restricted["test"]
     num_classes = len(class_names)
 
     with open(output_dir / "split_informations.yaml", "w") as f:
@@ -404,7 +421,9 @@ def run_split_experiment(
                     k: v for k, v in metrics.items()
                     if k not in ("val_per_class_f1", "val_confusion_matrix",
                                  "test_per_class_f1", "test_confusion_matrix",
-                                 "train_loss_curve", "val_loss_curve")
+                                 "train_loss_curve", "val_loss_curve",
+                                 "val_predictions", "val_probabilities",
+                                 "test_predictions", "test_probabilities")
                 }
                 mlflow.log_metrics(flat_metrics)
                 for epoch, (trl, vll) in enumerate(
@@ -436,6 +455,8 @@ def run_split_experiment(
                     "test_confusion_matrix": metrics["test_confusion_matrix"],
                     "train_loss_curve": metrics["train_loss_curve"],
                     "val_loss_curve": metrics["val_loss_curve"],
+                    "test_predictions": metrics["test_predictions"],
+                    "test_probabilities": metrics["test_probabilities"],
                 }
 
 
@@ -467,6 +488,26 @@ def run_split_experiment(
     }
     with open(output_dir / "results_summary.yaml", "w") as f:
         yaml.dump(summary, f, default_flow_style=False)
+
+    # ── per-cell test predictions of the best (val-selected) trial, opt-in via
+    # cfg.training.save_test_predictions -- true_label/predicted_label decoded through
+    # the (train-support-restricted) class_names, cell_id/wsi carried from _load_wsi_data
+    # through _restrict_to_train_classes so each row can be traced back to a real cell. ──
+    if save_test_predictions:
+        test_preds = np.asarray(best_trial["test_predictions"])
+        test_probs = np.asarray(best_trial["test_probabilities"])
+        test_wsi_names = [test_wsi_name_list[i] for i in test_wsi.tolist()]
+        pred_df = pd.DataFrame({
+            "cell_id": test_ids,
+            "wsi": test_wsi_names,
+            "true_label": [class_names[i] for i in test_labels.tolist()],
+            "predicted_label": [class_names[i] for i in test_preds.tolist()],
+        })
+        for i, cn in enumerate(class_names):
+            pred_df[f"prob_{cn}"] = test_probs[:, i]
+        pred_df["correct"] = pred_df["true_label"] == pred_df["predicted_label"]
+        pred_df.to_csv(output_dir / "test_predictions.csv", index=False)
+        print(f"[experiment] Saved {len(pred_df)} test predictions to {output_dir / 'test_predictions.csv'}")
 
     print(
         f"[experiment] Done. Best (selected on val) val_macro_f1={best_trial['val_macro_f1']:.4f}, "

@@ -150,11 +150,15 @@ def _run_forward_pass(
     loader: DataLoader,
     criterion: nn.Module,
     device: str,
-) -> tuple[float, np.ndarray]:
-    """One full pass over `loader`. Returns (weighted mean loss, predictions)."""
+) -> tuple[float, np.ndarray, np.ndarray]:
+    """One full pass over `loader`. Returns (weighted mean loss, predictions,
+    per-class softmax probabilities) -- predictions/probabilities are in the
+    same order as `loader`'s dataset (shuffle=False for every eval loader), so
+    callers can zip them back against the original labels/ids/wsi arrays."""
     total_loss = 0.0
     n = 0
     all_preds: list[np.ndarray] = []
+    all_probs: list[np.ndarray] = []
     for emb_b, label_b, weight_b in loader:
         emb_b = emb_b.to(device)
         label_b = label_b.to(device)
@@ -164,7 +168,8 @@ def _run_forward_pass(
         total_loss += (losses * weight_b).sum().item()   # weighted sum
         n += len(label_b)
         all_preds.append(logits.argmax(dim=1).cpu().numpy())
-    return total_loss / n, np.concatenate(all_preds)
+        all_probs.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
+    return total_loss / n, np.concatenate(all_preds), np.concatenate(all_probs)
 
 
 def _evaluate(
@@ -179,7 +184,7 @@ def _evaluate(
     """Run one forward pass over `loader` and compute the full metric set."""
     model.eval()
     with torch.no_grad():
-        loss, preds = _run_forward_pass(model, loader, criterion, device)
+        loss, preds, probs = _run_forward_pass(model, loader, criterion, device)
 
     labels_np = labels.numpy()
     class_range = list(range(num_classes))
@@ -201,6 +206,11 @@ def _evaluate(
             class_names[i]: float(per_class_f1_arr[i]) for i in range(num_classes)
         },
         "confusion_matrix": cm,
+        # Raw per-cell outputs (same order as `loader`'s dataset), for callers that
+        # want to save individual predictions rather than just aggregate metrics
+        # (see classifier_training/experiment.py's save_test_predictions).
+        "predictions": preds,
+        "probabilities": probs,
     }
 
 
@@ -319,7 +329,7 @@ def train_and_evaluate(
 
         model.eval()
         with torch.no_grad():
-            epoch_curve_loss, _ = _run_forward_pass(model, curve_loader, criterion, device)
+            epoch_curve_loss, _, _ = _run_forward_pass(model, curve_loader, criterion, device)
             curve_loss_curve.append(epoch_curve_loss)
         model.train()
 

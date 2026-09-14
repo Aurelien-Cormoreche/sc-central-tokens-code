@@ -186,6 +186,11 @@ mlflow:
 training:
   num_epochs: 30
   batch_size: 256
+  # If true, experiment.py writes {output_dir}/test_predictions.csv for the
+  # best (val-selected) trial of each split: one row per test cell with
+  # cell_id, wsi, true_label, predicted_label, per-class prob_<class> and
+  # correct. No effect on grid_experiment.py (it doesn't track cell_id).
+  save_test_predictions: false
 
 # ── Hyperparameter search space ────────────────────────────────────────────
 # Set tune: false and provide a single-element values list to fix a hparam.

@@ -79,6 +79,8 @@ outputs/
       results_summary.yaml     # best hparams + per-class metrics
       grid_search_results.csv  # one row per trial
       split_informations.yaml  # WSI names, cell counts per class
+      test_predictions.csv     # per-cell test predictions of the best trial;
+                                # only written when training.save_test_predictions=true
     same_wsi_split/            # present only when same_wsi_split=true
       ...
 
@@ -96,6 +98,32 @@ mlruns/                        # MLflow tracking directory
 - `{embeddings}` is `default` when `data.embeddings_datasets` is empty (all
   embedding keys in the H5 file are averaged), otherwise the sorted, underscore-joined
   list of dataset keys used (e.g. `cell_token`, `cls_cell_token`).
+
+## Saving per-cell test predictions
+
+Set `training.save_test_predictions: true` (default `false`) to write
+`test_predictions.csv` alongside each split's other outputs -- one row per test
+cell from the best (val-selected) trial:
+
+| column | meaning |
+| --- | --- |
+| `cell_id` | the cell's id, as stored in `embeddings_dataset.h5` |
+| `wsi` | WSI name the cell came from |
+| `true_label` | ground-truth mapped cell type |
+| `predicted_label` | the MLP's argmax prediction |
+| `prob_<class>` | predicted softmax probability for each class |
+| `correct` | `true_label == predicted_label` |
+
+```bash
+python -m src.python.classifier_training.experiment \
+    split_idx=0 \
+    data.model_name=virchow_v2 \
+    data.correction_name=scanorama \
+    training.save_test_predictions=true
+```
+
+Not supported by `grid_experiment.py` (the spatial-checkerboard pipeline doesn't
+track cell ids).
 
 ## Hyperparameter tuning
 
