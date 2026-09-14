@@ -180,7 +180,7 @@ probes:
   # Unlike cell_type_composition below, this targets the cell's own identity, not
   # its neighbourhood's type fractions.
   cell_type_classification:
-    enabled: true
+    enabled: false
 
   # Context probes: target is computed from every OTHER detected cell (regardless
   # of embedding availability) within a context_px x context_px window centred on
