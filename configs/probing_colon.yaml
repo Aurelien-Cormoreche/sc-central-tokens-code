@@ -119,7 +119,7 @@ data:
   base_dir: ${oc.env:DATASETS_ROOT}
   model_name: ???          # e.g. UNI2, virchow_v2, CellViT_SAM
   correction_name: ???     # e.g. Base, rpca, scanorama
-  embeddings_datasets: [bottom_left, bottom_right, top_left, top_right]  # empty = average every embedding key found in the h5 file
+  embeddings_datasets: [cls]  # empty = average every embedding key found in the h5 file
   # If true, filter to only cells matched between CellViT and Xenium (requires a
   # 'matching' dataset in the embeddings H5 file).
   consider_matching: false

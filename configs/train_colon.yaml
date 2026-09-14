@@ -190,7 +190,7 @@ training:
   # best (val-selected) trial of each split: one row per test cell with
   # cell_id, wsi, true_label, predicted_label, per-class prob_<class> and
   # correct. No effect on grid_experiment.py (it doesn't track cell_id).
-  save_test_predictions: false
+  save_test_predictions: true
 
 # ── Hyperparameter search space ────────────────────────────────────────────
 # Set tune: false and provide a single-element values list to fix a hparam.
