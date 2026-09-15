@@ -26,6 +26,10 @@ slurm_logs_probing_colon/
 data/HVGsSplit/
 data/HVGsSplitGSM/
 
+# Regenerable figure output from notebooks/*_deep_dive.ipynb
+notebooks/figures_classification_results/
+notebooks/figures_saved_cells/
+
 tmp/
 *.txt
 
