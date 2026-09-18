@@ -74,7 +74,7 @@ data:
   adata_path_template: ${oc.env:XENIUM_PROCESSED_OUTPUT_ROOT}/{sample}/adata.h5ad
   model_name: ???          # e.g. virchow_v2, UNI2, CellViT_SAM
   correction_name: ???     # e.g. Base, rpca, scanorama
-  embeddings_datasets: []
+  embeddings_datasets:  [bottom_left, bottom_right, top_left, top_right]
   consider_matching: False
   target_sum: 10000
   raw_counts: False
@@ -83,7 +83,7 @@ data:
   hvg_dir: data/HVGsSplitColon
   hvg_flavor: seurat_v3_paper
   hvg_batch_key: sampleID
-  hvg_max_genes: 500
+  hvg_max_genes: 300
   n_neighbors: 30
   resolution: 0
   cell_context: cell_neighbors
@@ -136,7 +136,7 @@ hparams:
 slurm:
   partition: gpu
   gres: gpu:1
-  mem: 256G
+  mem: 64G
   time: "05:00:00" # overwritten by launcher.py based on the grid size
   cpus_per_task: 16
   conda_env: cellViT

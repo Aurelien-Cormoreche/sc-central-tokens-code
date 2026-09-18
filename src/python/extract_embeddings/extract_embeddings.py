@@ -511,7 +511,7 @@ if __name__ == "__main__":
     }
     multicell_448_configs = build_multicell_configs(
         'UNI2', MULTICELL_448_SAMPLES, output_suffix='_448_224_multicell_h5',
-        size_side_x=448, size_side_y=448, with_boundaries=True, central_size_x=56, central_size_y=56
+        size_side_x=448, size_side_y=448, with_boundaries=True, central_size_x=112, central_size_y=112
     )
 
     extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
