@@ -79,14 +79,14 @@ data:
   target_sum: 10000
   raw_counts: False
   gene_interval: [10,20,30,40,50]
-  num_genes: 50
+  num_genes: 300
   hvg_dir: data/HVGsSplitColon
   hvg_flavor: seurat_v3_paper
   hvg_batch_key: sampleID
   hvg_max_genes: 300
-  n_neighbors: 30
+  n_neighbors: 0
   resolution: 0
-  cell_context: cell_neighbors
+  cell_context: cell
 
 # ── MLflow ─────────────────────────────────────────────────────────────────
 mlflow:

@@ -37,7 +37,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-EPOCH_LENGTH = 6  # DeepCell trials are heavier than the MLP classifier's; pad the SLURM time estimate
+EPOCH_LENGTH = 20  # DeepCell trials are heavier than the MLP classifier's; pad the SLURM time estimate
 
 
 def _estimate_total_time(cfg: DictConfig, one_epoch_time: float) -> float:

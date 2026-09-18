@@ -490,6 +490,14 @@ if __name__ == "__main__":
         'Xenium_V1_hColon_Non_diseased_Base_FFPE':         {'converted': False, 'model_output_dir': 'UNI2_896'},
     }
 
+    COLON_SAMPLES = {
+        'Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_896'},
+        'Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_896'},
+        'Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'UNI2_896'},
+        'Xenium_V1_hColon_Cancer_Add_on_FFPE':             {'converted': False, 'model_output_dir': 'UNI2_896'},
+        'Xenium_V1_hColon_Non_diseased_Base_FFPE':         {'converted': False, 'model_output_dir': 'UNI2_896'},
+    }
+
      
     specific_tokens_configs = build_resized_cell_configs('UNI2', CROSS_CANCER_SAMPLES, size_side=1344, offset=70)
 
@@ -514,7 +522,7 @@ if __name__ == "__main__":
         size_side_x=448, size_side_y=448, with_boundaries=True, central_size_x=112, central_size_y=112
     )
 
-    extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
+    #extract_embeddings_multicell(multicell_448_configs, batch_size=64, save_cell=True, save_nucleus=True)
 
 
     # ── UNI2 448→224 embeddings, central 3x3 tokens masked ─────────────────────
@@ -531,16 +539,16 @@ if __name__ == "__main__":
     # zero vector -- the standard "no signal" proxy in ViT/MAE masking studies -- for
     # those positions, not a value from UNI2's own pretraining. Written to its own
     # UNI2_448_224_masked_h5 root.
-    MASKED_448_SAMPLES = {
+    UNI2_56_SAMPLES = {
         dataset_name: {**info, 'model_output_dir': 'UNI2'}
-        for dataset_name, info in CROSS_CANCER_SAMPLES.items()
+        for dataset_name, info in COLON_SAMPLES.items()
     }
-    masked_448_configs = build_resized_cell_configs(
-        'UNI2', MASKED_448_SAMPLES, size=224, size_side=448,
-        output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3,
+    UNI2_56_configs = build_resized_cell_configs(
+        'UNI2', UNI2_56_SAMPLES, size=224, size_side=56,
+        output_suffix='_56_resized',
     )
 
-    #extract_embeddings(masked_448_configs, batch_size=64, save_cls=True, save_cell=True, save_nucleus=True,
+    #extract_embeddings(UNI2_56_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
     #                    dataset_cls=ResizedCellDataset)
 
 
@@ -559,7 +567,7 @@ if __name__ == "__main__":
         for dataset_name, info in CROSS_CANCER_SAMPLES.items()
     }
     phikon_v2_normal_configs = build_resized_cell_configs(
-        'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=100,
+        'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=224,
         output_suffix='_100_resized_h5', mask_token_size=16,
     )
     phikon_v2_masked_configs = build_resized_cell_configs(
