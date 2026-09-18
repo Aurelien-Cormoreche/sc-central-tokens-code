@@ -55,11 +55,17 @@ def _resolve_train_wsis(cfg: DictConfig, split_idx: int) -> list[str]:
 def _resolve_val_wsis(cfg: DictConfig, split_idx: int) -> list[str]:
     """Val/test WSIs for this split, used only to check gene-panel presence. split_idx == -1
     (same_wsi_split): train and test cells come from the same pooled WSI set, so presence is
-    checked against that same pool (already covered by train_wsis — nothing extra to check)."""
+    checked against that same pool (already covered by train_wsis — nothing extra to check).
+    split_idx >= 0: `test` plus, if present, the split's optional `val` WSI(s) (see
+    deepspot_training/experiment.py::_resolve_split) — whichever WSIs a trained model will actually
+    be evaluated on need the gene present."""
     if split_idx == -1:
         return _resolve_train_wsis(cfg, split_idx)
     sp = cfg.splits[split_idx]
-    return [k for k in sp.test.keys() if k != "cell_type_proportions"]
+    wsis = [k for k in sp.test.keys() if k != "cell_type_proportions"]
+    if OmegaConf.select(sp, "val") is not None:
+        wsis += [k for k in sp.val.keys() if k != "cell_type_proportions" and k not in wsis]
+    return wsis
 
 
 def compute_split_hvgs(

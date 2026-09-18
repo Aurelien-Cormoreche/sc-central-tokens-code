@@ -1,0 +1,162 @@
+# Top-level config for the DeepCell (DeepSpot) embedding evaluation pipeline, restricted to the
+# 5 colon WSIs used by configs/train_colon.yaml (4 cancer + 1 non-diseased), with a fixed
+# hyperparameter set (gene_normalization=standard, learning_rate=1.0e-3 -- no grid search/tuning).
+#
+# Splits follow configs/train_colon.yaml's convention: the non-diseased WSI
+# (Xenium_V1_hColon_Non_diseased_Base_FFPE) is never held out as test -- it is always part of
+# train -- so this is a 4-fold Leave-One-WSI-Out over the 4 cancer WSIs (deepspot's split schema
+# only has train/test roles; the `test` WSI doubles as the validation set used for early stopping
+# and the reported per-gene Pearson metric -- see experiment.py::_resolve_split /
+# run_split_experiment).
+#
+# Otherwise identical to configs/deepspot_train.yaml -- see that file's comments for the shared
+# blocks. Two things you must set per run, same as before:
+#   - data.model_name / data.correction_name
+#   - data.hvg_dir: precomputed HVG rankings must exist per split_label (split_0.csv ...
+#     split_3.csv) under this directory, or set it to null to compute HVGs on the fly. Run
+#     compute_hvgs.py against this config first.
+
+defaults:
+  - _self_
+
+# ── Output ─────────────────────────────────────────────────────────────────
+# Folder (relative to repo root) where experiment.py writes per-split results.
+output_dir: outputs_deepspot_colon
+
+# ── WSI splits ─────────────────────────────────────────────────────────────
+# 4-fold Leave-One-WSI-Out over the 4 colon cancer WSIs; the non-diseased WSI always stays in
+# train (same cohort/convention as configs/train_colon.yaml).
+splits:
+  # split 0: test=Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+
+  # split 1: test=Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+
+  # split 2: test=Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    test:
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+
+  # split 3: test=Xenium_V1_hColon_Cancer_Add_on_FFPE
+  - train:
+      Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE: 1.0
+      Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
+    test:
+      Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
+
+# No same-WSI (cell-level 80/20) upper-bound mode requested for this LWO sweep.
+same_wsi_split: False
+
+# ── Data paths & fixed data-shaping parameters ──────────────────────────────
+data:
+  # base_dir / adata_path_template resolve from the DATASETS_ROOT / XENIUM_PROCESSED_OUTPUT_ROOT
+  # env vars (see src/python/code_configs/paths.py and .env.example) -- set them before running.
+  base_dir: ${oc.env:DATASETS_ROOT}
+  adata_path_template: ${oc.env:XENIUM_PROCESSED_OUTPUT_ROOT}/{sample}/adata.h5ad
+  model_name: ???          # e.g. virchow_v2, UNI2, CellViT_SAM
+  correction_name: ???     # e.g. Base, rpca, scanorama
+  embeddings_datasets: []
+  consider_matching: False
+  target_sum: 10000
+  raw_counts: False
+  gene_interval: [10,20,30,40,50]
+  num_genes: 50
+  hvg_dir: data/HVGsSplitColon
+  hvg_flavor: seurat_v3_paper
+  hvg_batch_key: sampleID
+  hvg_max_genes: 500
+  n_neighbors: 30
+  resolution: 0
+  cell_context: cell_neighbors
+
+# ── MLflow ─────────────────────────────────────────────────────────────────
+mlflow:
+  tracking_uri: file:./mlruns
+  experiment_name: deepcell_embeddings_eval_colon
+
+# ── Training ───────────────────────────────────────────────────────────────
+training:
+  num_epochs: 6
+  batch_size: 1024
+  early_stopping_patience: 3
+  early_stopping_min_delta: 0.01
+
+# ── Hyperparameter search space ────────────────────────────────────────────
+# Fixed to a single (gene_normalization=standard, learning_rate=1.0e-3) combination -- no grid
+# search/tuning (tune: False everywhere), unlike configs/deepspot_train.yaml which sweeps both.
+hparams:
+  learning_rate:
+    tune: False
+    values: [1.0e-3]
+  dropout:
+    tune: False
+    values: [0.2]
+  weight_decay:
+    tune: False
+    values: [1.0e-6]
+  loss_func:
+    tune: False
+    values: ["mse"]
+  gene_normalization:
+    tune: False
+    values: ["standard"]
+  n_ensemble:
+    tune: False
+    values: [10]
+  phi2rho_size:
+    tune: False
+    values: [1024]
+  emb_size:
+    tune: False
+    values: [1024]
+  agg_neighbors:
+    tune: False
+    values: ["max"]
+
+# ── SLURM ──────────────────────────────────────────────────────────────────
+slurm:
+  partition: gpu
+  gres: gpu:1
+  mem: 256G
+  time: "05:00:00" # overwritten by launcher.py based on the grid size
+  cpus_per_task: 16
+  conda_env: cellViT
+  output_dir: slurm_logs_deepspot_colon
+  # If true, run all splits sequentially in a single SLURM job on one GPU
+  # instead of submitting one job per split.
+  sequential: false
+
+# ── Launcher flags ─────────────────────────────────────────────────────────
+dry_run: False       # Print SLURM scripts without submitting
+debug_split: null    # If set to an int, print logs of that split and exit
+
+# ── Set by launcher per SLURM job; do not set in this file ─────────────────
+split_idx: null
+
+# ── Hydra settings ─────────────────────────────────────────────────────────
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job_logging:
+    root:
+      level: WARNING

@@ -57,18 +57,23 @@ def _embeddings_folder_name(embeddings_datasets: list[str]) -> str:
     return "_".join(sorted(embeddings_datasets)) if embeddings_datasets else "default"
 
 
-def _resolve_split(cfg: DictConfig, split_idx: int) -> tuple[list[str], Optional[list[str]], dict]:
+def _resolve_split(cfg: DictConfig, split_idx: int) -> tuple[list[str], Optional[list[str]], list[str], dict]:
     """
-    Resolve the train/val WSI lists for this split.
+    Resolve the train/val/test WSI lists for this split.
 
     split_idx == -1 (same_wsi_split, upper bound): pool every WSI across all configured splits into
-    one set; train_wsis == val_wsis == that pooled set, and the train/val cell split happens at the
-    *cell* level (see run_split_experiment) rather than by WSI, matching the classifier's same-WSI
-    upper-bound mode. NOTE: this means the highly-variable-gene selection also sees val cells — an
-    optimistic upper bound, same caveat as the classifier's same_wsi_split.
+    one set; train_wsis == test_wsis == that pooled set (no WSI-level `val` is possible here), and
+    the train/val cell split happens at the *cell* level (see run_split_experiment) rather than by
+    WSI, matching the classifier's same-WSI upper-bound mode. NOTE: this means the
+    highly-variable-gene selection also sees val cells — an optimistic upper bound, same caveat as
+    the classifier's same_wsi_split.
 
-    split_idx >= 0 (LWO): train/val WSIs come from cfg.splits[split_idx].train / .test.
-    `cell_type_proportions` sub-keys (classifier-specific) are ignored if present.
+    split_idx >= 0 (LWO): train/test WSIs come from cfg.splits[split_idx].train / .test. An optional
+    `val` key on the split provides a genuine held-out hyperparameter-selection WSI set, distinct
+    from `test` (same shape as the classifier pipeline's train/val/test schema); when absent, `val`
+    is None and run_split_experiment falls back to selecting hyperparameters on the test set itself
+    (warning if more than one hparam combination is being compared). `cell_type_proportions`
+    sub-keys (classifier-specific) are ignored if present.
     """
     if split_idx == -1:
         all_wsis: set[str] = set()
@@ -77,13 +82,20 @@ def _resolve_split(cfg: DictConfig, split_idx: int) -> tuple[list[str], Optional
             all_wsis.update(k for k in sp.test.keys() if k != "cell_type_proportions")
         wsis = sorted(all_wsis)
         info = {"mode": "same_wsi_split", "wsis": wsis}
-        return wsis, None, info
+        return wsis, None, wsis, info
 
     sp = cfg.splits[split_idx]
     train_wsis = [k for k in sp.train.keys() if k != "cell_type_proportions"]
-    val_wsis = [k for k in sp.test.keys() if k != "cell_type_proportions"]
-    info = {"mode": "lwo", "split_idx": split_idx, "train_wsis": train_wsis, "val_wsis": val_wsis}
-    return train_wsis, val_wsis, info
+    test_wsis = [k for k in sp.test.keys() if k != "cell_type_proportions"]
+    val_wsis = (
+        [k for k in sp.val.keys() if k != "cell_type_proportions"]
+        if OmegaConf.select(sp, "val") is not None else None
+    )
+    info = {
+        "mode": "lwo", "split_idx": split_idx,
+        "train_wsis": train_wsis, "val_wsis": val_wsis, "test_wsis": test_wsis,
+    }
+    return train_wsis, val_wsis, test_wsis, info
 
 
 def _load_precomputed_hvgs(cfg: DictConfig, split_idx: int, num_genes: int) -> Optional[pd.DataFrame]:
@@ -196,7 +208,7 @@ def _plot_pearson_distribution(per_gene_pearson: dict, out_path: Path) -> None:
     plt.hist(values, bins=30)
     plt.xlabel("Pearson correlation")
     plt.ylabel("Number of genes")
-    plt.title("Per-gene Pearson correlation (validation)")
+    plt.title("Per-gene Pearson correlation (test)")
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
@@ -219,7 +231,7 @@ def _plot_training_curve(train_curve: list[float], val_curve: list[float], out_p
 # ── main experiment logic ─────────────────────────────────────────────────────
 
 def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_dir: Path) -> None:
-    train_wsis, val_wsis, split_info = _resolve_split(cfg, split_idx)
+    train_wsis, val_wsis, test_wsis, split_info = _resolve_split(cfg, split_idx)
     num_genes = int(cfg.data.num_genes)
     precomputed_genes = _load_precomputed_hvgs(cfg, split_idx, num_genes)
 
@@ -237,20 +249,31 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
         cut = int(n * 0.8)
         train_dataset = _CellSubset(full_dataset, perm[:cut])
         val_dataset = _CellSubset(full_dataset, perm[cut:])
+        # No separate held-out test WSI in this pooled upper-bound mode.
+        test_dataset = val_dataset
         gene_names = full_dataset.gene_names
         genes_table = full_dataset.genes_table
-        train_size, val_size = len(train_dataset), len(val_dataset)
+        train_size, val_size, test_size = len(train_dataset), len(val_dataset), len(val_dataset)
         _base_for_normalization = full_dataset
     else:
         train_dataset = _build_dataset(
             cfg, train_wsis, num_genes=num_genes, highly_variable_genes=precomputed_genes,
         )
-        val_dataset = _build_dataset(
-            cfg, val_wsis, highly_variable_genes=train_dataset.genes_table,
+        test_dataset = _build_dataset(
+            cfg, test_wsis, highly_variable_genes=train_dataset.genes_table,
         )
+        if val_wsis is not None:
+            val_dataset = _build_dataset(
+                cfg, val_wsis, highly_variable_genes=train_dataset.genes_table,
+            )
+        else:
+            # No explicit `val` split -- fall back to selecting hyperparameters on the test set
+            # itself (warned about below if there's more than one hparam combination to select
+            # among).
+            val_dataset = test_dataset
         gene_names = train_dataset.gene_names
         genes_table = train_dataset.genes_table
-        train_size, val_size = len(train_dataset), len(val_dataset)
+        train_size, val_size, test_size = len(train_dataset), len(val_dataset), len(test_dataset)
         _base_for_normalization = None
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -261,12 +284,13 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
             "n_neighbors": int(cfg.data.n_neighbors),
             "train_size": int(train_size),
             "val_size": int(val_size),
+            "test_size": int(test_size),
         }, f)
 
     pd.Series(gene_names, name="gene_name").to_csv(output_dir / "genes_used.csv", index=False)
 
     print(f"[experiment] split={split_idx}: train={train_size} cells, val={val_size} cells, "
-          f"n_genes={len(gene_names)}")
+          f"test={test_size} cells, n_genes={len(gene_names)}")
 
     # ── grid search over model/training hyperparameters ─────────────────────────
     input_dim = (
@@ -276,6 +300,15 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     )
     grid = _build_grid(cfg.hparams)
     print(f"[experiment] Running {len(grid)} trials on {device}")
+
+    if val_dataset is test_dataset and len(grid) > 1:
+        print(
+            f"WARNING: split {split_idx} has no held-out validation set (no `val:` key on this "
+            f"split, or same_wsi_split has no separate test WSI) -- hyperparameters are being "
+            f"selected on the test set across {len(grid)} trials, so the reported test metric for "
+            f"the selected trial is optimistic. Add a `val:` key to this split for a genuine "
+            f"held-out selection set."
+        )
 
     mlflow.set_tracking_uri(cfg.mlflow.tracking_uri)
     mlflow.set_experiment(cfg.mlflow.experiment_name)
@@ -295,6 +328,7 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
             "num_trials": len(grid),
             "train_size": int(train_size),
             "val_size": int(val_size),
+            "test_size": int(test_size),
         })
 
         for trial_idx, hparams in enumerate(grid):
@@ -304,6 +338,8 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
             else:
                 scaler = train_dataset.set_normalization(hparams["gene_normalization"])
                 val_dataset.set_normalization(hparams["gene_normalization"], scaler=scaler)
+                if test_dataset is not val_dataset:
+                    test_dataset.set_normalization(hparams["gene_normalization"], scaler=scaler)
 
             train_cfg = TrainConfig(
                 input_size=int(input_dim),
@@ -327,11 +363,15 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
             with mlflow.start_run(run_name=f"trial_{trial_idx}", nested=True):
                 mlflow.log_params({k: (str(v) if v is None else v) for k, v in hparams.items()})
 
-                metrics = train_and_evaluate(train_dataset, val_dataset, gene_names, train_cfg, device)
+                metrics = train_and_evaluate(
+                    train_dataset, val_dataset, test_dataset, gene_names, train_cfg, device,
+                )
 
                 mlflow.log_metrics({
-                    "mean_pearson": metrics["mean_pearson"],
-                    "median_pearson": metrics["median_pearson"],
+                    "val_mean_pearson": metrics["val_mean_pearson"],
+                    "val_median_pearson": metrics["val_median_pearson"],
+                    "test_mean_pearson": metrics["test_mean_pearson"],
+                    "test_median_pearson": metrics["test_median_pearson"],
                 })
                 for step, loss in enumerate(metrics["train_loss_curve"]):
                     mlflow.log_metric("train_loss", loss, step=step)
@@ -340,19 +380,24 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
 
             row: dict[str, Any] = {
                 "trial_idx": trial_idx, **hparams,
-                "mean_pearson": metrics["mean_pearson"],
-                "median_pearson": metrics["median_pearson"],
+                "val_mean_pearson": metrics["val_mean_pearson"],
+                "val_median_pearson": metrics["val_median_pearson"],
+                "test_mean_pearson": metrics["test_mean_pearson"],
+                "test_median_pearson": metrics["test_median_pearson"],
             }
             trial_rows.append(row)
 
+            # Hyperparameter selection is always on the val metric (== test when there's no
+            # genuine held-out val, per the warning above).
             if best_trial is None or (
-                not np.isnan(metrics["mean_pearson"])
-                and metrics["mean_pearson"] > best_trial["mean_pearson"]
+                not np.isnan(metrics["val_mean_pearson"])
+                and metrics["val_mean_pearson"] > best_trial["val_mean_pearson"]
             ):
                 best_trial = {**row, **metrics}
 
             print(f"[experiment] Trial {trial_idx + 1}/{len(grid)} — "
-                  f"mean_pearson={metrics['mean_pearson']:.4f} median_pearson={metrics['median_pearson']:.4f}")
+                  f"val_mean_pearson={metrics['val_mean_pearson']:.4f} "
+                  f"test_mean_pearson={metrics['test_mean_pearson']:.4f}")
 
     # ── save results ─────────────────────────────────────────────────────────
     pd.DataFrame(trial_rows).to_csv(output_dir / "grid_search_results.csv", index=False)
@@ -364,9 +409,11 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
         best_trial["train_loss_curve"], best_trial["val_loss_curve"],
         output_dir / "best_training_curve.png",
     )
-    _plot_pearson_distribution(best_trial["per_gene_pearson"], output_dir / "pearson_distribution.png")
+    # Reported per-gene distribution/top/worst genes use the held-out test metric (val was only
+    # for hyperparameter selection).
+    _plot_pearson_distribution(best_trial["test_per_gene_pearson"], output_dir / "pearson_distribution.png")
 
-    per_gene = pd.Series(best_trial["per_gene_pearson"], name="pearson").sort_values(ascending=False)
+    per_gene = pd.Series(best_trial["test_per_gene_pearson"], name="pearson").sort_values(ascending=False)
     per_gene.dropna().head(10).to_csv(output_dir / "top10_genes.csv", header=True)
     per_gene.dropna().tail(10).to_csv(output_dir / "worst10_genes.csv", header=True)
 
@@ -374,7 +421,7 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     # _gene_interval_stats docstring): mean/median Pearson restricted to the top-N most variable
     # genes of the trained num_genes set, for each N in cfg.data.gene_interval.
     gene_interval = list(cfg.data.gene_interval)
-    gene_interval_stats = _gene_interval_stats(genes_table, best_trial["per_gene_pearson"], gene_interval)
+    gene_interval_stats = _gene_interval_stats(genes_table, best_trial["test_per_gene_pearson"], gene_interval)
     gene_interval_stats.to_csv(output_dir / "gene_interval_stats.csv", index=False)
     _plot_gene_interval_stats(gene_interval_stats, output_dir / "gene_interval_stats.png")
 
@@ -382,8 +429,10 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     summary = {
         "best_config": {k: best_trial[k] for k in hparam_keys},
         "best_metrics": {
-            "mean_pearson": best_trial["mean_pearson"],
-            "median_pearson": best_trial["median_pearson"],
+            "val_mean_pearson": best_trial["val_mean_pearson"],
+            "val_median_pearson": best_trial["val_median_pearson"],
+            "test_mean_pearson": best_trial["test_mean_pearson"],
+            "test_median_pearson": best_trial["test_median_pearson"],
         },
         "num_genes": num_genes,
         "n_neighbors": int(cfg.data.n_neighbors),
@@ -393,8 +442,8 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     with open(output_dir / "results_summary.yaml", "w") as f:
         yaml.dump(summary, f, default_flow_style=False)
 
-    print(f"[experiment] Done. Best mean_pearson={best_trial['mean_pearson']:.4f} "
-          f"with config {summary['best_config']}")
+    print(f"[experiment] Done. Best val_mean_pearson={best_trial['val_mean_pearson']:.4f} "
+          f"test_mean_pearson={best_trial['test_mean_pearson']:.4f} with config {summary['best_config']}")
 
 
 # ── Hydra entry point ─────────────────────────────────────────────────────────

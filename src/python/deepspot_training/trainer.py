@@ -151,16 +151,20 @@ def train_and_evaluate(
     )
     trainer.fit(model, train_loader, val_loader)
 
-    predictions = run_inference_from_dataloader(model, val_loader, device)
-    y_true = val_dataset.transcriptomics_df.values
-
-    per_gene_pearson = _per_gene_pearson(predictions, y_true, gene_names)
-    valid_r = np.array([r for r in per_gene_pearson.values() if not np.isnan(r)])
+    val_metrics = _evaluate(model, val_loader, val_dataset, gene_names, device)
+    if test_dataset is val_dataset:
+        # No genuine held-out test set (see docstring) -- skip the redundant inference pass.
+        test_metrics = val_metrics
+    else:
+        test_loader = DataLoader(
+            test_dataset, batch_size=config.batch_size, shuffle=False,
+            num_workers=config.num_workers, drop_last=False,
+        )
+        test_metrics = _evaluate(model, test_loader, test_dataset, gene_names, device)
 
     return {
-        "mean_pearson": float(np.mean(valid_r)) if len(valid_r) else float("nan"),
-        "median_pearson": float(np.median(valid_r)) if len(valid_r) else float("nan"),
-        "per_gene_pearson": per_gene_pearson,
+        **_prefix_metrics(val_metrics, "val"),
+        **_prefix_metrics(test_metrics, "test"),
         "train_loss_curve": list(model.training_loss),
         "val_loss_curve": list(model.validation_loss),
     }
