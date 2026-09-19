@@ -74,7 +74,7 @@ data:
   adata_path_template: ${oc.env:XENIUM_PROCESSED_OUTPUT_ROOT}/{sample}/adata.h5ad
   model_name: ???          # e.g. virchow_v2, UNI2, CellViT_SAM
   correction_name: ???     # e.g. Base, rpca, scanorama
-  embeddings_datasets:  [bottom_left, bottom_right, top_left, top_right]
+  embeddings_datasets:  [cls]
   consider_matching: False
   target_sum: 10000
   raw_counts: False
