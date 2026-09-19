@@ -575,8 +575,32 @@ if __name__ == "__main__":
         output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3, mask_token_size=16,
     )
 
-    extract_embeddings(phikon_v2_normal_configs, batch_size=512, save_cls=True, save_cell=True, save_nucleus=True,
-                        dataset_cls=ResizedCellDataset)
+    #extract_embeddings(phikon_v2_normal_configs, batch_size=512, save_cls=True, save_cell=True, save_nucleus=True,
+    #                    dataset_cls=ResizedCellDataset)
     #extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
     #                    dataset_cls=ResizedCellDataset)
+
+
+    # ── Dummy (PCA) baseline embeddings, colon cohort, standard 224×224 centre patch ──
+    # Same centre-patch extraction as ATTN_COLON_SAMPLES/attn_normal_configs above
+    # (PatchDataset default, no resize -- the "224" in the section title), but for
+    # select_inference_provider('Dummy') (DummyInferenceProvider(use_pca=True): PCA
+    # over flattened patch pixels, no learned model -- see fit_pca/inference in
+    # dummy_inference_provider.py). extract_embeddings() calls fit_pca on a fresh
+    # PatchDataset per inference_run automatically since DummyInferenceProvider sets
+    # use_pca=True. No CLS or boundary-token grid available for this provider
+    # (save_cls/save_cell/save_nucleus are all no-ops here, see
+    # DummyInferenceProvider.inference), so with_boundaries is left off and
+    # extract_embeddings is called with its save_cls/save_cell/save_nucleus defaults.
+    # Written to its own Dummy_224_h5 root, matching the 'Dummy_224' model_name
+    # folder the classifier pipeline expects.
+    DUMMY_224_COLON_SAMPLES = {
+        'Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'Dummy_224'},
+        'Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE': {'converted': False, 'model_output_dir': 'Dummy_224'},
+        'Xenium_V1_hColon_Non_diseased_Base_FFPE':         {'converted': False, 'model_output_dir': 'Dummy_224'},
+        'Xenium_V1_hColon_Cancer_Add_on_FFPE':             {'converted': False, 'model_output_dir': 'Dummy_224'},
+    }
+    dummy_224_configs = build_configs('Dummy', DUMMY_224_COLON_SAMPLES)
+
+    extract_embeddings(dummy_224_configs, batch_size=256, dataset_cls=PatchDataset)
 
