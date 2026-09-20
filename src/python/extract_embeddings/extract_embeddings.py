@@ -572,13 +572,13 @@ if __name__ == "__main__":
     )
     phikon_v2_masked_configs = build_resized_cell_configs(
         'PhikonV2', PHIKON_V2_SAMPLES, size=224, size_side=448,
-        output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=3, mask_token_size=16,
+        output_suffix='_448_224_masked_h5', mask=True, mask_grid_size=4, mask_token_size=16,
     )
 
     #extract_embeddings(phikon_v2_normal_configs, batch_size=512, save_cls=True, save_cell=True, save_nucleus=True,
     #                    dataset_cls=ResizedCellDataset)
-    #extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
-    #                    dataset_cls=ResizedCellDataset)
+    extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
+                        dataset_cls=ResizedCellDataset)
 
 
     # ── Dummy (PCA) baseline embeddings, colon cohort, standard 224×224 centre patch ──
@@ -602,5 +602,5 @@ if __name__ == "__main__":
     }
     dummy_224_configs = build_configs('Dummy', DUMMY_224_COLON_SAMPLES)
 
-    extract_embeddings(dummy_224_configs, batch_size=256, dataset_cls=PatchDataset)
+    #extract_embeddings(dummy_224_configs, batch_size=256, dataset_cls=PatchDataset)
 

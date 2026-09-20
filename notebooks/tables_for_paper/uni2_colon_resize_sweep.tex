@@ -1,0 +1,15 @@
+\begin{table}
+\caption{uni2 colon resize sweep}
+\label{tab:uni2_colon_resize_sweep}
+\begin{tabular}{rllrrrrrr}
+\toprule
+size_side_px & model_name & embeddings & macro_f1_mean & macro_f1_std & n_splits & improvement_over_smallest_mean & improvement_over_smallest_std & improvement_over_smallest_n \\
+\midrule
+100 & UNI2_100_resized & bottom_left_bottom_right_top_left_top_right & 0.6081 & 0.0904 & 8 & 0.0000 & 0.0000 & 8 \\
+224 & UNI2_specific_tokens_folder & nucleus & 0.6862 & 0.0983 & 8 & 0.0781 & 0.0283 & 8 \\
+448 & UNI2_448_resized & nucleus & 0.6870 & 0.0961 & 8 & 0.0789 & 0.0346 & 8 \\
+896 & UNI2_896_resized & nucleus & 0.6700 & 0.0928 & 8 & 0.0619 & 0.0354 & 8 \\
+1344 & UNI2_1344_resized & nucleus & 0.6481 & 0.0913 & 8 & 0.0401 & 0.0381 & 8 \\
+\bottomrule
+\end{tabular}
+\end{table}

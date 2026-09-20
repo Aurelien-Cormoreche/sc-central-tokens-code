@@ -1,0 +1,42 @@
+\begin{table}
+\caption{probe cellcount density raw}
+\label{tab:probe_cellcount_density_raw}
+\begin{tabular}{llllrrrr}
+\toprule
+model & resolution & token & probe & context_px & test_r2_mean & test_r2_std & n_splits \\
+\midrule
+UNI2 & native & central (4-token avg) & cell_count & 224 & 0.4268 & 0.3328 & 8 \\
+UNI2 & native & central (4-token avg) & cell_type_composition & 224 & 0.4156 & 0.1189 & 8 \\
+UNI2 & native & CLS & cell_count & 224 & 0.0358 & 0.9202 & 8 \\
+UNI2 & native & CLS & cell_type_composition & 224 & 0.3933 & 0.1701 & 8 \\
+UNI2 & 100resized & central (4-token avg) & cell_count & 224 & -0.4500 & 1.4132 & 8 \\
+UNI2 & 100resized & central (4-token avg) & cell_type_composition & 224 & 0.0950 & 0.2451 & 8 \\
+UNI2 & 100resized & CLS & cell_count & 224 & -1.2185 & 3.0331 & 8 \\
+UNI2 & 100resized & CLS & cell_type_composition & 224 & 0.1376 & 0.2160 & 8 \\
+H-Optimus-1 & native & central (4-token avg) & cell_count & 224 & 0.4125 & 0.3519 & 8 \\
+H-Optimus-1 & native & central (4-token avg) & cell_type_composition & 224 & 0.3736 & 0.1537 & 8 \\
+H-Optimus-1 & native & CLS & cell_count & 224 & -0.1006 & 1.3331 & 8 \\
+H-Optimus-1 & native & CLS & cell_type_composition & 224 & 0.3767 & 0.1757 & 8 \\
+H-Optimus-1 & 100resized & central (4-token avg) & cell_count & 224 & -0.3805 & 1.3987 & 8 \\
+H-Optimus-1 & 100resized & central (4-token avg) & cell_type_composition & 224 & 0.0922 & 0.2406 & 8 \\
+H-Optimus-1 & 100resized & CLS & cell_count & 224 & -1.0624 & 2.7944 & 8 \\
+H-Optimus-1 & 100resized & CLS & cell_type_composition & 224 & 0.0372 & 0.3394 & 8 \\
+Phikon-v2 & native & central (4-token avg) & cell_count & 224 & NaN & NaN & 0 \\
+Phikon-v2 & native & central (4-token avg) & cell_type_composition & 224 & NaN & NaN & 0 \\
+Phikon-v2 & native & CLS & cell_count & 224 & 0.0772 & 0.8931 & 8 \\
+Phikon-v2 & native & CLS & cell_type_composition & 224 & 0.2131 & 0.2513 & 8 \\
+Phikon-v2 & 100resized & central (4-token avg) & cell_count & 224 & -0.9975 & 2.3915 & 8 \\
+Phikon-v2 & 100resized & central (4-token avg) & cell_type_composition & 224 & 0.0242 & 0.2212 & 8 \\
+Phikon-v2 & 100resized & CLS & cell_count & 224 & -1.3702 & 3.3006 & 8 \\
+Phikon-v2 & 100resized & CLS & cell_type_composition & 224 & 0.0241 & 0.2257 & 8 \\
+Virchow2 & native & central (4-token avg) & cell_count & 224 & 0.2140 & 0.6615 & 8 \\
+Virchow2 & native & central (4-token avg) & cell_type_composition & 224 & 0.2546 & 0.3342 & 8 \\
+Virchow2 & native & CLS & cell_count & 224 & 0.0812 & 1.0372 & 8 \\
+Virchow2 & native & CLS & cell_type_composition & 224 & 0.2910 & 0.2451 & 8 \\
+Virchow2 & 100resized & central (4-token avg) & cell_count & 224 & -1.3182 & 3.1494 & 8 \\
+Virchow2 & 100resized & central (4-token avg) & cell_type_composition & 224 & -0.1817 & 0.4529 & 8 \\
+Virchow2 & 100resized & CLS & cell_count & 224 & -2.1089 & 4.6610 & 8 \\
+Virchow2 & 100resized & CLS & cell_type_composition & 224 & -0.2049 & 0.4954 & 8 \\
+\bottomrule
+\end{tabular}
+\end{table}
