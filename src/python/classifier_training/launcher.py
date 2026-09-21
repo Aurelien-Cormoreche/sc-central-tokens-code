@@ -25,7 +25,7 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-EPOCH_LENGTH = 0.5
+EPOCH_LENGTH = 2
 
 def _estimate_total_time(cfg: DictConfig, one_epoch_time: float):
     num_epochs = cfg.training.num_epochs
