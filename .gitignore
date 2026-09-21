@@ -15,6 +15,7 @@ slurm_logs*/
 
 
 
+
 # Precomputed HVG tables (regenerable via compute_hvgs.py)
 data/HVGsSplit/
 data/HVGsSplitGSM/
@@ -26,6 +27,9 @@ notebooks/figures_saved_cells/
 # Cached intermediate results (notebooks/figure_for_paper.ipynb section 9) --
 # regenerable from raw h5/adata files, see DRIFT_FORCE_RECOMPUTE there.
 notebooks/cached_results/
+notebooks/figures_for_paper
+notebooks/tables_for_paper
+
 
 tmp/
 *.txt
