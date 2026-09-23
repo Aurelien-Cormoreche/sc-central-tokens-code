@@ -539,17 +539,17 @@ if __name__ == "__main__":
     # zero vector -- the standard "no signal" proxy in ViT/MAE masking studies -- for
     # those positions, not a value from UNI2's own pretraining. Written to its own
     # UNI2_448_224_masked_h5 root.
-    UNI2_56_SAMPLES = {
+    UNI2_100_SAMPLES = {
         dataset_name: {**info, 'model_output_dir': 'UNI2'}
         for dataset_name, info in COLON_SAMPLES.items()
     }
-    UNI2_56_configs = build_resized_cell_configs(
-        'UNI2', UNI2_56_SAMPLES, size=224, size_side=56,
-        output_suffix='_56_resized',
+    UNI2_100_configs = build_resized_cell_configs(
+        'UNI2', UNI2_100_SAMPLES, size=224, size_side=100,
+        output_suffix='_100_resized',
     )
 
-    #extract_embeddings(UNI2_56_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
-    #                    dataset_cls=ResizedCellDataset)
+    extract_embeddings(UNI2_100_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
+                       dataset_cls=ResizedCellDataset)
 
 
     # ── Phikon-v2 448→224 embeddings, cross-cancer + colon cohort, normal + masked ──
@@ -577,8 +577,8 @@ if __name__ == "__main__":
 
     #extract_embeddings(phikon_v2_normal_configs, batch_size=512, save_cls=True, save_cell=True, save_nucleus=True,
     #                    dataset_cls=ResizedCellDataset)
-    extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
-                        dataset_cls=ResizedCellDataset)
+    #extract_embeddings(phikon_v2_masked_configs, batch_size=256, save_cls=True, save_cell=True, save_nucleus=True,
+    #                   dataset_cls=ResizedCellDataset)
 
 
     # ── Dummy (PCA) baseline embeddings, colon cohort, standard 224×224 centre patch ──
