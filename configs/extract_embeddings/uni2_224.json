@@ -1,0 +1,10 @@
+{
+  "_comment": "UNI2 (per-cell, not multicell), native 224x224 centre patch, every slide marked ok by notebooks/check_wsi_openslide.ipynb -> $DATASETS_ROOT/UNI2_h5/raw/{sample}/embeddings_dataset.h5",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../notebooks/wsi_openslide_manifest.csv"
+}

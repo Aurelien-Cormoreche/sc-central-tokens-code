@@ -229,8 +229,17 @@ conch_configs = build_configs("CONCH", infos, x_size=448, y_size=448, offset_x=-
 
 `converted: True` reads from `$WSI_CONVERTED_ROOT` instead of `$WSI_RAW_ROOT`;
 `wsi_filename` in an entry overrides the default `{dataset_name}_he_image.ome.tif`
-naming (e.g. for GSM samples, named `{dataset_name}_registered_HE.ome.tif`). See
-`extract_embeddings.py`'s `__main__` block for a full worked example.
+naming (e.g. for GSM samples, named `{dataset_name}_registered_HE.ome.tif`).
+
+From the command line, each run is one JSON config (one model configuration × one set
+of slides; format documented in the "JSON run configs" section of
+`extract_embeddings.py`, examples in `configs/extract_embeddings/`):
+
+```bash
+python -m src.python.extract_embeddings.extract_embeddings --config configs/extract_embeddings/uni2_224.json [--dry-run]
+python -m src.python.extract_embeddings.run_configs configs/extract_embeddings/a.json b.json   # sequentially
+sbatch scripts/extract_embeddings.sh configs/extract_embeddings/uni2_224.json                  # same, on a GPU node
+```
 
 Three extraction modes, all consuming the same `configs` shape:
 

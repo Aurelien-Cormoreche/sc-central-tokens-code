@@ -1,0 +1,19 @@
+{
+  "_comment": "UNI2, fixed 100x100 crop around each cell centroid resized up to 224x224, colon cohort (the run that was active in the old __main__ block)",
+  "model_name": "UNI2",
+  "mode": "resized",
+  "size": 224,
+  "size_side": 100,
+  "output_suffix": "_100_resized",
+  "batch_size": 256,
+  "save_cls": true,
+  "save_cell": true,
+  "save_nucleus": true,
+  "samples": [
+    "Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE",
+    "Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE",
+    "Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE",
+    "Xenium_V1_hColon_Cancer_Add_on_FFPE",
+    "Xenium_V1_hColon_Non_diseased_Base_FFPE"
+  ]
+}
