@@ -1,0 +1,17 @@
+{
+  "_comment": "UNI2 224 native patch, remaining Xenium slides, group 2 of 2 -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "Xenium_Prime_Mouse_Brain_Coronal_FF",
+    "Xenium_V1_hBone_nondiseased_section",
+    "Xenium_V1_hTonsil_reactive_follicular_hyperplasia_section_FFPE",
+    "Xenium_V1_mFemur_EDTA_PFA_3daydecal_section",
+    "Xenium_V1_mouse_Colon_FF"
+  ]
+}

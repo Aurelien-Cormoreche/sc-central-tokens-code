@@ -1,0 +1,13 @@
+{
+  "_comment": "UNI2 224 native patch, large breast slide, on its own -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "Xenium_V1_FFPE_Human_Breast_IDC_Big_1"
+  ]
+}
