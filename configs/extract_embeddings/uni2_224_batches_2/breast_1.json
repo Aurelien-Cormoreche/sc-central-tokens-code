@@ -1,0 +1,17 @@
+{
+  "_comment": "UNI2 224 native patch, batch breast_1 -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "GSM9509156_breast_breast_B17_B17",
+    "GSM9509157_breast_breast_B16_B16",
+    "GSM9509158_breast_breast_B15_B15",
+    "GSM9509159_breast_breast_B14_B14",
+    "GSM9509161_breast_breast_B13_B13"
+  ]
+}

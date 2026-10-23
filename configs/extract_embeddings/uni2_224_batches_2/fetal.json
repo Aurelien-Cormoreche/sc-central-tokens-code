@@ -1,0 +1,16 @@
+{
+  "_comment": "UNI2 224 native patch, batch fetal -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "fetal_d105",
+    "fetal_d122",
+    "fetal_d136",
+    "fetal_d54"
+  ]
+}

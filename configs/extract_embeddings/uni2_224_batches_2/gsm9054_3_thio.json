@@ -1,0 +1,16 @@
+{
+  "_comment": "UNI2 224 native patch, batch gsm9054_3_thio -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "GSM9054485_P23_run1",
+    "GSM9054486_P28_run1",
+    "GSM9054487_P28_run2",
+    "tHIO_EGF"
+  ]
+}

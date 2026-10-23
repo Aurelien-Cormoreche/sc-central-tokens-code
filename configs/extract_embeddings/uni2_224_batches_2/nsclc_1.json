@@ -1,0 +1,17 @@
+{
+  "_comment": "UNI2 224 native patch, batch nsclc_1 -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "GSM9509134_NSCLC_5k_L1_L1",
+    "GSM9509135_NSCLC_5k_L3_L3",
+    "GSM9509136_NSCLC_5k_L5_L5",
+    "GSM9509137_NSCLC_5k_L6_L6",
+    "GSM9509138_NSCLC_5k_L7_L7"
+  ]
+}
