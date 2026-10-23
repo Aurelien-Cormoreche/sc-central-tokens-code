@@ -14,8 +14,6 @@ data*
 slurm_logs*/
 
 
-
-
 # Precomputed HVG tables (regenerable via compute_hvgs.py)
 data/HVGsSplit/
 data/HVGsSplitGSM/
@@ -30,7 +28,7 @@ notebooks/cached_results/
 notebooks/figures_for_paper
 notebooks/tables_for_paper
 
-
+_metadata_work
 tmp/
 *.txt
 
