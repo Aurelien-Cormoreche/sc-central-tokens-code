@@ -1,0 +1,14 @@
+{
+  "_comment": "UNI2 224 native patch, batch tonsil_mouse_pup -> $DATASETS_ROOT/UNI2_h5/raw/{sample}",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "Xenium_V1_hTonsil_follicular_lymphoid_hyperplasia_section_FFPE",
+    "Xenium_V1_mouse_pup"
+  ]
+}

@@ -33,18 +33,25 @@ def is_extracted(output_path: str | os.PathLike) -> bool:
     create_output_file preallocates every dataset at full length before inference
     starts and save_embeddings* fills it batch by batch in order, so a job killed
     mid-run leaves a full-shaped file with empty trailing rows. Only treat the file
-    as done if it opens and its last cell_ids entry has been written.
+    as done if it opens and every cell_ids entry has been written (not only the last
+    one: two jobs writing the same file can leave a hole in the middle).
+
+    Opened with locking=False so a dry run / the notebook checking a slide that is
+    being extracted doesn't make the writer's next h5py.File(..., 'a') fail with
+    BlockingIOError.
     """
     h5_path = os.path.join(output_path, 'embeddings_dataset.h5')
     if not os.path.isfile(h5_path):
         return False
     try:
-        with h5py.File(h5_path, 'r') as f:
-            cell_ids = f['cell_ids']
+        with h5py.File(h5_path, 'r', locking=False) as f:
+            cell_ids = f['cell_ids'][:]
             if len(cell_ids) == 0:
                 return False
-            last = cell_ids[-1]
-            return len(last.decode('utf-8') if isinstance(last, bytes) else last) > 0
+            n_empty = sum(1 for c in cell_ids if len(c) == 0)
+            if n_empty:
+                print(f"[skip_existing] {h5_path}: {n_empty}/{len(cell_ids)} cell_ids not written; will re-extract")
+            return n_empty == 0
     except (OSError, KeyError) as e:
         print(f"[skip_existing] unreadable {h5_path} ({e}); will re-extract")
         return False
