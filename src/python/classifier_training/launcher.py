@@ -95,20 +95,43 @@ def _side_props(side_cfg) -> dict[str, float]:
     return {k: float(v) for k, v in side_cfg.items() if k != "cell_type_proportions"} if side_cfg is not None else {}
 
 
+def _split_wsis(cfg: DictConfig, split_idx: int) -> set[str]:
+    """Every WSI a split's job loads (same_wsi_split: every WSI of every split)."""
+    splits = cfg.splits if split_idx == -1 else [cfg.splits[split_idx]]
+    return {w for sp in splits for side in ("train", "val", "test") for w in _side_props(OmegaConf.select(sp, side))}
+
+
+def _missing_embeddings(cfg: DictConfig, wsis: set[str]) -> Optional[list[str]]:
+    """WSIs without an embeddings_dataset.h5 under the data root; None if the root
+    can't be resolved (e.g. DATASETS_ROOT unset), i.e. nothing could be checked."""
+    try:
+        base = Path(str(cfg.data.base_dir)) / f"{cfg.data.model_name}_h5" / cfg.data.correction_name
+    except Exception:
+        return None
+    return sorted(w for w in wsis if not (base / w / "embeddings_dataset.h5").exists())
+
+
+def _used_cells(cfg: DictConfig, count: Callable[[str], int], wsi: str) -> int:
+    """Cells of a WSI that reach training: all of them, or data.max_cells_per_wsi."""
+    cap = OmegaConf.select(cfg, "data.max_cells_per_wsi", default=None)
+    return count(wsi) if cap is None else min(count(wsi), int(cap))
+
+
 def _split_cell_counts(split_idx: int, cfg: DictConfig, count: Callable[[str], int]) -> dict[str, float]:
-    """Cells read from disk ('read', whole files) and used per side after the per-WSI
-    proportions. Upper bounds: 'Unknown' cells and consider_matching aren't subtracted."""
+    """Cells read from disk ('read', whole files -- the per-WSI cap subsamples while
+    reading, so IO stays full) and used per side after the cap and per-WSI proportions.
+    Upper bounds: 'Unknown' cells and consider_matching aren't subtracted."""
     if split_idx == -1:
         props: dict[str, float] = {}
         for sp in cfg.splits:
             for side in ("train", "val", "test"):
                 for wsi, p in _side_props(OmegaConf.select(sp, side)).items():
                     props[wsi] = max(props.get(wsi, 0.0), p)
-        used = sum(count(w) * p for w, p in props.items())
+        used = sum(_used_cells(cfg, count, w) * p for w, p in props.items())
         return {"read": sum(count(w) for w in props), "train": 0.7 * used, "val": 0.15 * used, "test": 0.15 * used}
     sp = cfg.splits[split_idx]
     sides = {side: _side_props(OmegaConf.select(sp, side)) for side in ("train", "val", "test")}
-    counts = {side: sum(count(w) * p for w, p in props.items()) for side, props in sides.items()}
+    counts = {side: sum(_used_cells(cfg, count, w) * p for w, p in props.items()) for side, props in sides.items()}
     counts["read"] = sum(count(w) for props in sides.values() for w in props)
     return counts
 
@@ -119,6 +142,7 @@ def _grid_cell_counts(cfg: DictConfig, count: Callable[[str], int]) -> dict[str,
     props = {k: float(v) for k, v in cfg.patch_split.wsis.items()}
     return {
         "read": sum(count(w) for w in props),
+        # grid_experiment.py's loader (load_data_with_coords) ignores data.max_cells_per_wsi.
         "train": sum(count(w) * p for w, p in props.items()),
         "val": 0.0,
         "test": 0.0,
@@ -552,6 +576,17 @@ def main(cfg: DictConfig) -> None:
             print(f"[launcher] Skipping {split_label}: results_summary.yaml already exists")
         else:
             pending_indices.append(split_idx)
+
+    # A job whose WSI has no embeddings file would only crash after queueing -- list
+    # every missing one up front and submit nothing (dry runs just report them).
+    missing = _missing_embeddings(cfg, {w for idx in pending_indices for w in _split_wsis(cfg, idx)})
+    if missing is None:
+        print("[launcher] WARNING: can't resolve the embeddings root -- not checking that every WSI has embeddings")
+    elif missing:
+        print(f"[launcher] ERROR: {len(missing)} WSI(s) have no embeddings_dataset.h5 under "
+              f"{cfg.data.model_name}_h5/{cfg.data.correction_name}: {missing}", file=sys.stderr)
+        if not dry_run:
+            sys.exit(1)
 
     if sequential:
         if not pending_indices:

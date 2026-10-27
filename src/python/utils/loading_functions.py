@@ -1,14 +1,18 @@
 import h5py
 import os
+import zlib
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-def load_data(embeddings_file_path, embeddings_datasets, wsi_to_process, mapping, consider_matching=True):
+def load_data(embeddings_file_path, embeddings_datasets, wsi_to_process, mapping, consider_matching=True,
+              max_cells_per_wsi=None, seed=0):
     embeddings, cell_labels, cell_ids,wsi_origin, mapping_idx_to_wsi, _matching = load_data_separate(embeddings_file_path,
                                                                                  embeddings_datasets,
                                                                                    wsi_to_process,
                                                                                    mapping,
-                                                                                   consider_matching)
+                                                                                   consider_matching,
+                                                                                   max_cells_per_wsi,
+                                                                                   seed)
     cell_labels = np.concatenate(cell_labels)
     embeddings = np.concatenate(embeddings)
     wsi_origin = np.concatenate(wsi_origin)
@@ -17,11 +21,18 @@ def load_data(embeddings_file_path, embeddings_datasets, wsi_to_process, mapping
 
     return embeddings, cell_labels, cell_ids,wsi_origin, unique_cell_labels, mapping_idx_to_wsi
 
-def load_data_separate(embeddings_file_path, embeddings_datasets, wsi_to_process, mapping=None, consider_matching=True):
-    'Function to load embeddings in a parallel way'
+def load_data_separate(embeddings_file_path, embeddings_datasets, wsi_to_process, mapping=None, consider_matching=True,
+                       max_cells_per_wsi=None, seed=0):
+    '''Function to load embeddings in a parallel way.
+
+    max_cells_per_wsi: if set, keep at most this many cells per WSI -- a random subset
+    (seeded by `seed` and the WSI name, so independent of load order) drawn among cells
+    that pass the matching filter and, when a mapping is given, don't map to 'Unknown'.
+    Rows are subsampled while reading, so memory scales with the cap, not the slide.
+    '''
     mapping_idx_to_wsi = []
     args = [
-        (i, wsi_file, embeddings_file_path, embeddings_datasets, mapping, consider_matching)
+        (i, wsi_file, embeddings_file_path, embeddings_datasets, mapping, consider_matching, max_cells_per_wsi, seed)
         for i, wsi_file in enumerate(wsi_to_process)
     ]
     with ThreadPoolExecutor(max_workers=9) as executor:
@@ -41,8 +52,20 @@ def load_data_separate(embeddings_file_path, embeddings_datasets, wsi_to_process
 
     return embeddings, cell_labels, cell_ids, wsi_origin, mapping_idx_to_wsi, matching_list
 
+def _read_rows(dset, rows, block_size=65536):
+    '''dset[rows] for sorted row indices, read in contiguous blocks: peak memory is one
+    block rather than the whole dataset, and it avoids h5py's slow point selection.'''
+    out = np.empty((len(rows),) + dset.shape[1:], dtype=dset.dtype)
+    for start in range(0, dset.shape[0], block_size):
+        stop = min(start + block_size, dset.shape[0])
+        lo, hi = np.searchsorted(rows, [start, stop])
+        if hi > lo:
+            out[lo:hi] = dset[start:stop][rows[lo:hi] - start]
+    return out
+
 def load_unique_wsi(args):
-    i, wsi_file, embeddings_file_path, embeddings_datasets, mapping, consider_matching = args
+    i, wsi_file, embeddings_file_path, embeddings_datasets, mapping, consider_matching, *cap_args = args
+    max_cells, seed = cap_args if cap_args else (None, 0)
     with h5py.File(os.path.join(embeddings_file_path, wsi_file, 'embeddings_dataset.h5'), 'r') as f:
 
         if len(embeddings_datasets) == 0:
@@ -54,6 +77,25 @@ def load_unique_wsi(args):
             matching = f['matching'][()].astype(bool)
         matching_mask = matching if consider_matching else None
         cell_labels = f['cell_labels'][()]
+
+        if max_cells is not None:
+            keep = np.ones(len(cell_labels), dtype=bool) if matching_mask is None else matching_mask.copy()
+            if mapping is not None:
+                keep &= np.array([mapping.get(label, 'Unknown') != 'Unknown' for label in cell_labels])
+            rows = np.flatnonzero(keep)
+            if len(rows) > max_cells:
+                rng = np.random.default_rng([seed, zlib.crc32(wsi_file.encode())])
+                rows = np.sort(rng.choice(rows, size=max_cells, replace=False))
+            cell_labels = cell_labels[rows]
+            embeddings = np.mean([_read_rows(f[f'embeddings_{key}'], rows) for key in embeddings_datasets], axis=0)
+            cell_ids = f['cell_ids'][()][rows]
+            if matching is not None:
+                matching = matching[rows]
+            cmapped_labels = (
+                np.array([mapping.get(label, 'Unknown') for label in cell_labels]) if mapping is not None else cell_labels
+            )
+            return cmapped_labels, embeddings, cell_ids, np.full(len(cell_labels), i), wsi_file, matching
+
         embeddings = np.mean(
             [f[f'embeddings_{key}'][()] for key in embeddings_datasets],
             axis=0

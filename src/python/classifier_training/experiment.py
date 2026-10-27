@@ -59,15 +59,22 @@ def _load_wsi_data(
     rng: np.random.Generator,
     wsi_cell_type_proportions: Optional[dict[str, dict[str, float]]] = None,
     consider_matching: bool = True,
+    max_cells_per_wsi: Optional[int] = None,
+    seed: int = 0,
 ) -> tuple[np.ndarray, torch.Tensor, torch.Tensor, np.ndarray]:
     """Load cells from a set of WSIs, subsample by WSI proportion then per-WSI cell-type
     proportions, encode labels. Also returns each kept cell's own cell_id (str), carried
     through the same subsampling as everything else -- lets callers identify individual
-    cells later (see run_split_experiment's save_test_predictions)."""
+    cells later (see run_split_experiment's save_test_predictions).
+
+    max_cells_per_wsi caps every WSI while it is read (a seeded random subset of its
+    typed cells, see load_data_separate); the proportions below then apply to that subset.
+    """
     wsi_names = list(wsi_proportions.keys())
 
     embeddings, cell_labels, cell_ids, wsi_origin, _, wsi_idx_map = load_data(
-        base_path, embeddings_datasets, wsi_names, mapping, consider_matching=consider_matching
+        base_path, embeddings_datasets, wsi_names, mapping, consider_matching=consider_matching,
+        max_cells_per_wsi=max_cells_per_wsi, seed=seed,
     )
     cell_ids = np.asarray([c.decode("utf-8") if isinstance(c, bytes) else c for c in cell_ids])
 
@@ -417,6 +424,7 @@ def run_split_experiment(
     seed = int(OmegaConf.select(cfg, "seed", default=42))
     rng = np.random.default_rng(seed)
     save_test_predictions: bool = bool(OmegaConf.select(cfg, "training.save_test_predictions", default=False))
+    max_cells_per_wsi: Optional[int] = OmegaConf.select(cfg, "data.max_cells_per_wsi", default=None)
     # Defaults (pooled selection, no early stopping) reproduce runs from before these
     # options existed; configs/train.yaml sets the recommended values.
     selection_metric = str(OmegaConf.select(cfg, "training.selection_metric", default="pooled_macro_f1"))
@@ -469,6 +477,7 @@ def run_split_experiment(
             all_wsi_props, base_path, embeddings_datasets, mapping, label_enc, rng,
             wsi_cell_type_proportions=all_ct_props or None,
             consider_matching=consider_matching,
+            max_cells_per_wsi=max_cells_per_wsi, seed=seed,
         )
         n = len(labels)
         perm = rng.permutation(n)
@@ -496,6 +505,7 @@ def run_split_experiment(
             "all_wsis": {k: float(v) for k, v in all_wsi_props.items()},
             "cell_type_proportions": all_ct_props or None,
             "consider_matching": consider_matching,
+            "max_cells_per_wsi": max_cells_per_wsi,
             "seed": seed,
         }
     else:
@@ -509,12 +519,14 @@ def run_split_experiment(
             train_props, base_path, embeddings_datasets, mapping, label_enc, rng,
             wsi_cell_type_proportions=train_ct_props,
             consider_matching=consider_matching,
+            max_cells_per_wsi=max_cells_per_wsi, seed=seed,
         )
 
         test_emb, test_labels, test_wsi, test_ids = _load_wsi_data(
             test_props, base_path, embeddings_datasets, mapping, label_enc, rng,
             wsi_cell_type_proportions=test_ct_props,
             consider_matching=consider_matching,
+            max_cells_per_wsi=max_cells_per_wsi, seed=seed,
         )
         # test_wsi indices index into this list (see _load_wsi_data's wsi_idx_map ==
         # wsi_proportions.keys() order) -- used to decode test predictions back to WSI names.
@@ -533,6 +545,7 @@ def run_split_experiment(
                 val_props, base_path, embeddings_datasets, mapping, label_enc, rng,
                 wsi_cell_type_proportions=val_ct_props,
                 consider_matching=consider_matching,
+            max_cells_per_wsi=max_cells_per_wsi, seed=seed,
             )
             val_wsi_name_list = list(val_props.keys())
         else:
@@ -552,6 +565,7 @@ def run_split_experiment(
             "test_cell_type_proportions": test_ct_props,
             "val_reused_test": not has_val,
             "consider_matching": consider_matching,
+            "max_cells_per_wsi": max_cells_per_wsi,
             "seed": seed,
         }
 
