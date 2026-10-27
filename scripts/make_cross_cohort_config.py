@@ -99,7 +99,10 @@ def main() -> None:
     text = _replace_once(text, "  selection_metric: slide_macro_f1\n", "  selection_metric: cohort_balanced_slide_macro_f1\n")
     # Every cell of every slide is used: ~12-13M cells loaded per fold, ~78 GB per copy of the
     # 1536-d float32 embeddings, and training holds ~2 copies (numpy + torch).
-    text = _replace_once(text, "  mem: 32G\n", "  mem: 200G   # ~2 x 78 GB of embeddings per fold, all cells\n")
+    text = _replace_once(text, "  mem: 32G\n", "  mem: 256G   # ~2 x 78 GB of embeddings per fold, all cells\n")
+    # Fixed wall time for every fold instead of the per-split estimate.
+    text = _replace_once(text, "  auto_time: true\n", "  auto_time: false\n")
+    text = _replace_once(text, '  time: "05:00:00"\n', '  time: "24:00:00"\n')
 
     args.out.write_text(text)
     print(f"wrote {args.out} ({len({r['fold'] for r in rows})} folds, "

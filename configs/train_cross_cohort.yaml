@@ -736,13 +736,13 @@ hparams:
 slurm:
   partition: gpu
   gres: gpu:1
-  mem: 200G   # ~2 x 78 GB of embeddings per fold, all cells
+  mem: 256G   # ~2 x 78 GB of embeddings per fold, all cells
   # Wall time. auto_time: true estimates each job's --time from the cells in its
   # split (embeddings h5 headers -- needs DATASETS_ROOT where the launcher runs):
   #   overhead + safety * (load + trials * (num_epochs * (train + val) + test) * s_per_cell_epoch)
   # see launcher.py's _estimate_minutes. auto_time: false requests `time` as given.
-  auto_time: true
-  time: "05:00:00"
+  auto_time: false
+  time: "24:00:00"
   time_estimate:
     # Per (train + val) cell per epoch, incl. the val pass. Default derived from the old
     # 2 min/epoch on ~0.8M-cell splits; replace with the median `timing.seconds_per_cell_epoch`
