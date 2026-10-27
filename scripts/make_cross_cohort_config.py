@@ -29,6 +29,9 @@ EXCLUDED_WSIS = {
     # VANNAN VUILD78, 2nd core: no processed Xenium output (no patch_coordinates.h5) and its
     # H&E fails OpenSlide + conversion (convert_failed). VUILD78 keeps GSM7990554.
     "GSM7990555",
+    # 10x non-diseased bone marrow: no typed cell (all 'Undef'/'Unknown' in cell_labels,
+    # see scripts/diagnose_wsi_labels.py), i.e. nothing to train or evaluate on.
+    "Xenium_V1_hBoneMarrow_nondiseased_section",
 }
 
 # Val donors (splits.csv donor_key) replacing E4_loso's val for these cohorts; the cohort's

@@ -76,9 +76,9 @@ cohorts:
 # val = fixed donors from each of the 4 others (SPLIT: B16 breast + L7 lung; VANNAN:
 # THD0008 healthy + VUILD106 IPF; others: splits.csv's every-5th donor); train = the
 # remaining slides. Splits are donor-grouped. Left out (no embeddings):
-# GSM7990546, GSM7990555, Xenium_V1_FFPE_Human_Breast_IDC, Xenium_V1_FFPE_Human_Breast_ILC.
+# GSM7990546, GSM7990555, Xenium_V1_FFPE_Human_Breast_IDC, Xenium_V1_FFPE_Human_Breast_ILC, Xenium_V1_hBoneMarrow_nondiseased_section.
 splits:
-  # split 0: test = SPLIT (29 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, VANNAN 2); train = 56 slides
+  # split 0: test = SPLIT (29 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, VANNAN 2); train = 55 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -117,7 +117,6 @@ splits:
       Xenium_V1_Human_Lung_Cancer_Addon_FFPE: 1.0
       Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE: 1.0
       Xenium_V1_hBoneMarrow_acute_lymphoid_leukemia_section: 1.0
-      Xenium_V1_hBoneMarrow_nondiseased_section: 1.0
       Xenium_V1_hBone_nondiseased_section: 1.0
       Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
       Xenium_V1_hHeart_nondiseased_section_FFPE: 1.0
@@ -182,7 +181,7 @@ splits:
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
 
-  # split 1: test = VANNAN (18 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, SPLIT 2); train = 67 slides
+  # split 1: test = VANNAN (18 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, SPLIT 2); train = 66 slides
   - train:
       GSM9054471_P1_run1: 1.0
       GSM9054473_P9_run2: 1.0
@@ -232,7 +231,6 @@ splits:
       Xenium_V1_Human_Lung_Cancer_Addon_FFPE: 1.0
       Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE: 1.0
       Xenium_V1_hBoneMarrow_acute_lymphoid_leukemia_section: 1.0
-      Xenium_V1_hBoneMarrow_nondiseased_section: 1.0
       Xenium_V1_hBone_nondiseased_section: 1.0
       Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
       Xenium_V1_hHeart_nondiseased_section_FFPE: 1.0
@@ -286,7 +284,7 @@ splits:
       GSM7990558: 1.0
       GSM7990559: 1.0
 
-  # split 2: test = MCCORD (11 slides); val = 13 slides (10X 8, JOHNSON 1, SPLIT 2, VANNAN 2); train = 75 slides
+  # split 2: test = MCCORD (11 slides); val = 13 slides (10X 8, JOHNSON 1, SPLIT 2, VANNAN 2); train = 74 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -344,7 +342,6 @@ splits:
       Xenium_V1_Human_Lung_Cancer_Addon_FFPE: 1.0
       Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE: 1.0
       Xenium_V1_hBoneMarrow_acute_lymphoid_leukemia_section: 1.0
-      Xenium_V1_hBoneMarrow_nondiseased_section: 1.0
       Xenium_V1_hBone_nondiseased_section: 1.0
       Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
       Xenium_V1_hHeart_nondiseased_section_FFPE: 1.0
@@ -390,7 +387,7 @@ splits:
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
 
-  # split 3: test = JOHNSON (5 slides); val = 15 slides (10X 8, MCCORD 3, SPLIT 2, VANNAN 2); train = 79 slides
+  # split 3: test = JOHNSON (5 slides); val = 15 slides (10X 8, MCCORD 3, SPLIT 2, VANNAN 2); train = 78 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -456,7 +453,6 @@ splits:
       Xenium_V1_Human_Lung_Cancer_Addon_FFPE: 1.0
       Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE: 1.0
       Xenium_V1_hBoneMarrow_acute_lymphoid_leukemia_section: 1.0
-      Xenium_V1_hBoneMarrow_nondiseased_section: 1.0
       Xenium_V1_hBone_nondiseased_section: 1.0
       Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
       Xenium_V1_hHeart_nondiseased_section_FFPE: 1.0
@@ -494,7 +490,7 @@ splits:
       fetal_d54: 1.0
       tHIO_EGF: 1.0
 
-  # split 4: test = 10X (36 slides); val = 8 slides (JOHNSON 1, MCCORD 3, SPLIT 2, VANNAN 2); train = 55 slides
+  # split 4: test = 10X (35 slides); val = 8 slides (JOHNSON 1, MCCORD 3, SPLIT 2, VANNAN 2); train = 55 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -579,7 +575,6 @@ splits:
       Xenium_V1_Human_Lung_Cancer_Addon_FFPE: 1.0
       Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE: 1.0
       Xenium_V1_hBoneMarrow_acute_lymphoid_leukemia_section: 1.0
-      Xenium_V1_hBoneMarrow_nondiseased_section: 1.0
       Xenium_V1_hBone_nondiseased_section: 1.0
       Xenium_V1_hColon_Cancer_Add_on_FFPE: 1.0
       Xenium_V1_hColon_Non_diseased_Base_FFPE: 1.0
