@@ -70,23 +70,28 @@ def _embeddings_folder_name(embeddings_datasets: list[str]) -> str:
     return "_".join(sorted(embeddings_datasets)) if embeddings_datasets else "default"
 
 
-def _path_relevant_data_overrides(cfg: DictConfig) -> list[str]:
+def _path_relevant_overrides(cfg: DictConfig) -> list[str]:
     """CLI overrides for every field _split_results_summary_path's output path depends
-    on (mapping, data.consider_matching, data.embeddings_datasets). Must be forwarded
-    into every generated SLURM script -- otherwise a launcher-level override changes
-    where *this process* looks for results_summary.yaml without changing where the
-    submitted job actually writes them (the subprocess only ever inherits
+    on (experiment, mapping, data.consider_matching, data.embeddings_datasets). Must be
+    forwarded into every generated SLURM script -- otherwise a launcher-level override
+    changes where *this process* looks for results_summary.yaml without changing where
+    the submitted job actually writes them (the subprocess only ever inherits
     data.model_name/data.correction_name plus whatever config-name's file has baked
     in), silently desyncing the skip-check from reality.
     """
     consider_matching = bool(OmegaConf.select(cfg, "data.consider_matching", default=True))
     embeddings_datasets = list(cfg.data.embeddings_datasets) if cfg.data.embeddings_datasets else []
     embeddings_literal = "[" + ",".join(embeddings_datasets) + "]"
-    return [
+    overrides = [
         f"mapping={cfg.mapping}",
         f"data.consider_matching={consider_matching}",
         f"data.embeddings_datasets={embeddings_literal}",
     ]
+    # Only configs that declare `experiment` accept an override of it (Hydra rejects
+    # overriding a key the config doesn't have).
+    if "experiment" in cfg:
+        overrides.append(f"experiment={cfg.experiment if cfg.experiment else 'null'}")
+    return overrides
 
 
 def _split_results_summary_path(split_idx: int, cfg: DictConfig, repo_root: Path) -> Path:
@@ -94,8 +99,10 @@ def _split_results_summary_path(split_idx: int, cfg: DictConfig, repo_root: Path
     split_label = "same_wsi_split" if split_idx == -1 else f"split_{split_idx}"
     consider_matching = bool(OmegaConf.select(cfg, "data.consider_matching", default=True))
     embeddings_datasets = list(cfg.data.embeddings_datasets) if cfg.data.embeddings_datasets else []
+    experiment = OmegaConf.select(cfg, "experiment", default=None)
     return (
         repo_root / outputs_folder_name
+        / (experiment or "")
         / cfg.data.model_name / cfg.data.correction_name
         / cfg.mapping
         / _matching_folder_name(consider_matching)
@@ -121,7 +128,7 @@ def _generate_slurm_script(
         f"split_idx={split_idx}",
         f"data.model_name={cfg.data.model_name}",
         f"data.correction_name={cfg.data.correction_name}",
-        *_path_relevant_data_overrides(cfg),
+        *_path_relevant_overrides(cfg),
         "hydra.run.dir=.",
         "hydra.output_subdir=null",
     ])
@@ -189,7 +196,7 @@ def _generate_slurm_script_sequential(
             f"split_idx={split_idx}",
             f"data.model_name={cfg.data.model_name}",
             f"data.correction_name={cfg.data.correction_name}",
-            *_path_relevant_data_overrides(cfg),
+            *_path_relevant_overrides(cfg),
             "hydra.run.dir=.",
             "hydra.output_subdir=null",
         ])
@@ -314,6 +321,7 @@ def main(cfg: DictConfig) -> None:
     log_dir = (
         repo_root
         / cfg.slurm.output_dir
+        / (OmegaConf.select(cfg, "experiment", default=None) or "")
         / cfg.data.model_name
         / cfg.data.correction_name
     )

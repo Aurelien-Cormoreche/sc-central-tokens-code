@@ -12,7 +12,6 @@ import torch.nn as nn
 from sklearn.decomposition import PCA
 from sklearn.metrics import (
     accuracy_score,
-    balanced_accuracy_score,
     confusion_matrix,
     f1_score,
 )
@@ -73,27 +72,48 @@ class MLP(nn.Module):
         return self.net(x)
 
 
-def _apply_preprocessing(
+@dataclass
+class Preprocessor:
+    """Train-fitted PCA / z-score state, kept as plain arrays so a saved classifier
+    can be re-applied to embeddings it never saw (see saved_models.py). Each stage is
+    skipped when its arrays are None.
+    """
+    pca_mean: Optional[np.ndarray] = None        # (D,)
+    pca_components: Optional[np.ndarray] = None  # (n_components, D)
+    z_mean: Optional[np.ndarray] = None
+    z_std: Optional[np.ndarray] = None           # already includes the +1e-8
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        if self.pca_components is not None:
+            # Same two-matmul form as sklearn's PCA.transform (whiten=False), so
+            # applying a reloaded Preprocessor matches what training did.
+            x = x @ self.pca_components.T - self.pca_mean @ self.pca_components.T
+        if self.z_mean is not None:
+            x = (x - self.z_mean) / self.z_std
+        return x
+
+
+def _fit_preprocessing(
     train_emb: np.ndarray,
-    eval_embs: list[np.ndarray],
     pca_components: Optional[int],
     normalization: str,
     seed: int,
-) -> tuple[np.ndarray, list[np.ndarray]]:
-    """Fit PCA/z-score stats once on train_emb and transform train plus every eval array."""
+) -> tuple[np.ndarray, Preprocessor]:
+    """Fit PCA/z-score stats once on train_emb; returns (transformed train, fitted
+    Preprocessor) -- eval arrays go through Preprocessor.transform."""
+    pre = Preprocessor()
     if pca_components is not None:
         n_components = min(pca_components, train_emb.shape[1], train_emb.shape[0] - 1)
         # random_state pins PCA's randomized SVD solver (auto-selected for
         # high-dim embeddings with n_components << n_features) for reproducibility.
         pca = PCA(n_components=n_components, random_state=seed)
         train_emb = pca.fit_transform(train_emb)
-        eval_embs = [pca.transform(e) for e in eval_embs]
+        pre.pca_mean, pre.pca_components = pca.mean_, pca.components_
     if normalization == "z_score":
-        mean = train_emb.mean(axis=0)
-        std = train_emb.std(axis=0) + 1e-8
-        train_emb = (train_emb - mean) / std
-        eval_embs = [(e - mean) / std for e in eval_embs]
-    return train_emb, eval_embs
+        pre.z_mean = train_emb.mean(axis=0)
+        pre.z_std = train_emb.std(axis=0) + 1e-8
+        train_emb = (train_emb - pre.z_mean) / pre.z_std
+    return train_emb, pre
 
 
 def _compute_sample_weights(
@@ -172,6 +192,42 @@ def _run_forward_pass(
     return total_loss / n, np.concatenate(all_preds), np.concatenate(all_probs)
 
 
+def classification_metrics(
+    labels: np.ndarray,
+    preds: np.ndarray,
+    num_classes: int,
+    class_names: list[str],
+) -> dict:
+    """Label-only metric set, shared by the pooled evaluation (_evaluate) and the
+    per-slide breakdown in experiment.py so both are computed identically.
+
+    `macro_f1` averages over every model class (a class absent from `labels` and never
+    predicted scores 0 under zero_division=0), so it is deflated on any set missing some
+    classes -- typical for a single slide or a held-out cohort. `macro_f1_present`
+    averages only over classes with support > 0 in `labels`.
+    `balanced_accuracy` is mean recall over classes present in `labels` -- identical
+    to sklearn's balanced_accuracy_score, taken from the confusion matrix so slides
+    whose predictions include classes absent from their labels don't warn.
+    """
+    class_range = list(range(num_classes))
+    cm = confusion_matrix(labels, preds, labels=class_range)
+    support = cm.sum(axis=1)
+    present = support > 0
+    per_class_f1_arr = f1_score(labels, preds, average=None, zero_division=0, labels=class_range)
+
+    return {
+        "accuracy": float(accuracy_score(labels, preds)),
+        "macro_f1": float(f1_score(labels, preds, average="macro", zero_division=0, labels=class_range)),
+        "macro_f1_present": float(per_class_f1_arr[present].mean()),
+        "weighted_f1": float(f1_score(labels, preds, average="weighted", zero_division=0, labels=class_range)),
+        "balanced_accuracy": float((np.diag(cm)[present] / support[present]).mean()),
+        "per_class_f1": {
+            class_names[i]: float(per_class_f1_arr[i]) for i in range(num_classes)
+        },
+        "confusion_matrix": cm.tolist(),
+    }
+
+
 def _evaluate(
     model: nn.Module,
     loader: DataLoader,
@@ -186,26 +242,9 @@ def _evaluate(
     with torch.no_grad():
         loss, preds, probs = _run_forward_pass(model, loader, criterion, device)
 
-    labels_np = labels.numpy()
-    class_range = list(range(num_classes))
-
-    acc = float(accuracy_score(labels_np, preds))
-    macro_f1 = float(f1_score(labels_np, preds, average="macro", zero_division=0, labels=class_range))
-    weighted_f1 = float(f1_score(labels_np, preds, average="weighted", zero_division=0, labels=class_range))
-    balanced_acc = float(balanced_accuracy_score(labels_np, preds))
-    per_class_f1_arr = f1_score(labels_np, preds, average=None, zero_division=0, labels=class_range)
-    cm = confusion_matrix(labels_np, preds, labels=class_range).tolist()
-
     return {
         "loss": loss,
-        "accuracy": acc,
-        "macro_f1": macro_f1,
-        "weighted_f1": weighted_f1,
-        "balanced_accuracy": balanced_acc,
-        "per_class_f1": {
-            class_names[i]: float(per_class_f1_arr[i]) for i in range(num_classes)
-        },
-        "confusion_matrix": cm,
+        **classification_metrics(labels.numpy(), preds, num_classes, class_names),
         # Raw per-cell outputs (same order as `loader`'s dataset), for callers that
         # want to save individual predictions rather than just aggregate metrics
         # (see classifier_training/experiment.py's save_test_predictions).
@@ -230,6 +269,7 @@ def train_and_evaluate(
     val_embeddings: Optional[np.ndarray] = None,
     val_labels: Optional[torch.Tensor] = None,
     val_wsi_origins: Optional[torch.Tensor] = None,
+    return_model: bool = False,
 ) -> dict:
     """
     Train an MLP on frozen embeddings and return evaluation metrics.
@@ -254,18 +294,20 @@ def train_and_evaluate(
     mode, which has no val concept), behavior is unchanged from before: the
     per-epoch curve and final metrics are computed against test, and returned
     keys are unprefixed (`accuracy`, `macro_f1`, ..., `test_loss_curve`).
+
+    If return_model, the result also carries `model_state_dict` (CPU copies of the
+    final weights) and `preprocessor` (the train-fitted Preprocessor) -- everything
+    saved_models.save_classifier needs to re-apply this classifier later.
     """
     _seed_everything(config.seed)
 
     has_val = val_embeddings is not None
-    eval_embs = [val_embeddings, test_embeddings] if has_val else [test_embeddings]
-    train_emb, eval_embs = _apply_preprocessing(
-        train_embeddings, eval_embs, config.pca_components, config.normalization, config.seed
+    train_emb, preprocessor = _fit_preprocessing(
+        train_embeddings, config.pca_components, config.normalization, config.seed
     )
+    test_emb = preprocessor.transform(test_embeddings)
     if has_val:
-        val_emb, test_emb = eval_embs
-    else:
-        (test_emb,) = eval_embs
+        val_emb = preprocessor.transform(val_embeddings)
 
     train_t = torch.tensor(train_emb, dtype=torch.float32)
     test_t = torch.tensor(test_emb, dtype=torch.float32)
@@ -333,6 +375,14 @@ def train_and_evaluate(
             curve_loss_curve.append(epoch_curve_loss)
         model.train()
 
+    model_outputs = (
+        {
+            "model_state_dict": {k: v.detach().cpu().clone() for k, v in model.state_dict().items()},
+            "preprocessor": preprocessor,
+        }
+        if return_model else {}
+    )
+
     if has_val:
         val_metrics = _evaluate(
             model, val_loader, val_labels, criterion, device, config.num_classes, config.class_names
@@ -345,6 +395,7 @@ def train_and_evaluate(
             **_prefix_metrics(test_metrics, "test"),
             "train_loss_curve": train_loss_curve,
             "val_loss_curve": curve_loss_curve,
+            **model_outputs,
         }
 
     test_metrics = _evaluate(
@@ -354,4 +405,5 @@ def train_and_evaluate(
         **test_metrics,
         "train_loss_curve": train_loss_curve,
         "test_loss_curve": curve_loss_curve,
+        **model_outputs,
     }

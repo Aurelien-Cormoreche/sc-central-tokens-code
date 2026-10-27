@@ -32,3 +32,6 @@ _metadata_work
 tmp/
 *.txt
 
+
+# Saved classifier weights (experiment.py, see configs/train.yaml save_model)
+saved_models/
