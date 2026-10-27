@@ -19,27 +19,145 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
+import h5py
+import numpy as np
+import yaml
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 
-EPOCH_LENGTH = 2
+# ── SLURM wall-time estimate ──────────────────────────────────────────────────
+# Each job's --time is estimated from the cells its split actually holds (read from
+# the embeddings h5 headers, no data loaded), so a cross-cohort fold with millions of
+# train cells doesn't get the same request as a 7-slide LWO split:
+#   minutes = overhead + safety * (load + n_trials * (epochs * (train + val) + test) * s_per_cell_epoch) / 60
+#   load    = load_seconds_per_cell_dataset * n_embedding_datasets * cells read
+# epochs is training.num_epochs (an upper bound under early stopping). Values below are
+# defaults for any key missing from the config's slurm.time_estimate.
+_TIME_ESTIMATE_DEFAULTS = {
+    # Derived from the old fixed 2 min/epoch, set for ~0.8M-cell train+val sets.
+    # experiment.py records the measured value in results_summary.yaml's `timing`.
+    "seconds_per_cell_epoch": 1.5e-4,
+    "load_seconds_per_cell_dataset": 3.0e-5,
+    "overhead_minutes": 15,
+    "safety_factor": 1.5,
+    "max_time": "120:00:00",
+}
+# Used only when the h5 files can't be read (DATASETS_ROOT unset / not mounted).
+FALLBACK_EPOCH_MINUTES = 2
 
-def _estimate_total_time(cfg: DictConfig, one_epoch_time: float):
-    num_epochs = cfg.training.num_epochs
-    params_combinations_number = 1
+
+def _n_trials(cfg: DictConfig) -> int:
+    n = 1
     for _, confs in cfg.hparams.items():
         if confs['tune']:
-            params_combinations_number *= len(confs['values'])
+            n *= len(confs['values'])
+    return n
 
-    return one_epoch_time * num_epochs * params_combinations_number
+
+def _fallback_minutes(cfg: DictConfig) -> float:
+    """The old size-blind estimate: a fixed duration per epoch per trial."""
+    return FALLBACK_EPOCH_MINUTES * cfg.training.num_epochs * _n_trials(cfg)
 
 
-def _estimate_total_time_grid(cfg: DictConfig, one_epoch_time: float) -> float:
-    """Grid experiment runs 4 checkerboard offsets, each with the full grid search."""
-    return 4 * _estimate_total_time(cfg, one_epoch_time)
+def _time_estimate_params(cfg: DictConfig) -> dict:
+    configured = OmegaConf.select(cfg, "slurm.time_estimate", default=None)
+    return {**_TIME_ESTIMATE_DEFAULTS, **(OmegaConf.to_container(configured, resolve=True) if configured else {})}
+
+
+def _hhmmss_to_minutes(time_str: str) -> float:
+    """SLURM time ("[D-]H:M:S", "M:S" or "M") -> minutes."""
+    days, _, rest = str(time_str).rpartition("-")
+    parts = [int(p) for p in rest.split(":")]
+    if len(parts) == 1:
+        return int(days or 0) * 1440 + parts[0]
+    parts = [0] * (3 - len(parts)) + parts
+    return int(days or 0) * 1440 + parts[0] * 60 + parts[1] + parts[2] / 60
+
+
+def _cell_counter(cfg: DictConfig) -> Callable[[str], int]:
+    """WSI name -> number of cells in its embeddings_dataset.h5 (header only, cached).
+    Raises if the data root can't be resolved or a file can't be opened."""
+    base = Path(str(cfg.data.base_dir)) / f"{cfg.data.model_name}_h5" / cfg.data.correction_name
+    cache: dict[str, int] = {}
+
+    def count(wsi: str) -> int:
+        if wsi not in cache:
+            with h5py.File(base / wsi / "embeddings_dataset.h5", "r") as f:
+                cache[wsi] = int(f["cell_labels"].shape[0])
+        return cache[wsi]
+    return count
+
+
+def _side_props(side_cfg) -> dict[str, float]:
+    return {k: float(v) for k, v in side_cfg.items() if k != "cell_type_proportions"} if side_cfg is not None else {}
+
+
+def _split_cell_counts(split_idx: int, cfg: DictConfig, count: Callable[[str], int]) -> dict[str, float]:
+    """Cells read from disk ('read', whole files) and used per side after the per-WSI
+    proportions. Upper bounds: 'Unknown' cells and consider_matching aren't subtracted."""
+    if split_idx == -1:
+        props: dict[str, float] = {}
+        for sp in cfg.splits:
+            for side in ("train", "val", "test"):
+                for wsi, p in _side_props(OmegaConf.select(sp, side)).items():
+                    props[wsi] = max(props.get(wsi, 0.0), p)
+        used = sum(count(w) * p for w, p in props.items())
+        return {"read": sum(count(w) for w in props), "train": 0.7 * used, "val": 0.15 * used, "test": 0.15 * used}
+    sp = cfg.splits[split_idx]
+    sides = {side: _side_props(OmegaConf.select(sp, side)) for side in ("train", "val", "test")}
+    counts = {side: sum(count(w) * p for w, p in props.items()) for side, props in sides.items()}
+    counts["read"] = sum(count(w) for props in sides.values() for w in props)
+    return counts
+
+
+def _grid_cell_counts(cfg: DictConfig, count: Callable[[str], int]) -> dict[str, float]:
+    """grid_experiment.py: every patch_split WSI is read once; all used cells counted
+    as train (an upper bound -- each offset trains on part and tests on the rest)."""
+    props = {k: float(v) for k, v in cfg.patch_split.wsis.items()}
+    return {
+        "read": sum(count(w) for w in props),
+        "train": sum(count(w) * p for w, p in props.items()),
+        "val": 0.0,
+        "test": 0.0,
+    }
+
+
+def _estimate_minutes(cfg: DictConfig, counts: dict[str, float], n_grid_repeats: int = 1) -> float:
+    p = _time_estimate_params(cfg)
+    n_datasets = max(1, len(cfg.data.embeddings_datasets or []))
+    load_s = p["load_seconds_per_cell_dataset"] * n_datasets * counts["read"]
+    cell_epochs = cfg.training.num_epochs * (counts["train"] + counts["val"]) + counts["test"]
+    train_s = n_grid_repeats * _n_trials(cfg) * cell_epochs * p["seconds_per_cell_epoch"]
+    return p["overhead_minutes"] + p["safety_factor"] * (load_s + train_s) / 60
+
+
+def _clip_minutes(cfg: DictConfig, minutes: float, label: str) -> float:
+    max_minutes = _hhmmss_to_minutes(_time_estimate_params(cfg)["max_time"])
+    if minutes > max_minutes:
+        print(
+            f"[launcher] WARNING {label}: estimated {minutes / 60:.1f}h exceeds "
+            f"slurm.time_estimate.max_time ({max_minutes / 60:.0f}h) -- requesting the max; the job "
+            f"may be killed before finishing. Reduce cells (WSI proportions), trials or num_epochs."
+        )
+    return min(minutes, max_minutes)
+
+
+def _recorded_seconds_per_cell_epoch(results_root: Path) -> list[float]:
+    """seconds_per_cell_epoch that finished runs under results_root measured
+    (results_summary.yaml's `timing`, see experiment.py) -- for calibrating the estimate."""
+    values = []
+    for path in results_root.glob("**/results_summary.yaml"):
+        try:
+            with open(path) as f:
+                timing = (yaml.safe_load(f) or {}).get("timing") or {}
+        except yaml.YAMLError:  # e.g. an older file with python-specific tags
+            continue
+        if timing.get("seconds_per_cell_epoch"):
+            values.append(float(timing["seconds_per_cell_epoch"]))
+    return values
 
 
 def _exclude_directive(cfg: DictConfig) -> str:
@@ -332,18 +450,55 @@ def main(cfg: DictConfig) -> None:
     grid_mode: bool = bool(OmegaConf.select(cfg, "patch_split.enabled", default=False))
     sequential: bool = bool(OmegaConf.select(cfg, "slurm.sequential", default=False))
 
-    if grid_mode:
-        total_time_minutes = _estimate_total_time_grid(cfg, EPOCH_LENGTH)
-    else:
-        total_time_minutes = _estimate_total_time(cfg, EPOCH_LENGTH)
+    # ── wall time: slurm.time as given (auto_time: false), else estimated per job
+    # from cell counts (see _estimate_minutes); minutes_for() returns None when the
+    # h5 headers can't be read, in which case the old size-blind estimate is used.
+    auto_time: bool = bool(OmegaConf.select(cfg, "slurm.auto_time", default=True))
+    count: Optional[Callable[[str], int]] = None
+    if auto_time:
+        try:
+            count = _cell_counter(cfg)
+        except Exception as e:  # DATASETS_ROOT unset -> interpolation error
+            print(f"[launcher] WARNING: can't resolve the embeddings root ({e}); "
+                  f"falling back to {FALLBACK_EPOCH_MINUTES} min/epoch/trial for --time")
 
-    if sequential and not grid_mode:
-        n_splits = len(cfg.splits) + (1 if cfg.same_wsi_split else 0)
-        total_time_minutes *= n_splits
+    def _job_time(
+        label: str,
+        counts_of: Callable[[Callable[[str], int]], list[dict[str, float]]],
+        n_fallback_units: int,
+        n_grid_repeats: int = 1,
+    ) -> str:
+        """--time for one job; counts_of(count) gives the cell counts of each unit
+        (split) the job runs, summed here."""
+        if not auto_time:
+            return str(cfg.slurm.time)
+        minutes = None
+        if count is not None:
+            try:
+                total = {"read": 0.0, "train": 0.0, "val": 0.0, "test": 0.0}
+                for unit in counts_of(count):
+                    for k, v in unit.items():
+                        total[k] += v
+                minutes = _estimate_minutes(cfg, total, n_grid_repeats)
+                print(f"[launcher] {label}: train={total['train']:,.0f} val={total['val']:,.0f} "
+                      f"test={total['test']:,.0f} cells, {_n_trials(cfg)} trial(s) x "
+                      f"<={cfg.training.num_epochs} epochs -> {minutes / 60:.1f}h")
+            except OSError as e:
+                print(f"[launcher] WARNING {label}: can't read cell counts ({e}); using the fallback estimate")
+        if minutes is None:
+            minutes = n_grid_repeats * n_fallback_units * _fallback_minutes(cfg)
+        return _minutes_to_hhmmss(_clip_minutes(cfg, minutes, label))
 
-    cfg.slurm.time = _minutes_to_hhmmss(total_time_minutes)
-
-    print(f'Requesting {cfg.slurm.time}')
+    if not auto_time:
+        print(f"[launcher] Requesting {cfg.slurm.time} per job (slurm.auto_time: false)")
+    elif not grid_mode and len(cfg.splits):
+        # .../{model}/{correction}/{mapping}/{matching}/{embeddings}/split_0/results_summary.yaml
+        results_root = _split_results_summary_path(0, cfg, repo_root).parents[4]
+        recorded = _recorded_seconds_per_cell_epoch(results_root) if results_root.exists() else []
+        if recorded:
+            print(f"[launcher] {len(recorded)} finished run(s) here measured a median of "
+                  f"{np.median(recorded):.2e} s/cell-epoch (slurm.time_estimate uses "
+                  f"{_time_estimate_params(cfg)['seconds_per_cell_epoch']:.2e})")
 
     # ── debug mode: print captured output of an existing SLURM job ───────────
     if debug_split is not None:
@@ -363,6 +518,10 @@ def main(cfg: DictConfig) -> None:
         mode_prefix = "DRY RUN — " if dry_run else ""
         print(f"[launcher] {mode_prefix}Grid patch split: 1 job for "
               f"{cfg.data.model_name}/{cfg.data.correction_name}")
+        # 4 checkerboard offsets, each running the full grid search.
+        cfg.slurm.time = _job_time(
+            "grid_patch_split", lambda c: [_grid_cell_counts(cfg, c)], 1, n_grid_repeats=4
+        )
         script = _generate_slurm_script_grid(cfg, repo_root, log_dir, config_name)
         script_path = log_dir / "job_grid_patch_split.sh"
         script_path.write_text(script)
@@ -400,6 +559,9 @@ def main(cfg: DictConfig) -> None:
             return
         print(f"[launcher] {mode}Preparing 1 sequential job ({len(pending_indices)} of "
               f"{len(split_indices)} splits) for {cfg.data.model_name}/{cfg.data.correction_name}")
+        cfg.slurm.time = _job_time(
+            "sequential", lambda c: [_split_cell_counts(i, cfg, c) for i in pending_indices], len(pending_indices)
+        )
         script = _generate_slurm_script_sequential(pending_indices, cfg, repo_root, log_dir, config_name)
         script_path = log_dir / "job_sequential.sh"
         script_path.write_text(script)
@@ -419,6 +581,7 @@ def main(cfg: DictConfig) -> None:
 
     for split_idx in pending_indices:
         split_label = "same_wsi_split" if split_idx == -1 else f"split_{split_idx}"
+        cfg.slurm.time = _job_time(split_label, lambda c: [_split_cell_counts(split_idx, cfg, c)], 1)
         script = _generate_slurm_script(split_idx, cfg, repo_root, log_dir, config_name)
         script_path = log_dir / f"job_{split_label}.sh"
         script_path.write_text(script)

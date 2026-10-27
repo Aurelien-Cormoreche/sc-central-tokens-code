@@ -28,6 +28,20 @@ mapping: simplified_broad
 # null keeps the old results layout; saved weights then use this config's name.
 experiment: null
 
+# ── Cohorts ────────────────────────────────────────────────────────────────
+# cohort -> list of WSI names or fnmatch patterns; a WSI gets the first cohort (in
+# this order) with a matching pattern. Used by training.selection_metric:
+# cohort_balanced_slide_macro_f1, the `cohort` column of per_slide_metrics.csv and,
+# for splits without `train_cohorts`, the saved-weights folder name. Patterns for
+# the sources of _metadata_work/make_splits.py (on-disk WSI names):
+#   cohorts:
+#     NM: ["GSM9509*"]
+#     VANNAN: ["GSM7990*"]
+#     MCCORD: ["GSM9054*"]
+#     JOHNSON: ["fetal_*", "tHIO_*"]
+#     10X: ["Xenium*"]
+cohorts: {}
+
 # ── WSI splits ─────────────────────────────────────────────────────────────
 # Each entry defines one Leave-One-WSI-Out (LWO) fold with train/val/test.
 # Values are the fraction of cells to keep from that WSI (1.0 = all cells).
@@ -47,7 +61,8 @@ experiment: null
 #
 # Optionally give a split `train_cohorts: [COHORT_A, COHORT_B]` (next to
 # train/val/test) -- it names the saved-weights folder (sorted, '+'-joined,
-# e.g. JOHNSON+MCCORD+NM+VANNAN); splits without it fall back to split_<i>.
+# e.g. JOHNSON+MCCORD+NM+VANNAN). Without it the train WSIs' cohorts (see
+# `cohorts`) are used, and without a `cohorts` map the folder is split_<i>.
 #
 # Scheme: 5 colon WSIs (4 cancer + 1 non-diseased). The non-diseased sample
 # (Xenium_V1_hColon_Non_diseased_Base_FFPE) is never used as val or test --
@@ -211,6 +226,19 @@ mlflow:
 training:
   num_epochs: 30
   batch_size: 256
+  # Early stopping on the val selection score (below): stop once it hasn't improved
+  # by more than min_delta for `patience` epochs and keep the best epoch's weights --
+  # num_epochs is then the maximum. patience: null = train all num_epochs, keep the last.
+  early_stopping:
+    patience: 5
+    min_delta: 0.0
+  # Val score picking both the best epoch (early stopping) and the best trial:
+  #   pooled_macro_f1                -- macro F1 over all val cells pooled (old behaviour)
+  #   slide_macro_f1                 -- mean over val slides of each slide's macro F1
+  #   cohort_balanced_slide_macro_f1 -- mean over cohorts of their val slides' mean macro F1
+  #                                     (every val slide must match a pattern in `cohorts`)
+  # A slide's macro F1 averages the classes present in that slide.
+  selection_metric: slide_macro_f1
   # If true, experiment.py writes {output_dir}/test_predictions.csv for the
   # best (val-selected) trial of each split: one row per test cell with
   # cell_id, wsi, true_label, predicted_label, per-class prob_<class> and
@@ -246,7 +274,21 @@ slurm:
   partition: gpu
   gres: gpu:1
   mem: 128G
-  time: "05:00:00" #changed in the script
+  # Wall time. auto_time: true estimates each job's --time from the cells in its
+  # split (embeddings h5 headers -- needs DATASETS_ROOT where the launcher runs):
+  #   overhead + safety * (load + trials * (num_epochs * (train + val) + test) * s_per_cell_epoch)
+  # see launcher.py's _estimate_minutes. auto_time: false requests `time` as given.
+  auto_time: true
+  time: "05:00:00"
+  time_estimate:
+    # Per (train + val) cell per epoch, incl. the val pass. Default derived from the old
+    # 2 min/epoch on ~0.8M-cell splits; replace with the median `timing.seconds_per_cell_epoch`
+    # of finished runs' results_summary.yaml (the launcher prints it when available).
+    seconds_per_cell_epoch: 1.5e-4
+    load_seconds_per_cell_dataset: 3.0e-5   # reading one embeddings_* dataset, per cell
+    overhead_minutes: 15
+    safety_factor: 1.5
+    max_time: "120:00:00"                   # your partition's wall-time limit
   cpus_per_task: 32
   conda_env: cellViT
   output_dir: slurm_logs_colon

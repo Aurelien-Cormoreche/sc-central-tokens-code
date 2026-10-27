@@ -4,7 +4,7 @@ Stateless and MLflow-free — call train_and_evaluate() from experiment.py.
 """
 import random
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -32,9 +32,14 @@ class TrainConfig:
     # "oversampling_cell_type" | "oversampling_wsi" instead draw train batches with a
     # WeightedRandomSampler using the same balanced weights, leaving the loss unweighted.
     loss_weights: str
-    num_epochs: int
+    num_epochs: int          # maximum number of epochs when early stopping is on
     batch_size: int
     seed: int = 42
+    # Early stopping on the val selection score (train_and_evaluate's val_score_fn):
+    # stop once it hasn't improved by more than min_delta for `patience` epochs, then
+    # restore the best epoch's weights. None = train all num_epochs, keep the last epoch.
+    early_stopping_patience: Optional[int] = None
+    early_stopping_min_delta: float = 0.0
 
 
 def _is_oversampling(loss_weights: str) -> bool:
@@ -270,6 +275,7 @@ def train_and_evaluate(
     val_labels: Optional[torch.Tensor] = None,
     val_wsi_origins: Optional[torch.Tensor] = None,
     return_model: bool = False,
+    val_score_fn: Optional[Callable[[np.ndarray], float]] = None,
 ) -> dict:
     """
     Train an MLP on frozen embeddings and return evaluation metrics.
@@ -290,13 +296,20 @@ def train_and_evaluate(
     at the end for reporting — returned keys are prefixed `val_*`/`test_*`, plus
     `train_loss_curve`/`val_loss_curve`.
 
+    With a validation set, every epoch's val predictions (in val order) are also
+    scored by val_score_fn (higher = better; default: pooled val macro F1) -- the
+    score early stopping monitors (config.early_stopping_patience). Also returned:
+    `val_score_curve`, `selected_epoch` (1-based epoch whose weights are evaluated),
+    `epochs_trained` and `val_selection_score` (val_score_fn of the evaluated model,
+    what experiment.py compares across trials).
+
     If no validation set is given (e.g. grid_experiment.py's spatial-checkerboard
     mode, which has no val concept), behavior is unchanged from before: the
     per-epoch curve and final metrics are computed against test, and returned
     keys are unprefixed (`accuracy`, `macro_f1`, ..., `test_loss_curve`).
 
     If return_model, the result also carries `model_state_dict` (CPU copies of the
-    final weights) and `preprocessor` (the train-fitted Preprocessor) -- everything
+    evaluated, i.e. selected-epoch, weights) and `preprocessor` (the train-fitted Preprocessor) -- everything
     saved_models.save_classifier needs to re-apply this classifier later.
     """
     _seed_everything(config.seed)
@@ -346,14 +359,27 @@ def train_and_evaluate(
         val_weights = _weights_for(val_labels, val_wsi_origins)
         val_loader = _make_loader(val_t, val_labels, val_weights, config.batch_size, shuffle=False)
         curve_loader, curve_labels = val_loader, val_labels
+        if val_score_fn is None:
+            # A copy: the DataLoader may move val_labels' storage to shared memory.
+            val_labels_np = val_labels.numpy().copy()
+            val_score_fn = lambda preds: classification_metrics(  # noqa: E731
+                val_labels_np, preds, config.num_classes, config.class_names
+            )["macro_f1"]
     else:
         curve_loader, curve_labels = test_loader, test_labels
 
+    # Early stopping only ever monitors val -- without one (grid_experiment.py) the
+    # per-epoch curve is on test, which must not drive any choice.
+    early_stopping = has_val and config.early_stopping_patience is not None
     train_loss_curve: list[float] = []
     curve_loss_curve: list[float] = []
+    val_score_curve: list[float] = []
+    best_score = -np.inf
+    best_epoch = 0
+    best_state: Optional[dict[str, torch.Tensor]] = None
 
     model.train()
-    for _ in range(config.num_epochs):
+    for epoch in range(1, config.num_epochs + 1):
         epoch_loss = 0.0
         n_batches = 0
         for emb_b, label_b, w_b in loader:
@@ -371,9 +397,27 @@ def train_and_evaluate(
 
         model.eval()
         with torch.no_grad():
-            epoch_curve_loss, _, _ = _run_forward_pass(model, curve_loader, criterion, device)
+            epoch_curve_loss, epoch_preds, _ = _run_forward_pass(model, curve_loader, criterion, device)
             curve_loss_curve.append(epoch_curve_loss)
         model.train()
+
+        if not has_val:
+            continue
+        score = float(val_score_fn(epoch_preds))
+        val_score_curve.append(score)
+        if score > best_score + config.early_stopping_min_delta:
+            best_score, best_epoch = score, epoch
+            if early_stopping:
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+        elif early_stopping and epoch - best_epoch >= config.early_stopping_patience:
+            break
+
+    if early_stopping:
+        model.load_state_dict(best_state)
+        selected_epoch = best_epoch
+    else:
+        selected_epoch = len(train_loss_curve)
+    model.eval()
 
     model_outputs = (
         {
@@ -393,8 +437,12 @@ def train_and_evaluate(
         return {
             **_prefix_metrics(val_metrics, "val"),
             **_prefix_metrics(test_metrics, "test"),
+            "val_selection_score": float(val_score_fn(val_metrics["predictions"])),
+            "selected_epoch": selected_epoch,
+            "epochs_trained": len(train_loss_curve),
             "train_loss_curve": train_loss_curve,
             "val_loss_curve": curve_loss_curve,
+            "val_score_curve": val_score_curve,
             **model_outputs,
         }
 

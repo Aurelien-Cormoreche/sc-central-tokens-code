@@ -22,7 +22,6 @@ from typing import Any, Optional, Union
 import numpy as np
 import torch
 import yaml
-from omegaconf import DictConfig, OmegaConf
 
 from src.python.classifier_training.trainer import MLP, Preprocessor, TrainConfig
 
@@ -30,15 +29,13 @@ FORMAT_VERSION = 1
 _PREPROCESSING_FIELDS = ("pca_mean", "pca_components", "z_mean", "z_std")
 
 
-def train_cohorts_label(split_cfg: Optional[DictConfig], split_label: str) -> str:
-    """Folder name for a split's training cohorts: its optional `train_cohorts` list
-    (configs/train.yaml), sorted and '+'-joined so declaration order doesn't matter.
-    Falls back to split_label (split_<i> / same_wsi_split) when the split declares none.
-    """
-    cohorts = OmegaConf.select(split_cfg, "train_cohorts") if split_cfg is not None else None
-    if not cohorts:
+def train_cohorts_label(train_cohorts: Optional[list[str]], split_label: str) -> str:
+    """Folder name for a split's training cohorts (see experiment.py's main for where
+    they come from), sorted and '+'-joined so declaration order doesn't matter. Falls
+    back to split_label (split_<i> / same_wsi_split) when there are none."""
+    if not train_cohorts:
         return split_label
-    return "+".join(sorted(str(c) for c in cohorts))
+    return "+".join(sorted(str(c) for c in train_cohorts))
 
 
 def save_classifier(
