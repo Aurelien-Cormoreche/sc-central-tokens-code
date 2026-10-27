@@ -460,12 +460,15 @@ def main(cfg: DictConfig) -> None:
     # silently fall back to configs/train.yaml regardless of --config-name
     # passed here.
     config_name: str = HydraConfig.get().job.config_name or "train"
+    # Per read-out (embeddings) too, so e.g. token and CLS launches of the same
+    # experiment can run at once without writing to the same split_<i>.out.
     log_dir = (
         repo_root
         / cfg.slurm.output_dir
         / (OmegaConf.select(cfg, "experiment", default=None) or "")
         / cfg.data.model_name
         / cfg.data.correction_name
+        / _embeddings_folder_name(list(cfg.data.embeddings_datasets or []))
     )
     log_dir.mkdir(parents=True, exist_ok=True)
 
