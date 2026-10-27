@@ -26,6 +26,9 @@ EXCLUDED_WSIS = {
     "Xenium_V1_FFPE_Human_Breast_ILC",
     # VANNAN VUILD105 (IPF): slide not available.
     "GSM7990546",
+    # VANNAN VUILD78, 2nd core: no processed Xenium output (no patch_coordinates.h5) and its
+    # H&E fails OpenSlide + conversion (convert_failed). VUILD78 keeps GSM7990554.
+    "GSM7990555",
 }
 
 # Val donors (splits.csv donor_key) replacing E4_loso's val for these cohorts; the cohort's
