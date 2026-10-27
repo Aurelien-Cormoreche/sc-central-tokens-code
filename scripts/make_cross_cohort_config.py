@@ -95,12 +95,11 @@ def main() -> None:
     text = _replace_once(text, "cohorts: {}\n", COHORTS_BLOCK)
     # Cell-level random split pooled over all ~100 slides: a different (and very large) job.
     text = _replace_once(text, "same_wsi_split: true\n", "same_wsi_split: false\n")
-    # Bounds memory: every slide (train, val and test) is read capped at 50k random typed
-    # cells -- ~4.7M cells (~29 GB of 1536-d float32) per fold instead of ~10-15M.
-    text = _replace_once(text, "  max_cells_per_wsi: null\n", "  max_cells_per_wsi: 50000\n")
     text = _replace_once(text, "  experiment_name: embeddings_eval\n", "  experiment_name: embeddings_eval_cross_cohort\n")
     text = _replace_once(text, "  selection_metric: slide_macro_f1\n", "  selection_metric: cohort_balanced_slide_macro_f1\n")
-    text = _replace_once(text, "  mem: 32G\n", "  mem: 128G\n")
+    # Every cell of every slide is used: ~12-13M cells loaded per fold, ~78 GB per copy of the
+    # 1536-d float32 embeddings, and training holds ~2 copies (numpy + torch).
+    text = _replace_once(text, "  mem: 32G\n", "  mem: 200G   # ~2 x 78 GB of embeddings per fold, all cells\n")
 
     args.out.write_text(text)
     print(f"wrote {args.out} ({len({r['fold'] for r in rows})} folds, "
