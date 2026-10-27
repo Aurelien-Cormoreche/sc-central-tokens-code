@@ -18,11 +18,21 @@ REPO = Path(__file__).resolve().parents[1]
 # make_splits.py's source -> cohort name used in this config (NM is the SPLIT study).
 COHORT_NAMES = {"NM": "SPLIT", "VANNAN": "VANNAN", "MCCORD": "MCCORD", "JOHNSON": "JOHNSON", "10X": "10X"}
 
+# splits.csv slides (WSI names) left out of every fold because they have no embeddings:
+EXCLUDED_WSIS = {
+    # Base-panel runs of two 10x breast blocks; only their _With_Addon runs (serial sections,
+    # same donors, also in splits.csv) were extracted.
+    "Xenium_V1_FFPE_Human_Breast_IDC",
+    "Xenium_V1_FFPE_Human_Breast_ILC",
+    # VANNAN VUILD105 (IPF): slide not available.
+    "GSM7990546",
+}
+
 # Val donors (splits.csv donor_key) replacing E4_loso's val for these cohorts; the cohort's
 # other donors go to train in the folds where it trains. One single-slide donor per group:
 VAL_DONOR_OVERRIDES = {
     "NM": {"NM::B16", "NM::L7"},                          # breast IDC, lung LUAD
-    "VANNAN": {"VANNAN::THD0008", "VANNAN::VUILD105"},    # healthy, IPF (one donor per site)
+    "VANNAN": {"VANNAN::THD0008", "VANNAN::VUILD106"},    # healthy, IPF (one donor per site)
 }
 
 COHORTS_BLOCK = """cohorts:
@@ -50,8 +60,9 @@ def _splits_block(rows: list[dict]) -> str:
         "# _metadata_work/splits.csv experiment E4_loso -- regenerate with",
         "# scripts/make_cross_cohort_config.py. Fold i: test = every slide of one cohort;",
         "# val = fixed donors from each of the 4 others (SPLIT: B16 breast + L7 lung; VANNAN:",
-        "# THD0008 healthy + VUILD105 IPF; others: splits.csv's every-5th donor); train = the",
-        "# remaining slides. Splits are donor-grouped.",
+        "# THD0008 healthy + VUILD106 IPF; others: splits.csv's every-5th donor); train = the",
+        "# remaining slides. Splits are donor-grouped. Left out (no embeddings):",
+        f"# {', '.join(sorted(EXCLUDED_WSIS))}.",
         "splits:",
     ]
     for fold in sorted(folds):
@@ -87,6 +98,9 @@ def main() -> None:
     with open(args.splits_csv, newline="", encoding="utf-8") as fh:
         rows = [r for r in csv.DictReader(fh) if r["experiment"] == "E4_loso"]
     assert rows, f"no E4_loso rows in {args.splits_csv}"
+    unknown = EXCLUDED_WSIS - {_wsi_name(r["xenium_folder"]) for r in rows}
+    assert not unknown, f"excluded WSIs not in splits.csv: {unknown}"
+    rows = [r for r in rows if _wsi_name(r["xenium_folder"]) not in EXCLUDED_WSIS]
     for source, donors in VAL_DONOR_OVERRIDES.items():
         missing = donors - {r["donor_key"] for r in rows if r["source"] == source}
         assert not missing, f"val donors not in splits.csv: {missing}"

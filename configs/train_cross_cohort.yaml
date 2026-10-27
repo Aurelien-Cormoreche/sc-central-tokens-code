@@ -74,10 +74,11 @@ cohorts:
 # _metadata_work/splits.csv experiment E4_loso -- regenerate with
 # scripts/make_cross_cohort_config.py. Fold i: test = every slide of one cohort;
 # val = fixed donors from each of the 4 others (SPLIT: B16 breast + L7 lung; VANNAN:
-# THD0008 healthy + VUILD105 IPF; others: splits.csv's every-5th donor); train = the
-# remaining slides. Splits are donor-grouped.
+# THD0008 healthy + VUILD106 IPF; others: splits.csv's every-5th donor); train = the
+# remaining slides. Splits are donor-grouped. Left out (no embeddings):
+# GSM7990546, Xenium_V1_FFPE_Human_Breast_IDC, Xenium_V1_FFPE_Human_Breast_ILC.
 splits:
-  # split 0: test = SPLIT (29 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, VANNAN 2); train = 60 slides
+  # split 0: test = SPLIT (29 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, VANNAN 2); train = 57 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -87,7 +88,6 @@ splits:
       GSM7990540: 1.0
       GSM7990541: 1.0
       GSM7990543: 1.0
-      GSM7990548: 1.0
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
@@ -109,9 +109,7 @@ splits:
       Xenium_FFPE_Human_Breast_Cancer_Rep2: 1.0
       Xenium_Prime_Human_Lymph_Node_Reactive_FFPE: 1.0
       Xenium_Prime_Human_Prostate_FFPE: 1.0
-      Xenium_V1_FFPE_Human_Breast_IDC: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_With_Addon: 1.0
-      Xenium_V1_FFPE_Human_Breast_ILC: 1.0
       Xenium_V1_FFPE_Human_Breast_ILC_With_Addon: 1.0
       Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
       Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
@@ -141,7 +139,7 @@ splits:
       tHIO_EGF: 1.0
     val:
       GSM7990532: 1.0
-      GSM7990546: 1.0
+      GSM7990548: 1.0
       GSM9054477_P13_run2: 1.0
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
@@ -185,7 +183,7 @@ splits:
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
 
-  # split 1: test = VANNAN (20 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, SPLIT 2); train = 69 slides
+  # split 1: test = VANNAN (19 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, SPLIT 2); train = 67 slides
   - train:
       GSM9054471_P1_run1: 1.0
       GSM9054473_P9_run2: 1.0
@@ -226,9 +224,7 @@ splits:
       Xenium_FFPE_Human_Breast_Cancer_Rep2: 1.0
       Xenium_Prime_Human_Lymph_Node_Reactive_FFPE: 1.0
       Xenium_Prime_Human_Prostate_FFPE: 1.0
-      Xenium_V1_FFPE_Human_Breast_IDC: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_With_Addon: 1.0
-      Xenium_V1_FFPE_Human_Breast_ILC: 1.0
       Xenium_V1_FFPE_Human_Breast_ILC_With_Addon: 1.0
       Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
       Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
@@ -281,7 +277,6 @@ splits:
       GSM7990540: 1.0
       GSM7990541: 1.0
       GSM7990543: 1.0
-      GSM7990546: 1.0
       GSM7990548: 1.0
       GSM7990549: 1.0
       GSM7990550: 1.0
@@ -293,7 +288,7 @@ splits:
       GSM7990558: 1.0
       GSM7990559: 1.0
 
-  # split 2: test = MCCORD (11 slides); val = 13 slides (10X 8, JOHNSON 1, SPLIT 2, VANNAN 2); train = 79 slides
+  # split 2: test = MCCORD (11 slides); val = 13 slides (10X 8, JOHNSON 1, SPLIT 2, VANNAN 2); train = 76 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -303,7 +298,6 @@ splits:
       GSM7990540: 1.0
       GSM7990541: 1.0
       GSM7990543: 1.0
-      GSM7990548: 1.0
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
@@ -344,9 +338,7 @@ splits:
       Xenium_FFPE_Human_Breast_Cancer_Rep2: 1.0
       Xenium_Prime_Human_Lymph_Node_Reactive_FFPE: 1.0
       Xenium_Prime_Human_Prostate_FFPE: 1.0
-      Xenium_V1_FFPE_Human_Breast_IDC: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_With_Addon: 1.0
-      Xenium_V1_FFPE_Human_Breast_ILC: 1.0
       Xenium_V1_FFPE_Human_Breast_ILC_With_Addon: 1.0
       Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
       Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
@@ -376,7 +368,7 @@ splits:
       tHIO_EGF: 1.0
     val:
       GSM7990532: 1.0
-      GSM7990546: 1.0
+      GSM7990548: 1.0
       GSM9509138_NSCLC_5k_L7_L7: 1.0
       GSM9509157_breast_breast_B16_B16: 1.0
       Xenium_Prime_Human_Skin_FFPE: 1.0
@@ -401,7 +393,7 @@ splits:
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
 
-  # split 3: test = JOHNSON (5 slides); val = 15 slides (10X 8, MCCORD 3, SPLIT 2, VANNAN 2); train = 83 slides
+  # split 3: test = JOHNSON (5 slides); val = 15 slides (10X 8, MCCORD 3, SPLIT 2, VANNAN 2); train = 80 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -411,7 +403,6 @@ splits:
       GSM7990540: 1.0
       GSM7990541: 1.0
       GSM7990543: 1.0
-      GSM7990548: 1.0
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
@@ -460,9 +451,7 @@ splits:
       Xenium_FFPE_Human_Breast_Cancer_Rep2: 1.0
       Xenium_Prime_Human_Lymph_Node_Reactive_FFPE: 1.0
       Xenium_Prime_Human_Prostate_FFPE: 1.0
-      Xenium_V1_FFPE_Human_Breast_IDC: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_With_Addon: 1.0
-      Xenium_V1_FFPE_Human_Breast_ILC: 1.0
       Xenium_V1_FFPE_Human_Breast_ILC_With_Addon: 1.0
       Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
       Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE: 1.0
@@ -488,7 +477,7 @@ splits:
       Xeniumranger_V1_hSkin_Melanoma_Add_on_FFPE: 1.0
     val:
       GSM7990532: 1.0
-      GSM7990546: 1.0
+      GSM7990548: 1.0
       GSM9054477_P13_run2: 1.0
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
@@ -509,7 +498,7 @@ splits:
       fetal_d54: 1.0
       tHIO_EGF: 1.0
 
-  # split 4: test = 10X (38 slides); val = 8 slides (JOHNSON 1, MCCORD 3, SPLIT 2, VANNAN 2); train = 57 slides
+  # split 4: test = 10X (36 slides); val = 8 slides (JOHNSON 1, MCCORD 3, SPLIT 2, VANNAN 2); train = 56 slides
   - train:
       GSM7990533: 1.0
       GSM7990534: 1.0
@@ -519,7 +508,6 @@ splits:
       GSM7990540: 1.0
       GSM7990541: 1.0
       GSM7990543: 1.0
-      GSM7990548: 1.0
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
@@ -570,7 +558,7 @@ splits:
       tHIO_EGF: 1.0
     val:
       GSM7990532: 1.0
-      GSM7990546: 1.0
+      GSM7990548: 1.0
       GSM9054477_P13_run2: 1.0
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
@@ -583,11 +571,9 @@ splits:
       Xenium_Prime_Human_Lymph_Node_Reactive_FFPE: 1.0
       Xenium_Prime_Human_Prostate_FFPE: 1.0
       Xenium_Prime_Human_Skin_FFPE: 1.0
-      Xenium_V1_FFPE_Human_Breast_IDC: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_1: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_2: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_With_Addon: 1.0
-      Xenium_V1_FFPE_Human_Breast_ILC: 1.0
       Xenium_V1_FFPE_Human_Breast_ILC_With_Addon: 1.0
       Xenium_V1_Human_Brain_GBM_FFPE: 1.0
       Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE: 1.0
