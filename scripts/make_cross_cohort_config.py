@@ -18,6 +18,13 @@ REPO = Path(__file__).resolve().parents[1]
 # make_splits.py's source -> cohort name used in this config (NM is the SPLIT study).
 COHORT_NAMES = {"NM": "SPLIT", "VANNAN": "VANNAN", "MCCORD": "MCCORD", "JOHNSON": "JOHNSON", "10X": "10X"}
 
+# Val donors (splits.csv donor_key) replacing E4_loso's val for these cohorts; the cohort's
+# other donors go to train in the folds where it trains. One single-slide donor per group:
+VAL_DONOR_OVERRIDES = {
+    "NM": {"NM::B16", "NM::L7"},                          # breast IDC, lung LUAD
+    "VANNAN": {"VANNAN::THD0008", "VANNAN::VUILD105"},    # healthy, IPF (one donor per site)
+}
+
 COHORTS_BLOCK = """cohorts:
   SPLIT: ["GSM9509*"]              # breast + lung cancer (SPLIT, Nature Methods)
   VANNAN: ["GSM7990*"]             # pulmonary fibrosis TMAs, 20x
@@ -42,8 +49,9 @@ def _splits_block(rows: list[dict]) -> str:
         "# Scheme: leave-one-cohort-out over the 5 cohorts (see `cohorts`), from",
         "# _metadata_work/splits.csv experiment E4_loso -- regenerate with",
         "# scripts/make_cross_cohort_config.py. Fold i: test = every slide of one cohort;",
-        "# val = fixed donors from each of the 4 others (SPLIT: the E1 val donors, others:",
-        "# every 5th donor); train = the remaining slides. Splits are donor-grouped.",
+        "# val = fixed donors from each of the 4 others (SPLIT: B16 breast + L7 lung; VANNAN:",
+        "# THD0008 healthy + VUILD105 IPF; others: splits.csv's every-5th donor); train = the",
+        "# remaining slides. Splits are donor-grouped.",
         "splits:",
     ]
     for fold in sorted(folds):
@@ -79,6 +87,12 @@ def main() -> None:
     with open(args.splits_csv, newline="", encoding="utf-8") as fh:
         rows = [r for r in csv.DictReader(fh) if r["experiment"] == "E4_loso"]
     assert rows, f"no E4_loso rows in {args.splits_csv}"
+    for source, donors in VAL_DONOR_OVERRIDES.items():
+        missing = donors - {r["donor_key"] for r in rows if r["source"] == source}
+        assert not missing, f"val donors not in splits.csv: {missing}"
+    for r in rows:
+        if r["source"] in VAL_DONOR_OVERRIDES and r["split"] in ("train", "val"):
+            r["split"] = "val" if r["donor_key"] in VAL_DONOR_OVERRIDES[r["source"]] else "train"
 
     text = (REPO / "configs" / "train.yaml").read_text()
     head, rest = text.split("# Scheme:", 1)
@@ -97,6 +111,12 @@ def main() -> None:
     text = _replace_once(text, "same_wsi_split: true\n", "same_wsi_split: false\n")
     text = _replace_once(text, "  experiment_name: embeddings_eval\n", "  experiment_name: embeddings_eval_cross_cohort\n")
     text = _replace_once(text, "  selection_metric: slide_macro_f1\n", "  selection_metric: cohort_balanced_slide_macro_f1\n")
+    # One learning rate: the grid is then only loss_weights (3 trials per fold).
+    text = _replace_once(
+        text,
+        "  learning_rate:\n    tune: true\n    values: [5.0e-4, 1.0e-4]\n",
+        "  learning_rate:\n    tune: false\n    values: [5.0e-4]\n",
+    )
     # Every cell of every slide is used: ~12-13M cells loaded per fold, ~78 GB per copy of the
     # 1536-d float32 embeddings, and training holds ~2 copies (numpy + torch).
     text = _replace_once(text, "  mem: 32G\n", "  mem: 256G   # ~2 x 78 GB of embeddings per fold, all cells\n")

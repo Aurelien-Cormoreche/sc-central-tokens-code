@@ -73,13 +73,15 @@ cohorts:
 # Scheme: leave-one-cohort-out over the 5 cohorts (see `cohorts`), from
 # _metadata_work/splits.csv experiment E4_loso -- regenerate with
 # scripts/make_cross_cohort_config.py. Fold i: test = every slide of one cohort;
-# val = fixed donors from each of the 4 others (SPLIT: the E1 val donors, others:
-# every 5th donor); train = the remaining slides. Splits are donor-grouped.
+# val = fixed donors from each of the 4 others (SPLIT: B16 breast + L7 lung; VANNAN:
+# THD0008 healthy + VUILD105 IPF; others: splits.csv's every-5th donor); train = the
+# remaining slides. Splits are donor-grouped.
 splits:
-  # split 0: test = SPLIT (29 slides); val = 17 slides (10X 8, JOHNSON 1, MCCORD 3, VANNAN 5); train = 57 slides
+  # split 0: test = SPLIT (29 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, VANNAN 2); train = 60 slides
   - train:
-      GSM7990532: 1.0
       GSM7990533: 1.0
+      GSM7990534: 1.0
+      GSM7990535: 1.0
       GSM7990536: 1.0
       GSM7990537: 1.0
       GSM7990540: 1.0
@@ -89,6 +91,8 @@ splits:
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
+      GSM7990554: 1.0
+      GSM7990555: 1.0
       GSM7990556: 1.0
       GSM7990557: 1.0
       GSM7990558: 1.0
@@ -136,11 +140,8 @@ splits:
       fetal_d54: 1.0
       tHIO_EGF: 1.0
     val:
-      GSM7990534: 1.0
-      GSM7990535: 1.0
+      GSM7990532: 1.0
       GSM7990546: 1.0
-      GSM7990554: 1.0
-      GSM7990555: 1.0
       GSM9054477_P13_run2: 1.0
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
@@ -184,7 +185,7 @@ splits:
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
 
-  # split 1: test = VANNAN (20 slides); val = 18 slides (10X 8, JOHNSON 1, MCCORD 3, SPLIT 6); train = 65 slides
+  # split 1: test = VANNAN (20 slides); val = 14 slides (10X 8, JOHNSON 1, MCCORD 3, SPLIT 2); train = 69 slides
   - train:
       GSM9054471_P1_run1: 1.0
       GSM9054473_P9_run2: 1.0
@@ -203,18 +204,22 @@ splits:
       GSM9509141_NSCLC_chuvio_L1_L1_2: 1.0
       GSM9509142_NSCLC_chuvio_L2_L2: 1.0
       GSM9509143_NSCLC_chuvio_L3_L3: 1.0
+      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
       GSM9509145_NSCLC_lung_L1_L1: 1.0
       GSM9509147_NSCLC_lung_L2_L2_1: 1.0
       GSM9509148_NSCLC_lung_L2_L2_2: 1.0
+      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509156_breast_breast_B17_B17: 1.0
       GSM9509158_breast_breast_B15_B15: 1.0
       GSM9509159_breast_breast_B14_B14: 1.0
       GSM9509161_breast_breast_B13_B13: 1.0
       GSM9509162_breast_breast_B12_B12: 1.0
+      GSM9509163_breast_breast_B11_B11: 1.0
       GSM9509164_breast_breast_B10_B10: 1.0
       GSM9509166_breast_breast_B9_B9: 1.0
       GSM9509167_breast_breast_B8_B8: 1.0
       GSM9509168_breast_breast_B7_B7: 1.0
+      GSM9509169_breast_breast_B6_B6: 1.0
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
       Xenium_FFPE_Human_Breast_Cancer_Rep1: 1.0
@@ -256,11 +261,7 @@ splits:
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
       GSM9509138_NSCLC_5k_L7_L7: 1.0
-      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
-      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509157_breast_breast_B16_B16: 1.0
-      GSM9509163_breast_breast_B11_B11: 1.0
-      GSM9509169_breast_breast_B6_B6: 1.0
       Xenium_Prime_Human_Skin_FFPE: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_1: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_2: 1.0
@@ -292,10 +293,11 @@ splits:
       GSM7990558: 1.0
       GSM7990559: 1.0
 
-  # split 2: test = MCCORD (11 slides); val = 20 slides (10X 8, JOHNSON 1, SPLIT 6, VANNAN 5); train = 72 slides
+  # split 2: test = MCCORD (11 slides); val = 13 slides (10X 8, JOHNSON 1, SPLIT 2, VANNAN 2); train = 79 slides
   - train:
-      GSM7990532: 1.0
       GSM7990533: 1.0
+      GSM7990534: 1.0
+      GSM7990535: 1.0
       GSM7990536: 1.0
       GSM7990537: 1.0
       GSM7990540: 1.0
@@ -305,6 +307,8 @@ splits:
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
+      GSM7990554: 1.0
+      GSM7990555: 1.0
       GSM7990556: 1.0
       GSM7990557: 1.0
       GSM7990558: 1.0
@@ -318,18 +322,22 @@ splits:
       GSM9509141_NSCLC_chuvio_L1_L1_2: 1.0
       GSM9509142_NSCLC_chuvio_L2_L2: 1.0
       GSM9509143_NSCLC_chuvio_L3_L3: 1.0
+      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
       GSM9509145_NSCLC_lung_L1_L1: 1.0
       GSM9509147_NSCLC_lung_L2_L2_1: 1.0
       GSM9509148_NSCLC_lung_L2_L2_2: 1.0
+      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509156_breast_breast_B17_B17: 1.0
       GSM9509158_breast_breast_B15_B15: 1.0
       GSM9509159_breast_breast_B14_B14: 1.0
       GSM9509161_breast_breast_B13_B13: 1.0
       GSM9509162_breast_breast_B12_B12: 1.0
+      GSM9509163_breast_breast_B11_B11: 1.0
       GSM9509164_breast_breast_B10_B10: 1.0
       GSM9509166_breast_breast_B9_B9: 1.0
       GSM9509167_breast_breast_B8_B8: 1.0
       GSM9509168_breast_breast_B7_B7: 1.0
+      GSM9509169_breast_breast_B6_B6: 1.0
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
       Xenium_FFPE_Human_Breast_Cancer_Rep1: 1.0
@@ -367,17 +375,10 @@ splits:
       fetal_d54: 1.0
       tHIO_EGF: 1.0
     val:
-      GSM7990534: 1.0
-      GSM7990535: 1.0
+      GSM7990532: 1.0
       GSM7990546: 1.0
-      GSM7990554: 1.0
-      GSM7990555: 1.0
       GSM9509138_NSCLC_5k_L7_L7: 1.0
-      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
-      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509157_breast_breast_B16_B16: 1.0
-      GSM9509163_breast_breast_B11_B11: 1.0
-      GSM9509169_breast_breast_B6_B6: 1.0
       Xenium_Prime_Human_Skin_FFPE: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_1: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_2: 1.0
@@ -400,10 +401,11 @@ splits:
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
 
-  # split 3: test = JOHNSON (5 slides); val = 22 slides (10X 8, MCCORD 3, SPLIT 6, VANNAN 5); train = 76 slides
+  # split 3: test = JOHNSON (5 slides); val = 15 slides (10X 8, MCCORD 3, SPLIT 2, VANNAN 2); train = 83 slides
   - train:
-      GSM7990532: 1.0
       GSM7990533: 1.0
+      GSM7990534: 1.0
+      GSM7990535: 1.0
       GSM7990536: 1.0
       GSM7990537: 1.0
       GSM7990540: 1.0
@@ -413,6 +415,8 @@ splits:
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
+      GSM7990554: 1.0
+      GSM7990555: 1.0
       GSM7990556: 1.0
       GSM7990557: 1.0
       GSM7990558: 1.0
@@ -434,18 +438,22 @@ splits:
       GSM9509141_NSCLC_chuvio_L1_L1_2: 1.0
       GSM9509142_NSCLC_chuvio_L2_L2: 1.0
       GSM9509143_NSCLC_chuvio_L3_L3: 1.0
+      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
       GSM9509145_NSCLC_lung_L1_L1: 1.0
       GSM9509147_NSCLC_lung_L2_L2_1: 1.0
       GSM9509148_NSCLC_lung_L2_L2_2: 1.0
+      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509156_breast_breast_B17_B17: 1.0
       GSM9509158_breast_breast_B15_B15: 1.0
       GSM9509159_breast_breast_B14_B14: 1.0
       GSM9509161_breast_breast_B13_B13: 1.0
       GSM9509162_breast_breast_B12_B12: 1.0
+      GSM9509163_breast_breast_B11_B11: 1.0
       GSM9509164_breast_breast_B10_B10: 1.0
       GSM9509166_breast_breast_B9_B9: 1.0
       GSM9509167_breast_breast_B8_B8: 1.0
       GSM9509168_breast_breast_B7_B7: 1.0
+      GSM9509169_breast_breast_B6_B6: 1.0
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
       Xenium_FFPE_Human_Breast_Cancer_Rep1: 1.0
@@ -479,20 +487,13 @@ splits:
       Xenium_V1_human_Pancreas_FFPE: 1.0
       Xeniumranger_V1_hSkin_Melanoma_Add_on_FFPE: 1.0
     val:
-      GSM7990534: 1.0
-      GSM7990535: 1.0
+      GSM7990532: 1.0
       GSM7990546: 1.0
-      GSM7990554: 1.0
-      GSM7990555: 1.0
       GSM9054477_P13_run2: 1.0
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
       GSM9509138_NSCLC_5k_L7_L7: 1.0
-      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
-      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509157_breast_breast_B16_B16: 1.0
-      GSM9509163_breast_breast_B11_B11: 1.0
-      GSM9509169_breast_breast_B6_B6: 1.0
       Xenium_Prime_Human_Skin_FFPE: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_1: 1.0
       Xenium_V1_FFPE_Human_Breast_IDC_Big_2: 1.0
@@ -508,10 +509,11 @@ splits:
       fetal_d54: 1.0
       tHIO_EGF: 1.0
 
-  # split 4: test = 10X (38 slides); val = 15 slides (JOHNSON 1, MCCORD 3, SPLIT 6, VANNAN 5); train = 50 slides
+  # split 4: test = 10X (38 slides); val = 8 slides (JOHNSON 1, MCCORD 3, SPLIT 2, VANNAN 2); train = 57 slides
   - train:
-      GSM7990532: 1.0
       GSM7990533: 1.0
+      GSM7990534: 1.0
+      GSM7990535: 1.0
       GSM7990536: 1.0
       GSM7990537: 1.0
       GSM7990540: 1.0
@@ -521,6 +523,8 @@ splits:
       GSM7990549: 1.0
       GSM7990550: 1.0
       GSM7990551: 1.0
+      GSM7990554: 1.0
+      GSM7990555: 1.0
       GSM7990556: 1.0
       GSM7990557: 1.0
       GSM7990558: 1.0
@@ -542,18 +546,22 @@ splits:
       GSM9509141_NSCLC_chuvio_L1_L1_2: 1.0
       GSM9509142_NSCLC_chuvio_L2_L2: 1.0
       GSM9509143_NSCLC_chuvio_L3_L3: 1.0
+      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
       GSM9509145_NSCLC_lung_L1_L1: 1.0
       GSM9509147_NSCLC_lung_L2_L2_1: 1.0
       GSM9509148_NSCLC_lung_L2_L2_2: 1.0
+      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509156_breast_breast_B17_B17: 1.0
       GSM9509158_breast_breast_B15_B15: 1.0
       GSM9509159_breast_breast_B14_B14: 1.0
       GSM9509161_breast_breast_B13_B13: 1.0
       GSM9509162_breast_breast_B12_B12: 1.0
+      GSM9509163_breast_breast_B11_B11: 1.0
       GSM9509164_breast_breast_B10_B10: 1.0
       GSM9509166_breast_breast_B9_B9: 1.0
       GSM9509167_breast_breast_B8_B8: 1.0
       GSM9509168_breast_breast_B7_B7: 1.0
+      GSM9509169_breast_breast_B6_B6: 1.0
       GSM9509171_breast_breast_B5_B5: 1.0
       GSM9509174_breast_breast_B1_B1_3: 1.0
       fetal_d105: 1.0
@@ -561,20 +569,13 @@ splits:
       fetal_d54: 1.0
       tHIO_EGF: 1.0
     val:
-      GSM7990534: 1.0
-      GSM7990535: 1.0
+      GSM7990532: 1.0
       GSM7990546: 1.0
-      GSM7990554: 1.0
-      GSM7990555: 1.0
       GSM9054477_P13_run2: 1.0
       GSM9054486_P28_run1: 1.0
       GSM9054487_P28_run2: 1.0
       GSM9509138_NSCLC_5k_L7_L7: 1.0
-      GSM9509144_NSCLC_chuvio_L4_L4: 1.0
-      GSM9509150_NSCLC_lung_L4_L4: 1.0
       GSM9509157_breast_breast_B16_B16: 1.0
-      GSM9509163_breast_breast_B11_B11: 1.0
-      GSM9509169_breast_breast_B6_B6: 1.0
       fetal_d136: 1.0
     test:
       Xenium_FFPE_Human_Breast_Cancer_Rep1: 1.0
@@ -712,8 +713,8 @@ training:
 # Set tune: false and provide a single-element values list to fix a hparam.
 hparams:
   learning_rate:
-    tune: true
-    values: [5.0e-4, 1.0e-4]
+    tune: false
+    values: [5.0e-4]
   dropout:
     tune: true
     values: [0.2]
