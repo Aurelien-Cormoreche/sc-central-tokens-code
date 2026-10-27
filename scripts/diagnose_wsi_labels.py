@@ -11,15 +11,16 @@ Usage (repo root, after `set -a; source .env; set +a`):
         --model-name UNI2 --correction-name raw [--wsis WSI ...]
 """
 import argparse
-import os
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import h5py
-import numpy as np
 from omegaconf import OmegaConf
 
-from src.python.code_configs.mappings import mapping_factory
+# Run as a plain script (`python scripts/...`), Python only puts scripts/ on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.python.code_configs.mappings import mapping_factory  # noqa: E402
 
 LOW_USABLE_FRACTION = 0.10
 
