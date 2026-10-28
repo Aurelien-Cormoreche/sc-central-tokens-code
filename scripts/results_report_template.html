@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__REPORT_TITLE__</title>
+<!-- Template for scripts/make_results_report.py, which replaces the two placeholders. -->
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10); --hover: rgba(11,11,11,0.04);
+  --sel: rgba(42,120,214,0.10); --accent: #2a78d6; --hatch: #c3c2b7;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --pos: 42,120,214; --neg: 227,73,72;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10); --hover: rgba(255,255,255,0.05);
+    --sel: rgba(57,135,229,0.18); --accent: #3987e5; --hatch: #4a4a46;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+    --pos: 57,135,229; --neg: 230,103,103;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10); --hover: rgba(255,255,255,0.05);
+  --sel: rgba(57,135,229,0.18); --accent: #3987e5; --hatch: #4a4a46;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --pos: 57,135,229; --neg: 230,103,103;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--ink); }
+body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; overflow-x: hidden; }
+.wrap { max-width: 1520px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+h3 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.ink2 { color: var(--ink-2); }
+.small { font-size: 12px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0; }
+.section { margin-top: 16px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 10px; }
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+button, select, input { font: inherit; color: inherit; }
+.btn { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.btn:hover { background: var(--hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Filter row */
+.controls { position: sticky; top: 0; z-index: 6; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding: 10px 0; margin-top: 12px; background: var(--page); border-bottom: 1px solid var(--border); }
+.ctl { display: flex; align-items: center; gap: 6px; }
+.ctl > label, .ctl > .lbl { color: var(--ink-2); font-size: 12px; }
+.ctl select, .ctl input[type=search] { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.ctl input[type=search] { width: 220px; max-width: 60vw; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 4px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.spacer { flex: 1; }
+.chk { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
+
+/* Tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 4px 0 14px; }
+.tile { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+.tile .label { font-size: 12px; color: var(--ink-2); }
+.tile .value { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.tile .sub { font-size: 12px; color: var(--muted); }
+.tile .runrow { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
+.tile .runrow b { font-size: 18px; font-weight: 600; }
+
+/* Legends & keys */
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); align-items: center; }
+.key { display: inline-flex; align-items: center; gap: 5px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.linekey { display: inline-block; width: 14px; height: 2px; border-radius: 1px; flex: none; }
+
+/* Main layout */
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 410px; gap: 16px; margin-top: 16px; align-items: start; }
+@media (max-width: 1180px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.detail { position: sticky; top: 62px; max-height: calc(100vh - 76px); overflow: auto; }
+@media (max-width: 1180px) { .detail { position: static; max-height: none; } }
+
+/* Slide table */
+.table-wrap { overflow: auto; max-height: calc(100vh - 140px); border-top: 1px solid var(--border); }
+table { border-collapse: separate; border-spacing: 0; width: 100%; }
+th, td { padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
+thead th { position: sticky; background: var(--surface); z-index: 2; font-size: 12px; font-weight: 600; color: var(--ink-2); text-align: left; white-space: nowrap; }
+thead tr:first-child th { top: 0; }
+thead tr:nth-child(2) th { top: 27px; }
+thead th.num { text-align: right; }
+thead th button { all: unset; cursor: pointer; display: inline-flex; gap: 3px; align-items: center; }
+thead th button:focus-visible { outline: 2px solid var(--accent); }
+thead th .arrow { color: var(--ink); font-size: 10px; }
+tr.grp th { position: sticky; top: 54px; z-index: 1; background: var(--page); text-align: left; font-size: 12px; font-weight: 600; padding: 7px 8px; color: var(--ink); }
+tr.grp th .muted { font-weight: 400; }
+tbody tr.row { cursor: pointer; }
+tbody tr.row:hover { background: var(--hover); }
+tbody tr.row.sel { background: var(--sel); }
+tbody tr.row.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+#tbl th, #tbl td { padding-left: 6px; padding-right: 6px; }
+td.name { min-width: 200px; max-width: 300px; }
+td.name .sub { font-size: 11.5px; color: var(--muted); }
+td.heat { width: 54px; min-width: 54px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; padding: 0; border-bottom: 2px solid var(--surface); border-right: 2px solid var(--surface); }
+td.heat > div { padding: 6px 2px; }
+.absent { background: repeating-linear-gradient(45deg, transparent 0 4px, var(--hatch) 4px 5px); color: var(--muted); }
+td.metric { min-width: 150px; width: 22%; }
+.mbar { display: flex; align-items: center; gap: 8px; }
+.track { position: relative; flex: 1; height: 12px; border-left: 1px solid var(--axis); }
+.track .bar { position: absolute; left: 0; top: 1px; height: 10px; border-radius: 0 4px 4px 0; }
+.track .pt { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface); }
+.track .span { position: absolute; top: 50%; height: 1px; background: var(--axis); }
+.mvals { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; font-size: 13px; }
+.mvals div { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+td.delta div { font-size: 12px; border-radius: 4px; padding: 1px 4px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Detail panel */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chip { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--ink-2); }
+.mgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 14px; }
+.mgrid > div { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+.mgrid .l { font-size: 11px; color: var(--ink-2); }
+.mgrid .v { font-size: 17px; font-weight: 600; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.tabs button { border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 3px 10px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.tabs button[aria-pressed="true"] { border-color: var(--ink); }
+.stack { display: flex; gap: 2px; height: 14px; }
+.stack div { min-width: 0; border-radius: 2px; }
+.stackrow { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; margin: 4px 0; font-size: 12px; color: var(--ink-2); }
+.ptable { font-size: 12.5px; margin-top: 6px; }
+.ptable th, .ptable td { padding: 3px 6px; }
+.ptable thead th { position: static; }
+dl.meta { display: grid; grid-template-columns: 120px 1fr; gap: 3px 10px; font-size: 12.5px; margin: 6px 0 0; }
+dl.meta dt { color: var(--ink-2); }
+dl.meta dd { margin: 0; overflow-wrap: anywhere; }
+.subhead { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
+.linkbtn { all: unset; cursor: pointer; color: var(--ink); text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 2px; }
+.linkbtn:focus-visible { outline: 2px solid var(--accent); }
+
+/* Folds */
+.grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.minicard { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.ftable td, .ftable th { font-size: 12.5px; white-space: nowrap; }
+.ftable thead th { position: static; }
+.ftable tfoot td { font-weight: 600; border-top: 1px solid var(--axis); }
+.scroll-x { overflow-x: auto; }
+svg text { fill: var(--ink-2); font-size: 11px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+svg .grid { stroke: var(--grid); stroke-width: 1; }
+svg .axis { stroke: var(--axis); stroke-width: 1; }
+
+/* Tooltip */
+#tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 8px 10px; font-size: 12px; max-width: 340px; display: none; }
+#tip .v { font-size: 15px; font-weight: 600; }
+#tip .r { display: flex; align-items: center; gap: 6px; }
+.notes li { margin: 3px 0; }
+.notes { font-size: 13px; color: var(--ink-2); }
+.notes code { font-size: 12px; }
+@media print { .controls { position: static; } .table-wrap { max-height: none; overflow: visible; } .detail { position: static; max-height: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="page-head">
+    <div>
+      <h1 id="title"></h1>
+      <p id="subtitle" class="ink2"></p>
+      <p id="generated" class="muted small"></p>
+    </div>
+    <button id="theme" class="btn small" type="button"></button>
+  </header>
+
+  <nav class="controls" id="controls" aria-label="Filters"></nav>
+
+  <section class="card section" id="overview">
+    <div class="section-head"><h2 id="ov-title"></h2><span id="ov-note" class="muted small"></span></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="legend" id="strip-legend"></div>
+    <div id="strip" style="margin-top:6px"></div>
+  </section>
+
+  <div class="layout">
+    <section class="card" id="slides">
+      <div class="section-head"><h2 id="tbl-title"></h2><span class="muted small">Click a row (or a dot above) for the slide's confusion matrix. ↑/↓ move between rows.</span></div>
+      <div class="legend" id="tbl-legend" style="margin-bottom:8px"></div>
+      <div class="table-wrap"><table id="tbl"></table></div>
+    </section>
+    <aside class="card detail" id="detail" aria-live="polite"></aside>
+  </div>
+
+  <section class="card section" id="folds"></section>
+  <section class="card section notes" id="notes"></section>
+</div>
+<div id="tip" role="tooltip"></div>
+
+<script type="application/json" id="report-data">__REPORT_DATA__</script>
+<script>
+'use strict';
+const D = JSON.parse(document.getElementById('report-data').textContent);
+const C = D.class_names, K = C.length, RUNS = D.runs, MULTI = RUNS.length > 1;
+const SVGNS = 'http://www.w3.org/2000/svg';
+const $ = sel => document.querySelector(sel);
+
+// ---------- DOM helpers (all text goes through text nodes) ----------
+function setAttrs(n, attrs) {
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') n.setAttribute('class', v);
+    else if (k === 'style') for (const [p, val] of Object.entries(v)) { if (val != null) n.style.setProperty(p.startsWith('--') ? p : p.replace(/[A-Z]/g, c => '-' + c.toLowerCase()), val); }
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? '' : v);
+  }
+}
+function append(n, kids) {
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  return n;
+}
+function h(tag, attrs, ...kids) { const n = document.createElement(tag); setAttrs(n, attrs); return append(n, kids); }
+function sv(tag, attrs, ...kids) { const n = document.createElementNS(SVGNS, tag); setAttrs(n, attrs); return append(n, kids); }
+
+// ---------- formatting ----------
+const fmt = (v, d = 3) => (v == null || !isFinite(v)) ? '–' : v.toFixed(d);
+const fmtInt = v => v == null ? '–' : Math.round(v).toLocaleString('en-US');
+const compact = v => v == null ? '–' : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'K' : String(v);
+const fmtDur = s => s == null ? '–' : s >= 3600 ? `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} min` : `${Math.round(s / 60)} min`;
+const pct = v => v == null ? '–' : (100 * v).toFixed(v < 0.1 ? 1 : 0) + '%';
+const mean = a => { const b = a.filter(v => v != null && isFinite(v)); return b.length ? b.reduce((x, y) => x + y, 0) / b.length : null; };
+const LW = { none: 'none', by_wsi: 'by slide', by_cell_type: 'by cell type' };
+
+// ---------- colour ----------
+const RAMP = ['#cde2fb', '#b7d3f6', '#9ec5f4', '#86b6ef', '#6da7ec', '#5598e7', '#3987e5', '#2a78d6', '#256abf', '#1c5cab', '#184f95', '#104281', '#0d366b'];
+const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
+const rgb = x => [1, 3, 5].map(i => parseInt(x.slice(i, i + 2), 16));
+function relLum(c) { const f = x => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); }
+function seq(v) {  // sequential blue; near zero recedes toward the surface in both modes
+  const r = isDark() ? RAMP.slice().reverse() : RAMP;
+  v = Math.max(0, Math.min(1, v));
+  const p = v * (r.length - 1), i = Math.min(r.length - 2, Math.floor(p)), t = p - i;
+  const a = rgb(r[i]), b = rgb(r[i + 1]), c = a.map((x, j) => Math.round(x + (b[j] - x) * t));
+  const L = relLum(c);
+  return { fill: `rgb(${c.join(',')})`, ink: (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? '#0b0b0b' : '#ffffff' };
+}
+const runColor = ri => `var(--s${(ri % 8) + 1})`;
+const clsColor = i => `var(--s${(i % 8) + 1})`;
+
+// ---------- tooltip ----------
+const tip = $('#tip');
+function showTip(evt, ...kids) {
+  tip.replaceChildren(); append(tip, kids); tip.style.display = 'block';
+  const r = evt.target.getBoundingClientRect ? evt.target.getBoundingClientRect() : null;
+  const x = evt.clientX ?? (r ? r.right : 0), y = evt.clientY ?? (r ? r.top : 0);
+  const w = tip.offsetWidth, hgt = tip.offsetHeight;
+  let left = x + 14, top = y + 14;
+  if (left + w > innerWidth - 8) left = Math.max(8, x - w - 14);
+  if (top + hgt > innerHeight - 8) top = Math.max(8, y - hgt - 14);
+  tip.style.left = left + 'px'; tip.style.top = top + 'px';
+}
+const hideTip = () => { tip.style.display = 'none'; };
+function hoverable(node, content) {
+  node.addEventListener('pointermove', e => showTip(e, ...content()));
+  node.addEventListener('pointerleave', hideTip);
+  node.addEventListener('focus', e => showTip(e, ...content()));
+  node.addEventListener('blur', hideTip);
+  return node;
+}
+
+// ---------- data index ----------
+const METRICS = [
+  { key: 'macro_f1_present', label: 'Macro F1 (classes present)', short: 'macro F1', hi: true },
+  { key: 'macro_f1', label: `Macro F1 (all ${K} classes)`, short: 'macro F1 (all)', hi: true },
+  { key: 'balanced_accuracy', label: 'Balanced accuracy', short: 'bal. acc.', hi: true },
+  { key: 'accuracy', label: 'Accuracy', short: 'accuracy', hi: true },
+  { key: 'weighted_f1', label: 'Weighted F1', short: 'weighted F1', hi: true },
+  { key: 'ce_loss', label: 'Cross-entropy loss', short: 'CE loss', hi: false, unbounded: true },
+  ...C.map((c, i) => ({ key: 'f1_' + i, label: `F1 · ${c}`, short: `F1 ${c}`, hi: true, cls: i })),
+];
+const metricDef = () => METRICS.find(m => m.key === state.metric);
+const mval = (row, m) => !row ? null : m.cls != null ? (row.n[m.cls] > 0 ? row.f1[m.cls] : null) : row[m.key];
+
+const ENTRIES = [], BYKEY = new Map();
+RUNS.forEach((run, ri) => run.slides.forEach(sl => {
+  const key = `${sl.set}|${sl.fold}|${sl.wsi}`;
+  let e = BYKEY.get(key);
+  if (!e) { e = { key, set: sl.set, fold: sl.fold, wsi: sl.wsi, cohort: sl.cohort, meta: D.meta[sl.wsi] || {}, by: [] }; BYKEY.set(key, e); ENTRIES.push(e); }
+  e.by[ri] = sl;
+}));
+const COHORT_ORDER = [];
+RUNS.forEach(run => run.folds.forEach(f => f.test_cohorts.forEach(c => { if (!COHORT_ORDER.includes(c)) COHORT_ORDER.push(c); })));
+const ALL_FOLDS = [...new Set(RUNS.flatMap(r => r.folds.map(f => f.fold)))].sort((a, b) => a - b);
+const foldOf = (ri, k) => RUNS[ri].folds.find(f => f.fold === k);
+function heldOut(k) { for (const run of RUNS) { const f = run.folds.find(f => f.fold === k); if (f) return f.test_cohorts.join('+'); } return '?'; }
+const tissueOf = e => e.meta.tissue ? e.meta.tissue.replace(/\s*\(.*\)\s*$/, '') : 'unknown tissue';
+const diseaseOf = e => [e.meta.disease_type || e.meta.disease_state, e.meta.subtype].filter(Boolean).join(' · ') || 'unknown';
+const cellsOf = e => { const r = e.by.find(Boolean); return r ? r.n_cells : null; };
+const searchText = e => [e.wsi, e.cohort, e.meta.tissue, e.meta.disease_state, e.meta.disease_type, e.meta.subtype, e.meta.donor, e.meta.site].filter(Boolean).join(' ').toLowerCase();
+
+function cmStats(cm) {
+  const rows = cm.map(r => r.reduce((a, b) => a + b, 0));
+  const cols = cm[0].map((_, j) => cm.reduce((a, r) => a + r[j], 0));
+  const tot = rows.reduce((a, b) => a + b, 0);
+  const per = cm.map((r, i) => ({
+    n: rows[i], pred: cols[i], prec: cols[i] ? r[i] / cols[i] : null, rec: rows[i] ? r[i] / rows[i] : null,
+    f1: rows[i] + cols[i] ? 2 * r[i] / (rows[i] + cols[i]) : null,
+  }));
+  return { rows, cols, tot, per };
+}
+function pooledVal(fold, set, m) {
+  const blk = fold && fold[set]; if (!blk) return null;
+  if (m.cls != null) { if (!blk.cm) return null; const p = cmStats(blk.cm).per[m.cls]; return p.n > 0 ? p.f1 : null; }
+  return blk.pooled[m.key === 'ce_loss' ? 'loss' : m.key] ?? null;
+}
+
+// ---------- state ----------
+const state = {
+  set: 'test', metric: 'macro_f1_present', group: 'cohort', query: '',
+  sort: { key: 'metric', dir: -1 }, visible: RUNS.map(() => true), ref: 0, selected: null, detailRun: null,
+};
+const visRuns = () => RUNS.map((_, i) => i).filter(i => state.visible[i]);
+
+const GROUPS = {
+  cohort: { label: 'Cohort', key: e => e.cohort || '—', name: g => g },
+  fold: { label: 'Fold', key: e => 'f' + e.fold, name: g => `Fold ${g.slice(1)} · ${heldOut(+g.slice(1))} held out` },
+  tissue: { label: 'Tissue', key: tissueOf, name: g => g },
+  disease: { label: 'Disease state', key: e => e.meta.disease_state || 'unknown', name: g => g },
+  none: { label: 'None', key: () => 'all', name: () => 'All slides' },
+};
+function groupFold(gkey, ri) {  // the fold whose pooled metrics describe a group, if any
+  if (state.group === 'fold') return foldOf(ri, +gkey.slice(1));
+  if (state.group === 'cohort' && state.set === 'test') return RUNS[ri].folds.find(f => f.test_cohorts.length === 1 && f.test_cohorts[0] === gkey);
+  return null;
+}
+
+function filteredRows() {
+  const q = state.query.trim().toLowerCase(), vr = visRuns();
+  return ENTRIES.filter(e => e.set === state.set && vr.some(ri => e.by[ri]) && (!q || searchText(e).includes(q)));
+}
+function sortGetter(key) {
+  const m = metricDef(), ref = state.ref;
+  if (key === 'name') return e => e.wsi;
+  if (key === 'fold') return e => e.fold;
+  if (key === 'cells') return cellsOf;
+  if (key === 'metric') return e => mval(e.by[ref], m);
+  if (key === 'delta') return e => { const o = visRuns().find(i => i !== ref); const a = mval(e.by[o], m), b = mval(e.by[ref], m); return a == null || b == null ? null : a - b; };
+  if (key.startsWith('f1_')) { const i = +key.slice(3); return e => mval(e.by[ref], METRICS.find(x => x.cls === i)); }
+  return e => e.by[ref] ? e.by[ref][key] : null;
+}
+function sortRows(rows) {
+  const get = sortGetter(state.sort.key), dir = state.sort.dir;
+  return rows.slice().sort((a, b) => {
+    const va = get(a), vb = get(b);
+    if (va == null && vb == null) return a.wsi.localeCompare(b.wsi);
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    return ((typeof va === 'string' ? va.localeCompare(vb) : va - vb) * dir) || a.wsi.localeCompare(b.wsi) || a.fold - b.fold;
+  });
+}
+function groupRows(rows) {
+  const G = GROUPS[state.group], m = metricDef(), map = new Map();
+  for (const e of rows) { const k = G.key(e); if (!map.has(k)) map.set(k, []); map.get(k).push(e); }
+  let groups = [...map.entries()].map(([k, rs]) => ({
+    key: k, label: G.name(k), rows: sortRows(rs),
+    stats: RUNS.map((_, ri) => ({ mean: mean(rs.map(e => mval(e.by[ri], m))), pooled: pooledVal(groupFold(k, ri), state.set, m) })),
+    cells: rs.reduce((a, e) => a + (cellsOf(e) || 0), 0),
+  }));
+  if (state.group === 'cohort') groups.sort((a, b) => (COHORT_ORDER.indexOf(a.key) + 1 || 99) - (COHORT_ORDER.indexOf(b.key) + 1 || 99) || a.key.localeCompare(b.key));
+  else if (state.group === 'fold') groups.sort((a, b) => +a.key.slice(1) - +b.key.slice(1));
+  else groups.sort((a, b) => b.rows.length - a.rows.length || a.key.localeCompare(b.key));
+  return groups;
+}
+
+// ---------- header & controls ----------
+function renderHeader() {
+  $('#title').textContent = D.title;
+  const nTest = new Set(ENTRIES.filter(e => e.set === 'test').map(e => e.wsi)).size;
+  const run0 = RUNS[0];
+  const what = MULTI ? `${RUNS.length} runs (${RUNS.map(r => r.label).join(' vs ')})` : run0.full_label;
+  $('#subtitle').textContent = `${what} — ${ALL_FOLDS.length} folds, ${nTest} test slides, ${K} classes (${C.join(', ')})`;
+  const incomplete = RUNS.filter(r => r.incomplete_folds.length).map(r => `${r.label}: ${r.incomplete_folds.join(', ')} not finished`);
+  $('#generated').textContent = `Generated ${D.generated} from ${D.results_dir}` + (D.report_commit ? ` · report script at ${D.report_commit}` : '') + (incomplete.length ? ` · ${incomplete.join('; ')}` : '');
+}
+
+function renderControls() {
+  const nav = $('#controls'); nav.replaceChildren();
+  const segBtn = (val, label) => h('button', { type: 'button', 'aria-pressed': String(state.set === val), onclick: () => { state.set = val; if (val === 'val' && state.group === 'cohort') state.group = 'fold'; if (val === 'test' && state.group === 'fold') state.group = 'cohort'; renderControls(); renderData(); } }, label);
+  nav.append(h('div', { class: 'ctl' }, h('span', { class: 'lbl' }, 'Slides'), h('div', { class: 'seg', role: 'group', 'aria-label': 'Slide set' }, segBtn('test', 'Test (held-out cohort)'), segBtn('val', 'Val'))));
+
+  const msel = h('select', { id: 'metric', onchange: ev => { state.metric = ev.target.value; const m = metricDef(); state.sort = { key: 'metric', dir: m.hi ? -1 : 1 }; renderData(); } },
+    METRICS.map(m => h('option', { value: m.key, selected: m.key === state.metric }, m.label)));
+  nav.append(h('div', { class: 'ctl' }, h('label', { for: 'metric' }, 'Metric'), msel));
+
+  const gsel = h('select', { id: 'group', onchange: ev => { state.group = ev.target.value; renderData(); } },
+    Object.entries(GROUPS).map(([k, g]) => h('option', { value: k, selected: k === state.group }, g.label)));
+  nav.append(h('div', { class: 'ctl' }, h('label', { for: 'group' }, 'Group by'), gsel));
+
+  const search = h('input', { type: 'search', id: 'q', placeholder: 'Filter: slide, tissue, disease, donor…', value: state.query });
+  let t; search.addEventListener('input', ev => { clearTimeout(t); t = setTimeout(() => { state.query = ev.target.value; renderData(); }, 120); });
+  nav.append(h('div', { class: 'ctl' }, h('label', { for: 'q' }, 'Search'), search));
+
+  if (MULTI) {
+    nav.append(h('div', { class: 'ctl' }, h('span', { class: 'lbl' }, 'Runs'), RUNS.map((r, ri) =>
+      h('label', { class: 'chk' }, h('input', { type: 'checkbox', checked: state.visible[ri], onchange: ev => {
+        state.visible[ri] = ev.target.checked; if (!visRuns().length) { state.visible[ri] = true; ev.target.checked = true; }
+        if (!state.visible[state.ref]) state.ref = visRuns()[0]; renderControls(); renderData(); } }),
+        h('span', { class: 'dot', style: { background: runColor(ri) } }), r.label))));
+    nav.append(h('div', { class: 'ctl' }, h('label', { for: 'ref' }, 'Reference'),
+      h('select', { id: 'ref', title: 'Run used for sorting, the per-class heat cells, Δ and the fold curves', onchange: ev => { state.ref = +ev.target.value; renderData(); } },
+        visRuns().map(ri => h('option', { value: ri, selected: ri === state.ref }, RUNS[ri].label)))));
+  }
+  nav.append(h('span', { class: 'spacer' }));
+  nav.append(h('button', { class: 'btn small', type: 'button', onclick: downloadCsv }, 'Download CSV'));
+}
+
+// ---------- tiles ----------
+function renderTiles() {
+  const m = metricDef(), host = $('#tiles'); host.replaceChildren();
+  const tests = ENTRIES.filter(e => e.set === 'test');
+  const perRun = ri => {
+    const rows = tests.filter(e => e.by[ri]);
+    const byCohort = COHORT_ORDER.map(c => mean(rows.filter(e => e.cohort === c).map(e => mval(e.by[ri], m))));
+    return {
+      slides: mean(rows.map(e => mval(e.by[ri], m))), nSlides: rows.filter(e => mval(e.by[ri], m) != null).length,
+      cohorts: mean(byCohort), nCohorts: byCohort.filter(v => v != null).length,
+      pooled: mean(RUNS[ri].folds.map(f => pooledVal(f, 'test', m))), nFolds: RUNS[ri].folds.length,
+    };
+  };
+  const stats = visRuns().map(ri => [ri, perRun(ri)]);
+  const tile = (label, key, sub) => {
+    const t = h('div', { class: 'tile' }, h('div', { class: 'label' }, label));
+    if (stats.length === 1) t.append(h('div', { class: 'value' }, fmt(stats[0][1][key])));
+    else stats.forEach(([ri, s]) => t.append(h('div', { class: 'runrow' }, h('span', { class: 'dot', style: { background: runColor(ri) } }), h('b', null, fmt(s[key])), h('span', { class: 'muted' }, RUNS[ri].label))));
+    t.append(h('div', { class: 'sub' }, sub(stats[0][1])));
+    return t;
+  };
+  host.append(
+    tile(`Mean over test slides · ${m.short}`, 'slides', s => `${s.nSlides} slides, each scored on its own cells`),
+    tile(`Mean over held-out cohorts · ${m.short}`, 'cohorts', s => `mean of the ${s.nCohorts} cohorts' slide means`),
+    tile(`Pooled per fold, mean of folds · ${m.short}`, 'pooled', s => `all cells of a held-out cohort at once; ${s.nFolds} folds`),
+  );
+}
+
+// ---------- strip chart ----------
+function niceMax(v) { const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p * 2) / 2 * p; }
+function domainFor(m, rows) {
+  if (!m.unbounded) return [0, 1];
+  const vs = rows.flatMap(e => visRuns().map(ri => mval(e.by[ri], m))).filter(v => v != null);
+  return [0, niceMax(Math.max(...vs, 0.1))];
+}
+function ticksFor(dom) { const step = dom[1] <= 1 ? 0.2 : niceMax(dom[1] / 5); const t = []; for (let v = dom[0]; v <= dom[1] + 1e-9; v += step) t.push(+v.toFixed(6)); return t; }
+function jitter(str) { let x = 2166136261; for (const ch of str) { x ^= ch.charCodeAt(0); x = Math.imul(x, 16777619); } return ((x >>> 0) / 4294967295) * 2 - 1; }
+
+function slideTip(e, ri, m) {
+  const r = e.by[ri];
+  return [
+    h('div', { class: 'v' }, fmt(mval(r, m))), h('div', { class: 'muted' }, m.label),
+    MULTI ? h('div', { class: 'r' }, h('span', { class: 'linekey', style: { background: runColor(ri) } }), RUNS[ri].label) : null,
+    h('div', { class: 'mono', style: { marginTop: '4px' } }, e.wsi),
+    h('div', null, `${tissueOf(e)} · ${diseaseOf(e)}`),
+    h('div', { class: 'muted' }, `${e.cohort} · ${e.set} in fold ${e.fold} (${heldOut(e.fold)} held out) · ${fmtInt(r.n_cells)} cells`),
+  ];
+}
+
+function renderStrip() {
+  const host = $('#strip'), m = metricDef(), rows = filteredRows(), groups = groupRows(rows), vr = visRuns();
+  host.replaceChildren();
+  const leg = $('#strip-legend'); leg.replaceChildren();
+  if (MULTI) vr.forEach(ri => leg.append(h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: runColor(ri) } }), RUNS[ri].label)));
+  leg.append(h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: MULTI ? 'var(--muted)' : runColor(vr[0]) } }), 'one slide'),
+    h('span', { class: 'key' }, h('span', { style: { display: 'inline-block', width: '2px', height: '12px', background: 'var(--ink)' } }), 'mean of the group\'s slides'));
+  if (groups.some(g => vr.some(ri => g.stats[ri].pooled != null)))
+    leg.append(h('span', { class: 'key' }, svgDiamondKey(), 'pooled over all cells of the fold'));
+  if (!groups.length) { host.append(h('p', { class: 'muted' }, 'No slides match the filter.')); return; }
+
+  const W = Math.max(320, host.clientWidth || 900), narrow = W < 560;
+  const labelW = narrow ? 110 : Math.min(230, Math.round(W * 0.22)), rightW = 58, subH = 26, gap = 10, headH = MULTI ? 18 : 0, axisH = 26, padT = 18;
+  const x0 = labelW, x1 = W - rightW, dom = domainFor(m, rows);
+  const X = v => x0 + (Math.min(v, dom[1]) - dom[0]) / (dom[1] - dom[0]) * (x1 - x0);
+  const H = padT + groups.reduce((a) => a + headH + vr.length * subH + gap, 0) + axisH;
+  const svg = sv('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${m.label} per slide, grouped by ${GROUPS[state.group].label.toLowerCase()}` });
+  for (const t of ticksFor(dom)) {
+    svg.append(sv('line', { class: t === dom[0] ? 'axis' : 'grid', x1: X(t), x2: X(t), y1: padT - 4, y2: H - axisH }));
+    svg.append(sv('text', { x: X(t), y: H - axisH + 15, 'text-anchor': 'middle', class: 'num' }, dom[1] <= 1 ? t.toFixed(1) : String(t)));
+  }
+  svg.append(sv('text', { x: W - 4, y: 11, 'text-anchor': 'end' }, 'mean'));
+  let y = padT;
+  for (const g of groups) {
+    if (MULTI) { svg.append(sv('text', { x: 0, y: y + 12, style: { fill: 'var(--ink)', 'font-weight': 600 } }, g.label, sv('tspan', { style: { fill: 'var(--muted)', 'font-weight': 400 } }, `  ${g.rows.length} slides`))); y += headH; }
+    else {
+      const cy = y + subH / 2;
+      svg.append(sv('text', { x: 0, y: cy - 2, style: { fill: 'var(--ink)', 'font-weight': 600 } }, truncate(g.label, labelW - 8)));
+      svg.append(sv('text', { x: 0, y: cy + 11, style: { fill: 'var(--muted)', 'font-size': '10.5px' } }, `${g.rows.length} slides · ${compact(g.cells)} cells`));
+    }
+    vr.forEach(ri => {
+      const cy = y + subH / 2;
+      if (MULTI) svg.append(sv('text', { x: x0 - 8, y: cy + 4, 'text-anchor': 'end' }, truncate(RUNS[ri].label, labelW - 16)));
+      svg.append(sv('line', { class: 'grid', x1: x0, x2: x1, y1: cy, y2: cy, style: { opacity: 0.6 } }));
+      const st = g.stats[ri];
+      for (const e of g.rows) {
+        const v = mval(e.by[ri], m); if (v == null) continue;
+        const cx = X(v), dy = jitter(e.key) * (subH / 2 - 6), sel = e.key === state.selected;
+        const grp = sv('g', { tabindex: -1, style: { cursor: 'pointer' } });
+        grp.append(sv('circle', { cx, cy: cy + dy, r: 10, fill: 'transparent' }));
+        grp.append(sv('circle', { cx, cy: cy + dy, r: sel ? 5.5 : 4, style: { fill: runColor(ri), stroke: sel ? 'var(--ink)' : 'var(--surface)', 'stroke-width': 2 } }));
+        hoverable(grp, () => slideTip(e, ri, m));
+        grp.addEventListener('click', () => select(e.key, true));
+        svg.append(grp);
+      }
+      if (st.mean != null) svg.append(sv('line', { x1: X(st.mean), x2: X(st.mean), y1: cy - 10, y2: cy + 10, style: { stroke: 'var(--ink)', 'stroke-width': 2, 'stroke-linecap': 'round' } }));
+      if (st.pooled != null) svg.append(diamond(X(st.pooled), cy, 5));
+      svg.append(sv('text', { x: W - 4, y: cy + 4, 'text-anchor': 'end', class: 'num', style: { fill: 'var(--ink)' } }, fmt(st.mean)));
+      y += subH;
+    });
+    y += gap;
+  }
+  host.append(svg);
+}
+function diamond(cx, cy, r) { return sv('path', { d: `M${cx} ${cy - r}L${cx + r} ${cy}L${cx} ${cy + r}L${cx - r} ${cy}Z`, style: { fill: 'var(--surface)', stroke: 'var(--ink)', 'stroke-width': 1.5 } }); }
+function svgDiamondKey() { const s = sv('svg', { width: 12, height: 12, viewBox: '0 0 12 12' }); s.append(diamond(6, 6, 4.5)); return s; }
+function truncate(s, px) { const max = Math.max(4, Math.floor(px / 6.4)); return s.length > max ? s.slice(0, max - 1) + '…' : s; }
+
+// ---------- table ----------
+function heatCell(row, i) {
+  if (!row) return h('td', { class: 'heat' }, h('div', null, ''));
+  const n = row.n[i], pred = row.cm ? row.cm.reduce((a, r) => a + r[i], 0) : null;
+  if (!n) {
+    const td = h('td', { class: 'heat absent', tabindex: -1 }, h('div', null, '—'));
+    return hoverable(td, () => [h('div', { class: 'v' }, 'not in slide'), h('div', null, `${C[i]}: 0 true cells`), pred != null ? h('div', { class: 'muted' }, `${fmtInt(pred)} cells predicted as ${C[i]}`) : null]);
+  }
+  const f = row.f1[i], c = seq(f);
+  const td = h('td', { class: 'heat', style: { background: c.fill, color: c.ink } }, h('div', null, fmt(f, 2)));
+  return hoverable(td, () => {
+    const st = row.cm ? cmStats(row.cm).per[i] : null;
+    return [h('div', { class: 'v' }, fmt(f)), h('div', { class: 'muted' }, `F1 · ${C[i]}`),
+      h('div', null, `${fmtInt(n)} true cells (${pct(n / row.n_cells)} of slide)`),
+      st ? h('div', null, `${fmtInt(st.pred)} predicted · precision ${fmt(st.prec, 2)} · recall ${fmt(st.rec, 2)}`) : null];
+  });
+}
+
+function metricCell(e, m, dom) {
+  const vr = visRuns(), td = h('td', { class: 'metric' });
+  const pos = v => `${Math.max(0, Math.min(1, (v - dom[0]) / (dom[1] - dom[0]))) * 100}%`;
+  const track = h('div', { class: 'track' }), vals = h('div', { class: 'mvals' });
+  if (!MULTI) {
+    const v = mval(e.by[vr[0]], m);
+    if (v != null) track.append(h('div', { class: 'bar', style: { width: pos(v), background: runColor(vr[0]) } }));
+    vals.append(fmt(v));
+  } else {
+    const vs = vr.map(ri => [ri, mval(e.by[ri], m)]).filter(([, v]) => v != null);
+    if (vs.length > 1) { const lo = Math.min(...vs.map(x => x[1])), hi = Math.max(...vs.map(x => x[1])); track.append(h('div', { class: 'span', style: { left: pos(lo), width: `calc(${pos(hi)} - ${pos(lo)})` } })); }
+    vs.forEach(([ri, v]) => track.append(h('div', { class: 'pt', style: { left: pos(v), background: runColor(ri) } })));
+    vr.forEach(ri => vals.append(h('div', null, h('span', { class: 'dot', style: { background: runColor(ri) } }), fmt(mval(e.by[ri], m)))));
+  }
+  td.append(h('div', { class: 'mbar' }, track, vals));
+  return td;
+}
+
+function deltaCell(e, m) {
+  const td = h('td', { class: 'delta' }), ref = state.ref, b = mval(e.by[ref], m);
+  for (const ri of visRuns().filter(i => i !== ref)) {
+    const a = mval(e.by[ri], m), d = a == null || b == null ? null : a - b;
+    const good = d == null ? 0 : (m.hi ? d : -d), alpha = Math.min(0.45, Math.abs(good) / 0.2 * 0.45);
+    td.append(h('div', { style: { background: d == null ? 'transparent' : `rgba(var(${good >= 0 ? '--pos' : '--neg'}), ${alpha})` }, title: `${RUNS[ri].label} − ${RUNS[ref].label}` },
+      d == null ? '–' : (d > 0 ? '+' : d < 0 ? '−' : '±') + Math.abs(d).toFixed(3)));
+  }
+  return td;
+}
+
+function renderTable() {
+  const tbl = $('#tbl'), m = metricDef(), rows = filteredRows(), groups = groupRows(rows), ref = state.ref, vr = visRuns();
+  const dom = domainFor(m, rows), showFold = state.set === 'val' && state.group !== 'fold';
+  $('#tbl-title').textContent = `All ${state.set === 'test' ? 'test' : 'val'} slides (${rows.length})`;
+  const leg = $('#tbl-legend'); leg.replaceChildren();
+  const ramp = h('span', { class: 'key' }, 'F1 per class', ...[0, 0.25, 0.5, 0.75, 1].map(v => h('span', { class: 'sw', style: { background: seq(v).fill, width: '18px' } })), '0 → 1');
+  leg.append(ramp, h('span', { class: 'key' }, h('span', { class: 'sw absent', style: { width: '18px', border: '1px solid var(--border)' } }), 'class not in slide'));
+  if (MULTI) leg.append(h('span', { class: 'muted' }, `Sorting, heat cells and other columns use the reference run (${RUNS[ref].label}).`));
+
+  const sortBtn = (key, label, title) => {
+    const on = state.sort.key === key;
+    return h('button', { type: 'button', title: title || `Sort by ${label}`, onclick: () => {
+      if (state.sort.key === key) state.sort.dir *= -1;
+      else state.sort = { key, dir: (key === 'name' || key === 'fold' || key === 'ce_loss' || (key === 'metric' && !m.hi)) ? 1 : -1 };
+      renderTable();
+    } }, label, on ? h('span', { class: 'arrow' }, state.sort.dir > 0 ? '▲' : '▼') : null);
+  };
+  // The other scalar metrics are one switch of the Metric control away (and in the detail panel).
+  const scal = [['balanced_accuracy', 'Bal. acc.'], ['accuracy', 'Acc.']];
+  const head1 = h('tr', null,
+    h('th', { rowspan: 2 }, sortBtn('name', 'Slide')),
+    showFold ? h('th', { rowspan: 2, class: 'num' }, sortBtn('fold', 'Fold')) : null,
+    h('th', { rowspan: 2, class: 'num' }, sortBtn('cells', 'Cells')),
+    h('th', { rowspan: 2 }, sortBtn('metric', m.label)),
+    MULTI && vr.length > 1 ? h('th', { rowspan: 2, class: 'num' }, sortBtn('delta', 'Δ vs ref.', 'Run minus reference run, on the selected metric')) : null,
+    h('th', { colspan: K, style: { 'text-align': 'center' } }, 'F1 per class'),
+    scal.map(([k, l]) => h('th', { rowspan: 2, class: 'num' }, sortBtn(k, l))));
+  const head2 = h('tr', null, C.map((c, i) => h('th', { class: 'num', style: { 'text-align': 'center', 'font-weight': 500, 'font-size': '11px' } }, sortBtn('f1_' + i, c.length > 10 ? c.slice(0, 9) + '.' : c, `Sort by F1 · ${c}`))));
+  const nCols = 4 + (showFold ? 1 : 0) + (MULTI && vr.length > 1 ? 1 : 0) + K + scal.length - 1;
+  const thead = h('thead', null, head1, head2), tbody = h('tbody');
+  for (const g of groups) {
+    if (state.group !== 'none' || groups.length > 1) {
+      const means = vr.map(ri => `${MULTI ? RUNS[ri].label + ' ' : ''}${fmt(g.stats[ri].mean)}`).join(' · ');
+      const pooled = vr.map(ri => g.stats[ri].pooled).some(v => v != null) ? ` · pooled ${vr.map(ri => fmt(g.stats[ri].pooled)).join(' · ')}` : '';
+      tbody.append(h('tr', { class: 'grp' }, h('th', { colspan: nCols }, g.label, h('span', { class: 'muted' }, ` — ${g.rows.length} slides, ${compact(g.cells)} cells · mean ${m.short} ${means}${pooled}`))));
+    }
+    for (const e of g.rows) {
+      const r = e.by[ref] || e.by.find(Boolean);
+      const tr = h('tr', { class: 'row' + (e.key === state.selected ? ' sel' : ''), 'data-key': e.key, tabindex: e.key === state.selected ? 0 : -1 },
+        h('td', { class: 'name' }, h('div', { class: 'mono' }, e.wsi), h('div', { class: 'sub' }, `${tissueOf(e)} · ${diseaseOf(e)}${state.group !== 'cohort' ? ' · ' + e.cohort : ''}`)),
+        showFold ? h('td', { class: 'num' }, String(e.fold)) : null,
+        h('td', { class: 'num', title: fmtInt(cellsOf(e)) }, compact(cellsOf(e))),
+        metricCell(e, m, dom),
+        MULTI && vr.length > 1 ? deltaCell(e, m) : null,
+        C.map((_, i) => heatCell(e.by[ref], i)),
+        scal.map(([k]) => h('td', { class: 'num' }, fmt(r ? r[k] : null))));
+      tr.addEventListener('click', () => select(e.key, false));
+      tbody.append(tr);
+    }
+  }
+  tbody.addEventListener('keydown', ev => {
+    const rowsEl = [...tbody.querySelectorAll('tr.row')], i = rowsEl.indexOf(document.activeElement);
+    if (i < 0) return;
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault(); const nx = rowsEl[Math.max(0, Math.min(rowsEl.length - 1, i + (ev.key === 'ArrowDown' ? 1 : -1)))];
+      select(nx.dataset.key, false); nx.focus();
+    } else if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); select(rowsEl[i].dataset.key, false); }
+  });
+  tbl.replaceChildren(thead, tbody);
+  if (!tbody.querySelector('tr.sel')) { const first = tbody.querySelector('tr.row'); if (first) first.tabIndex = 0; }
+}
+
+function select(key, scroll) {
+  state.selected = key;
+  document.querySelectorAll('#tbl tr.row').forEach(tr => { const on = tr.dataset.key === key; tr.classList.toggle('sel', on); tr.tabIndex = on ? 0 : -1; });
+  if (scroll) { const tr = document.querySelector(`#tbl tr.row[data-key="${CSS.escape(key)}"]`); if (tr) tr.scrollIntoView({ block: 'nearest' }); }
+  renderStrip(); renderDetail();
+}
+
+// ---------- confusion matrix ----------
+let svgUid = 0;
+function cmSvg(cm, { cell = 46, showLabels = true, font = 11 } = {}) {
+  const st = cmStats(cm), uid = 'h' + (++svgUid);
+  const lw = showLabels ? 76 : 30, th = showLabels ? 34 : 18, W = lw + K * cell, H = th + K * cell;
+  // Scales down with its container (small-multiple cards, phone widths), never up.
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Confusion matrix, rows true class, columns predicted class, shaded by fraction of the true class',
+    style: { width: '100%', 'max-width': W + 'px', height: 'auto', display: 'block' } });
+  const pat = sv('pattern', { id: uid, width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, sv('line', { x1: 0, y1: 0, x2: 0, y2: 6, style: { stroke: 'var(--hatch)', 'stroke-width': 1.5 } }));
+  svg.append(sv('defs', null, pat));
+  svg.append(sv('text', { x: lw + K * cell / 2, y: 10, 'text-anchor': 'middle', style: { fill: 'var(--muted)' } }, 'predicted →'));
+  C.forEach((c, j) => svg.append(sv('text', { x: lw + j * cell + cell / 2, y: th - 6, 'text-anchor': 'middle', style: { 'font-size': font + 'px' } }, showLabels ? c.slice(0, 4) + (c.length > 4 ? '.' : '') : c[0], sv('title', null, c))));
+  cm.forEach((row, i) => {
+    const y = th + i * cell;
+    svg.append(sv('text', { x: lw - 6, y: y + cell / 2 + 4, 'text-anchor': 'end', style: { 'font-size': font + 'px' } }, showLabels ? c_trunc(C[i]) : C[i][0], sv('title', null, `true ${C[i]}`)));
+    if (!st.rows[i]) {
+      const g = sv('g', { tabindex: -1 });
+      g.append(sv('rect', { x: lw + 1, y: y + 1, width: K * cell - 2, height: cell - 2, rx: 2, style: { fill: `url(#${uid})` } }));
+      if (showLabels) g.append(sv('text', { x: lw + K * cell / 2, y: y + cell / 2 + 4, 'text-anchor': 'middle', style: { fill: 'var(--muted)' } }, `no true ${C[i]} cells`));
+      hoverable(g, () => [h('div', { class: 'v' }, `no true ${C[i]} cells`), h('div', { class: 'muted' }, 'row left empty')]);
+      svg.append(g);
+      return;
+    }
+    row.forEach((n, j) => {
+      const f = n / st.rows[i], c = seq(f), g = sv('g', { tabindex: -1 });
+      g.append(sv('rect', { x: lw + j * cell + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 2, style: { fill: c.fill, stroke: i === j ? 'var(--ink)' : 'none', 'stroke-width': i === j ? 1 : 0 } }));
+      if (cell >= 26) g.append(sv('text', { x: lw + j * cell + cell / 2, y: y + cell / 2 + 4, 'text-anchor': 'middle', style: { fill: c.ink, 'font-size': (cell >= 40 ? 12 : 10) + 'px' } }, cell >= 40 ? pct(f) : Math.round(100 * f)));
+      hoverable(g, () => [h('div', { class: 'v' }, `${pct(f)} of true ${C[i]}`), h('div', null, `${fmtInt(n)} of ${fmtInt(st.rows[i])} cells predicted ${C[j]}`)]);
+      svg.append(g);
+    });
+  });
+  return svg;
+}
+const c_trunc = s => s.length > 11 ? s.slice(0, 10) + '.' : s;
+
+function stackBar(counts, total, label) {
+  const bar = h('div', { class: 'stack' });
+  counts.forEach((n, i) => { if (!n) return; const seg = h('div', { style: { flex: `${n} 1 0`, background: clsColor(i) }, tabindex: -1 }); hoverable(seg, () => [h('div', { class: 'v' }, pct(n / total)), h('div', null, `${label} ${C[i]}: ${fmtInt(n)} cells`)]); bar.append(seg); });
+  return bar;
+}
+
+// ---------- detail ----------
+function renderDetail() {
+  const host = $('#detail'); host.replaceChildren();
+  const e = BYKEY.get(state.selected);
+  if (!e) { host.append(h('h2', null, 'Slide detail'), h('p', { class: 'muted' }, 'Select a slide in the table or the chart.')); return; }
+  const avail = visRuns().filter(ri => e.by[ri]);
+  let ri = avail.includes(state.detailRun) ? state.detailRun : (avail.includes(state.ref) ? state.ref : avail[0]);
+  if (ri == null) ri = e.by.findIndex(Boolean);
+  const r = e.by[ri];
+  host.append(h('div', { class: 'mono', style: { 'font-size': '14px', 'font-weight': 600 } }, e.wsi));
+  host.append(h('div', { class: 'ink2 small' }, `${e.meta.tissue || 'unknown tissue'}${e.meta.site && e.meta.site !== e.meta.tissue ? ' (' + e.meta.site + ')' : ''} · ${diseaseOf(e)}`));
+  host.append(h('div', { class: 'chips' },
+    h('span', { class: 'chip' }, `${e.set === 'test' ? 'Test' : 'Val'} · fold ${e.fold} (${heldOut(e.fold)} held out)`),
+    h('span', { class: 'chip' }, `Cohort ${e.cohort}`), h('span', { class: 'chip' }, `${fmtInt(r.n_cells)} cells`),
+    r.n_dropped ? h('span', { class: 'chip' }, `${fmtInt(r.n_dropped)} cells dropped (class absent from train)`) : null));
+  if (avail.length > 1) host.append(h('div', { class: 'tabs', role: 'group', 'aria-label': 'Run' }, avail.map(i =>
+    h('button', { type: 'button', 'aria-pressed': String(i === ri), onclick: () => { state.detailRun = i; renderDetail(); } }, h('span', { class: 'dot', style: { background: runColor(i) } }), RUNS[i].label))));
+
+  const box = (l, v) => h('div', null, h('div', { class: 'l' }, l), h('div', { class: 'v' }, v));
+  host.append(h('div', { class: 'mgrid' },
+    box('Macro F1 (present)', fmt(r.macro_f1_present)), box('Balanced acc.', fmt(r.balanced_accuracy)), box('Accuracy', fmt(r.accuracy)),
+    box(`Macro F1 (all ${K})`, fmt(r.macro_f1)), box('Weighted F1', fmt(r.weighted_f1)), box('CE loss', fmt(r.ce_loss))));
+
+  if (r.cm) {
+    const st = cmStats(r.cm);
+    host.append(h('div', { class: 'subhead' }, 'Cell types: true vs predicted'));
+    host.append(h('div', { class: 'stackrow' }, 'True', stackBar(st.rows, st.tot, 'true')));
+    host.append(h('div', { class: 'stackrow' }, 'Predicted', stackBar(st.cols, st.tot, 'predicted')));
+    host.append(h('div', { class: 'legend', style: { margin: '6px 0 0 78px' } }, C.map((c, i) => h('span', { class: 'key' }, h('span', { class: 'sw', style: { background: clsColor(i) } }), c))));
+    host.append(h('div', { class: 'subhead' }, 'Confusion matrix (row-normalised: share of each true class)'));
+    host.append(h('div', { class: 'scroll-x' }, cmSvg(r.cm, { cell: 52 })));
+    const tb = h('tbody');
+    st.per.forEach((p, i) => tb.append(h('tr', null,
+      h('td', null, h('span', { class: 'key' }, h('span', { class: 'sw', style: { background: clsColor(i) } }), C[i])),
+      h('td', { class: 'num' }, fmtInt(p.n)), h('td', { class: 'num' }, fmtInt(p.pred)),
+      h('td', { class: 'num' }, fmt(p.prec, 2)), h('td', { class: 'num' }, fmt(p.rec, 2)),
+      h('td', { class: 'num' }, p.n ? fmt(r.f1[i], 3) : 'absent'))));
+    host.append(h('table', { class: 'ptable' }, h('thead', null, h('tr', null, ['Class', 'True', 'Predicted', 'Precision', 'Recall', 'F1'].map((x, j) => h('th', { class: j ? 'num' : null }, x)))), tb));
+  } else host.append(h('p', { class: 'muted small' }, 'No per-slide confusion matrix in this run\'s outputs.'));
+
+  const others = ENTRIES.filter(o => o.wsi === e.wsi && o.key !== e.key);
+  if (others.length) {
+    const m = METRICS[0];
+    host.append(h('div', { class: 'subhead' }, 'Same slide in other folds'));
+    host.append(h('ul', { style: { margin: 0, 'padding-left': '18px', 'font-size': '12.5px' } }, others.sort((a, b) => a.fold - b.fold).map(o =>
+      h('li', null, h('button', { class: 'linkbtn', type: 'button', onclick: () => { if (o.set !== state.set) { state.set = o.set; renderControls(); renderData(); } select(o.key, true); } },
+        `${o.set} in fold ${o.fold} (${heldOut(o.fold)} held out)`), ` — ${m.short} ${visRuns().filter(i => o.by[i]).map(i => fmt(mval(o.by[i], m))).join(' / ')}`,
+        o.set === 'val' ? h('span', { class: 'muted' }, ' · its cohort is in train there') : null))));
+  }
+
+  const md = e.meta, rowsMd = [
+    ['Study', md.study], ['Publication', [md.publication, md.doi].filter(Boolean).join(' · ')], ['Donor', md.donor], ['Age / stage', md.age],
+    ['Disease', [md.disease_state, md.disease_type, md.subtype].filter(Boolean).join(' · ')], ['Preservation', [md.preservation, md.tissue_format].filter(Boolean).join(' · ')],
+    ['Panel', [md.chemistry, md.panel, md.panel_size ? md.panel_size + ' genes' : null].filter(Boolean).join(' · ')],
+    ['H&E', [md.he_magnification, md.he_scanner, md.he_pixel_size_um ? md.he_pixel_size_um + ' µm/px' : null].filter(Boolean).join(' · ')],
+  ].filter(([, v]) => v);
+  if (rowsMd.length) { host.append(h('div', { class: 'subhead' }, 'Slide metadata')); host.append(h('dl', { class: 'meta' }, rowsMd.map(([k, v]) => [h('dt', null, k), h('dd', null, v)]))); }
+}
+
+// ---------- line chart (fold curves) ----------
+function lineChart({ series, width, height = 130, marker = null, label }) {
+  const m = { l: 40, r: 44, t: 8, b: 22 }, W = width, H = height;
+  const n = Math.max(...series.map(s => s.values.length));
+  const all = series.flatMap(s => s.values).filter(v => v != null);
+  if (!all.length || n < 1) return h('p', { class: 'muted small' }, 'no curve saved');
+  let lo = Math.min(...all), hi = Math.max(...all); const pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.05 || 0.01; lo -= pad; hi += pad;
+  const X = i => m.l + (n <= 1 ? (W - m.l - m.r) / 2 : i / (n - 1) * (W - m.l - m.r)), Y = v => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const svg = sv('svg', { width: W, height: H, viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': label });
+  const yt = [lo + pad, (lo + hi) / 2, hi - pad], d = (hi - lo) < 0.05 ? 3 : 2;
+  yt.forEach(v => { svg.append(sv('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) })); svg.append(sv('text', { x: m.l - 5, y: Y(v) + 4, 'text-anchor': 'end' }, v.toFixed(d))); });
+  svg.append(sv('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+  const step = Math.max(1, Math.ceil(n / 6));
+  for (let i = 0; i < n; i += step) svg.append(sv('text', { x: X(i), y: H - 6, 'text-anchor': 'middle' }, String(i + 1)));
+  if (marker) {
+    svg.append(sv('line', { x1: X(marker.i), x2: X(marker.i), y1: m.t, y2: H - m.b, style: { stroke: 'var(--axis)', 'stroke-width': 1 } }));
+  }
+  series.forEach(s => {
+    const pts = s.values.map((v, i) => v == null ? null : [X(i), Y(v)]).filter(Boolean);
+    svg.append(sv('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(''), style: { fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' } }));
+    if (s.endLabel && pts.length) svg.append(sv('text', { x: pts[pts.length - 1][0] + 5, y: pts[pts.length - 1][1] + 4 }, s.endLabel));
+  });
+  if (marker) {
+    const s0 = series[0], v = s0.values[marker.i];
+    if (v != null) svg.append(sv('circle', { cx: X(marker.i), cy: Y(v), r: 4, style: { fill: s0.color, stroke: 'var(--surface)', 'stroke-width': 2 } }));
+  }
+  const hair = sv('line', { y1: m.t, y2: H - m.b, style: { stroke: 'var(--ink-2)', 'stroke-width': 1, display: 'none' } });
+  svg.append(hair);
+  const overlay = sv('rect', { x: m.l - 6, y: 0, width: W - m.l - m.r + 12, height: H, fill: 'transparent' });
+  overlay.addEventListener('pointermove', ev => {
+    const bb = svg.getBoundingClientRect(), px = (ev.clientX - bb.left) * (W / bb.width);
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - m.l) / ((W - m.l - m.r) / Math.max(1, n - 1)))));
+    hair.setAttribute('x1', X(i)); hair.setAttribute('x2', X(i)); hair.style.display = '';
+    showTip(ev, h('div', { class: 'muted' }, `epoch ${i + 1}${marker && marker.i === i ? ' · selected' : ''}`),
+      series.map(s => h('div', { class: 'r' }, h('span', { class: 'linekey', style: { background: s.color } }), h('b', null, fmt(s.values[i], 4)), h('span', { class: 'muted' }, s.name))));
+  });
+  overlay.addEventListener('pointerleave', () => { hair.style.display = 'none'; hideTip(); });
+  svg.append(overlay);
+  return svg;
+}
+
+// ---------- folds ----------
+function renderFolds() {
+  const host = $('#folds'); host.replaceChildren();
+  const vr = visRuns(), ref = state.ref, multiShown = vr.length > 1;
+  host.append(h('div', { class: 'section-head' }, h('h2', null, 'Folds'), h('span', { class: 'muted small' }, 'Each fold holds out one cohort as test; the model and its epoch are chosen on val only.')));
+
+  // Summary table
+  const sumHead = ['Fold', 'Held out', multiShown ? 'Run' : null, 'Slides tr / val / test', 'Test cells', 'Loss weights', 'Epoch sel. / run', 'Val sel. score', 'Test mF1 slide-mean', 'Test mF1 pooled', 'Test acc. pooled', 'Test bal. acc. slide-mean', 'Time load + train'].filter(Boolean);
+  const tb = h('tbody'), agg = vr.map(() => ({ val: [], sm: [], pm: [], pa: [], sb: [] }));
+  ALL_FOLDS.forEach(k => vr.forEach((ri, j) => {
+    const f = foldOf(ri, k); if (!f) return;
+    const t = f.timing || {}, sel = f.selection || {};
+    agg[j].val.push(sel.val_score); agg[j].sm.push(f.test.slide_mean.macro_f1_present); agg[j].pm.push(f.test.pooled.macro_f1); agg[j].pa.push(f.test.pooled.accuracy); agg[j].sb.push(f.test.slide_mean.balanced_accuracy);
+    tb.append(h('tr', null, h('td', null, String(k)), h('td', null, f.test_cohorts.join('+')),
+      multiShown ? h('td', null, h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: runColor(ri) } }), RUNS[ri].label)) : null,
+      h('td', { class: 'num' }, `${f.n_slides.train} / ${f.n_slides.val} / ${f.n_slides.test}`), h('td', { class: 'num' }, compact(f.test_size)),
+      h('td', null, LW[f.best_config?.loss_weights] ?? String(f.best_config?.loss_weights ?? '–')),
+      h('td', { class: 'num' }, `${sel.selected_epoch ?? '–'} / ${sel.epochs_trained ?? '–'}`), h('td', { class: 'num' }, fmt(sel.val_score)),
+      h('td', { class: 'num' }, fmt(f.test.slide_mean.macro_f1_present)), h('td', { class: 'num' }, fmt(f.test.pooled.macro_f1)),
+      h('td', { class: 'num' }, fmt(f.test.pooled.accuracy)), h('td', { class: 'num' }, fmt(f.test.slide_mean.balanced_accuracy)),
+      h('td', { class: 'num' }, `${fmtDur(t.load_seconds)} + ${fmtDur(t.grid_seconds)}`)));
+  }));
+  const foot = h('tfoot', null, vr.map((ri, j) => h('tr', null, h('td', { colspan: 2 }, 'Mean over folds'),
+    multiShown ? h('td', null, RUNS[ri].label) : null, h('td'), h('td'), h('td'), h('td'),
+    h('td', { class: 'num' }, fmt(mean(agg[j].val))), h('td', { class: 'num' }, fmt(mean(agg[j].sm))), h('td', { class: 'num' }, fmt(mean(agg[j].pm))),
+    h('td', { class: 'num' }, fmt(mean(agg[j].pa))), h('td', { class: 'num' }, fmt(mean(agg[j].sb))), h('td'))));
+  const textCols = ['Fold', 'Held out', 'Run', 'Loss weights'];
+  host.append(h('div', { class: 'scroll-x' }, h('table', { class: 'ftable' }, h('thead', null, h('tr', null, sumHead.map(x => h('th', { class: textCols.includes(x) ? null : 'num' }, x)))), tb, foot)));
+  host.append(h('p', { class: 'muted small', style: { margin: '6px 0 0' } }, 'mF1 = macro F1. Slide-mean averages each slide\'s macro F1 over the classes present in it; pooled scores all cells of the held-out cohort at once (large slides dominate). Val sel. score = the selection metric at the chosen epoch.'));
+
+  // Trial grid
+  const lwVals = [...new Set(RUNS.flatMap(r => r.folds.flatMap(f => f.trials.map(t => String(t.loss_weights)))))];
+  const otherHp = RUNS.flatMap(r => r.folds.flatMap(f => f.trials)).some(t => t.learning_rate !== RUNS[0].folds[0].trials[0]?.learning_rate);
+  if (lwVals.length) {
+    host.append(h('div', { class: 'subhead' }, 'Grid search: val selection score / pooled test macro F1 per trial (✓ = selected on val)'));
+    const tb2 = h('tbody');
+    ALL_FOLDS.forEach(k => vr.forEach(ri => {
+      const f = foldOf(ri, k); if (!f) return;
+      const best = Math.max(...f.trials.map(t => t.val_selection_score ?? -Infinity));
+      tb2.append(h('tr', null, h('td', null, `${k} · ${f.test_cohorts.join('+')}`), multiShown ? h('td', null, RUNS[ri].label) : null,
+        lwVals.map(lw => {
+          const ts = f.trials.filter(t => String(t.loss_weights) === lw);
+          return h('td', { class: 'num' }, ts.length ? ts.map(t => h('div', { style: { 'font-weight': t.val_selection_score === best ? 600 : 400 } },
+            `${t.val_selection_score === best ? '✓ ' : ''}${fmt(t.val_selection_score)} / ${fmt(t.test_macro_f1)}`, otherHp ? h('span', { class: 'muted' }, ` lr ${t.learning_rate}`) : null,
+            h('span', { class: 'muted' }, ` · ep ${t.selected_epoch}/${t.epochs_trained}`))) : '–');
+        })));
+    }));
+    host.append(h('div', { class: 'scroll-x' }, h('table', { class: 'ftable' }, h('thead', null, h('tr', null, h('th', null, 'Fold'), multiShown ? h('th', null, 'Run') : null, lwVals.map(lw => h('th', { class: 'num' }, `loss weights: ${LW[lw] ?? lw}`)))), tb2)));
+  }
+
+  // Curves
+  host.append(h('div', { class: 'subhead' }, `Training curves${multiShown ? ` (losses: reference run ${RUNS[ref].label})` : ''}`));
+  host.append(h('div', { class: 'legend', style: { 'margin-bottom': '6px' } },
+    h('span', null, 'Top: val selection score per epoch (vertical line = selected epoch).'),
+    h('span', { class: 'key' }, h('span', { class: 'linekey', style: { background: 'var(--muted)' } }), 'train loss'),
+    h('span', { class: 'key' }, h('span', { class: 'linekey', style: { background: 'var(--ink)' } }), 'val loss')));
+  const grid = h('div', { class: 'grid-cards', id: 'curve-grid' });
+  host.append(grid);
+  const cards = ALL_FOLDS.map(k => { const c = h('div', { class: 'minicard' }, h('h3', null, `Fold ${k} · ${heldOut(k)} held out`)); grid.append(c); return [k, c]; });
+  requestAnimationFrame(() => cards.forEach(([k, c]) => {
+    const w = Math.max(220, c.clientWidth - 24), fr = foldOf(ref, k);
+    const scoreSeries = vr.map(ri => ({ name: `${MULTI ? RUNS[ri].label + ' · ' : ''}val selection score`, values: foldOf(ri, k)?.curves.val_score || [], color: runColor(ri) })).filter(s => s.values.length);
+    const selI = fr && fr.selection.selected_epoch != null ? fr.selection.selected_epoch - 1 : null;
+    c.append(lineChart({ series: scoreSeries, width: w, height: 120, marker: selI != null ? { i: selI } : null, label: `Val selection score per epoch, fold ${k}` }));
+    if (fr) c.append(lineChart({ series: [
+      { name: 'train loss', values: fr.curves.train_loss || [], color: 'var(--muted)', endLabel: 'train' },
+      { name: 'val loss', values: fr.curves.val_loss || [], color: 'var(--ink)', endLabel: 'val' }].filter(s => s.values.length),
+      width: w, height: 120, marker: selI != null ? { i: selI } : null, label: `Train and val loss per epoch, fold ${k}` }));
+    c.append(h('div', { class: 'muted small' }, 'epoch →'));
+  }));
+
+  // Pooled confusion matrices
+  host.append(h('div', { class: 'subhead' }, `Pooled test confusion matrices (row-normalised)${multiShown ? ` · ${RUNS[ref].label}` : ''}`));
+  const g2 = h('div', { class: 'grid-cards' });
+  ALL_FOLDS.forEach(k => { const f = foldOf(ref, k); if (!f || !f.test.cm) return; g2.append(h('div', { class: 'minicard' }, h('h3', null, `Fold ${k} · ${f.test_cohorts.join('+')} · ${compact(f.test_size)} cells`), h('div', { class: 'scroll-x' }, cmSvg(f.test.cm, { cell: 38, font: 10.5 })))); });
+  host.append(g2);
+}
+
+// ---------- notes ----------
+function renderNotes() {
+  const host = $('#notes'); host.replaceChildren();
+  host.append(h('h2', null, 'How to read this'));
+  host.append(h('ul', null,
+    h('li', null, 'Each slide is a test slide in exactly one fold: the fold that holds out its cohort. Its test scores therefore measure transfer to an unseen cohort. Val slides belong to cohorts that are in training, so the same slide can score higher there.'),
+    h('li', null, h('b', null, 'Macro F1 (classes present)'), ' averages the per-class F1 over the classes that have at least one true cell in the slide. This is the per-slide score used for model selection. ', h('b', null, `Macro F1 (all ${K})`), ' counts absent classes as 0, so it is low by construction on slides that lack some classes.'),
+    h('li', null, 'Per-class heat cells show F1 for the classes present in the slide. Hatched cells mark classes the slide does not contain; their stored F1 of 0 is not a score. Hover a cell to see how many cells were predicted as that class anyway.'),
+    h('li', null, '"Pooled" metrics score all cells of a held-out cohort at once, so large slides dominate them. "Slide-mean" averages the per-slide scores with each slide weighted equally.'),
+    h('li', null, 'Val selection score = the run\'s training.selection_metric on the fold\'s val slides (cohort-balanced: the mean over val cohorts of their slide-mean macro F1). It chooses both the epoch (early stopping) and the trial.')));
+  host.append(h('h3', { style: { 'margin-top': '12px' } }, 'Run settings'));
+  RUNS.forEach((run, ri) => {
+    const s = run.settings || {}, hp = s.hparams || {}, prov = run.folds.map(f => f.provenance || {});
+    const commits = [...new Set(prov.map(p => p.git_commit && p.git_commit.slice(0, 7)).filter(Boolean))];
+    const times = prov.map(p => p.timestamp).filter(Boolean).sort();
+    const items = [
+      ['Run', run.full_label], ['Path', run.id], ['Mapping', s.mapping], ['Read-out', (s.embeddings_datasets || []).join(', ')],
+      ['Matching only', String(s.consider_matching)], ['Cells per slide cap', s.max_cells_per_wsi == null ? 'none (all cells)' : String(s.max_cells_per_wsi)],
+      ['Hyper-parameters', Object.entries(hp).map(([k, v]) => `${k}=${Array.isArray(v) ? '[' + v.join(', ') + ']' : v}`).join(' · ')],
+      ['Training', `≤${s.num_epochs} epochs, batch ${s.batch_size}, early stopping patience ${s.early_stopping?.patience ?? '–'}, selection ${s.selection_metric}, seed ${s.seed}`],
+      ['Trained from', `${commits.join(', ') || '–'}${prov.some(p => p.git_dirty) ? ' (with uncommitted changes)' : ''}${times.length ? `, ${times[0].replace('T', ' ')} → ${times[times.length - 1].replace('T', ' ')}` : ''}`],
+    ].filter(([, v]) => v != null && v !== '');
+    host.append(h('div', { class: 'key', style: { margin: '6px 0 2px', color: 'var(--ink)', 'font-weight': 600 } }, MULTI ? h('span', { class: 'dot', style: { background: runColor(ri) } }) : null, run.label));
+    host.append(h('dl', { class: 'meta', style: { 'grid-template-columns': '150px 1fr' } }, items.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
+  });
+}
+
+// ---------- CSV ----------
+function downloadCsv() {
+  const q = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const scal = ['n_cells', 'accuracy', 'balanced_accuracy', 'macro_f1', 'macro_f1_present', 'weighted_f1', 'ce_loss'];
+  const runCols = RUNS.flatMap(r => [...scal, ...C.map(c => 'f1_' + c), ...C.map(c => 'n_' + c)].map(c => MULTI ? `${r.label} | ${c}` : c));
+  const head = ['set', 'fold', 'held_out', 'wsi', 'cohort', 'tissue', 'disease_state', 'disease_type', 'subtype', 'donor', ...runCols];
+  const lines = [head.map(q).join(',')];
+  for (const e of filteredRows()) {
+    const base = [e.set, e.fold, heldOut(e.fold), e.wsi, e.cohort, e.meta.tissue, e.meta.disease_state, e.meta.disease_type, e.meta.subtype, e.meta.donor];
+    const vals = RUNS.flatMap((_, ri) => { const r = e.by[ri]; return r ? [...scal.map(k => r[k]), ...r.f1.map((f, i) => r.n[i] ? f : ''), ...r.n] : Array(scal.length + 2 * K).fill(''); });
+    lines.push([...base, ...vals].map(q).join(','));
+  }
+  const a = h('a', { href: URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })), download: `${D.experiment}_${state.set}_per_slide.csv` });
+  document.body.append(a); a.click(); a.remove();
+}
+
+// ---------- theme ----------
+const THEMES = ['auto', 'light', 'dark'];
+function getTheme() { try { return localStorage.getItem('results-report-theme') || 'auto'; } catch { return 'auto'; } }
+function applyTheme(t) {
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  $('#theme').textContent = `Theme: ${t}`;
+  try { localStorage.setItem('results-report-theme', t); } catch { /* storage unavailable */ }
+}
+$('#theme').addEventListener('click', () => { applyTheme(THEMES[(THEMES.indexOf(getTheme()) + 1) % 3]); renderData(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => renderData());
+
+// ---------- render ----------
+function renderData() {
+  const m = metricDef();
+  $('#ov-title').textContent = `${m.label} per slide, by ${GROUPS[state.group].label.toLowerCase()}`;
+  $('#ov-note').textContent = state.set === 'test' ? 'Test slides: each scored by the fold that held out its cohort.' : 'Val slides: a slide appears once per fold it validates.';
+  const rows = filteredRows();
+  if (!rows.some(e => e.key === state.selected)) {
+    const g = groupRows(rows); state.selected = g.length && g[0].rows.length ? g[0].rows[0].key : null;
+  }
+  renderTiles(); renderStrip(); renderTable(); renderDetail(); renderFolds();
+}
+applyTheme(getTheme());
+renderHeader(); renderControls(); renderNotes(); renderData();
+let rz, stripW = $('#strip').clientWidth;
+new ResizeObserver(() => {
+  const w = $('#strip').clientWidth; if (w === stripW) return; stripW = w;
+  cancelAnimationFrame(rz); rz = requestAnimationFrame(renderStrip);
+}).observe($('#strip'));
+let lastW = innerWidth; addEventListener('resize', () => { if (Math.abs(innerWidth - lastW) > 40) { lastW = innerWidth; renderFolds(); } });
+</script>
+</body>
+</html>
