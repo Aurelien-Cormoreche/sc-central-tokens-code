@@ -21,6 +21,7 @@ data/HVGsSplitGSM/
 # Regenerable figure output from notebooks/*_deep_dive.ipynb
 notebooks/figures_classification_results/
 notebooks/figures_saved_cells/
+notebooks/figures_cross_cohort_maps/
 
 # Cached intermediate results (notebooks/figure_for_paper.ipynb section 9) --
 # regenerable from raw h5/adata files, see DRIFT_FORCE_RECOMPUTE there.
