@@ -40,6 +40,7 @@ h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
 h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
 h3 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
 p { margin: 0; }
+[hidden] { display: none !important; }
 .muted { color: var(--muted); }
 .ink2 { color: var(--ink-2); }
 .small { font-size: 12px; }
@@ -50,7 +51,7 @@ p { margin: 0; }
 .section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; margin-bottom: 10px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 button, select, input { font: inherit; color: inherit; }
-.btn { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.btn { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; white-space: nowrap; flex: none; }
 .btn:hover { background: var(--hover); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -59,9 +60,9 @@ button, select, input { font: inherit; color: inherit; }
   padding: 10px 0; margin-top: 12px; background: var(--page); border-bottom: 1px solid var(--border); }
 .ctl { display: flex; align-items: center; gap: 6px; }
 .ctl > label, .ctl > .lbl { color: var(--ink-2); font-size: 12px; }
-.ctl select, .ctl input[type=search] { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+.ctl select, .ctl input[type=search], .pick select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; max-width: 100%; }
 .ctl input[type=search] { width: 220px; max-width: 60vw; }
-.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .seg button { border: 0; background: var(--surface); padding: 4px 12px; cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--border); }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
@@ -83,6 +84,16 @@ button, select, input { font: inherit; color: inherit; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .linekey { display: inline-block; width: 14px; height: 2px; border-radius: 1px; flex: none; }
+
+/* Run comparison */
+.pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px; font-size: 12px; color: var(--ink-2); }
+.cmp { display: grid; grid-template-columns: minmax(0, 470px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 980px) { .cmp { grid-template-columns: minmax(0, 1fr); } }
+.ctable td, .ctable th { font-size: 12.5px; white-space: nowrap; }
+.ctable thead th { position: static; white-space: normal; vertical-align: bottom; min-width: 84px; }
+.ctable thead th:first-child { min-width: 0; }
+.ctable tr.total td { border-top: 1px solid var(--axis); font-weight: 600; }
+.ctable td.delta div { display: inline-block; min-width: 56px; }
 
 /* Main layout */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 410px; gap: 16px; margin-top: 16px; align-items: start; }
@@ -113,6 +124,7 @@ td.name .sub { font-size: 11.5px; color: var(--muted); }
 td.heat { width: 54px; min-width: 54px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; padding: 0; border-bottom: 2px solid var(--surface); border-right: 2px solid var(--surface); }
 td.heat > div { padding: 6px 2px; }
 .absent { background: repeating-linear-gradient(45deg, transparent 0 4px, var(--hatch) 4px 5px); color: var(--muted); }
+.nomodel { background: var(--hover); color: var(--muted); }
 td.metric { min-width: 150px; width: 22%; }
 .mbar { display: flex; align-items: center; gap: 8px; }
 .track { position: relative; flex: 1; height: 12px; border-left: 1px solid var(--axis); }
@@ -126,6 +138,7 @@ td.delta div { font-size: 12px; border-radius: 4px; padding: 1px 4px; text-align
 /* Detail panel */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
 .chip { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--ink-2); }
+.heldin { font-size: 12.5px; color: var(--ink-2); margin: -4px 0 10px; display: grid; gap: 2px; }
 .mgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 14px; }
 .mgrid > div { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
 .mgrid .l { font-size: 11px; color: var(--ink-2); }
@@ -139,12 +152,16 @@ td.delta div { font-size: 12px; border-radius: 4px; padding: 1px 4px; text-align
 .ptable { font-size: 12.5px; margin-top: 6px; }
 .ptable th, .ptable td { padding: 3px 6px; }
 .ptable thead th { position: static; }
+.ptable td.heat { width: 40px; min-width: 40px; font-size: 11.5px; }
+.ptable td.heat > div { padding: 3px 1px; }
 dl.meta { display: grid; grid-template-columns: 120px 1fr; gap: 3px 10px; font-size: 12.5px; margin: 6px 0 0; }
 dl.meta dt { color: var(--ink-2); }
 dl.meta dd { margin: 0; overflow-wrap: anywhere; }
 .subhead { margin: 16px 0 6px; font-size: 13px; font-weight: 600; }
 .linkbtn { all: unset; cursor: pointer; color: var(--ink); text-decoration: underline; text-decoration-color: var(--axis); text-underline-offset: 2px; }
 .linkbtn:focus-visible { outline: 2px solid var(--accent); }
+.others { margin: 0; padding-left: 18px; font-size: 12.5px; }
+.others li { margin: 3px 0; }
 
 /* Folds */
 .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
@@ -152,6 +169,9 @@ dl.meta dd { margin: 0; overflow-wrap: anywhere; }
 .ftable td, .ftable th { font-size: 12.5px; white-space: nowrap; }
 .ftable thead th { position: static; }
 .ftable tfoot td { font-weight: 600; border-top: 1px solid var(--axis); }
+.ftable tr.pick-row { cursor: pointer; }
+.ftable tr.pick-row:hover { background: var(--hover); }
+.ftable tr.pick-row.on { background: var(--sel); }
 .scroll-x { overflow-x: auto; }
 svg text { fill: var(--ink-2); font-size: 11px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
 svg .grid { stroke: var(--grid); stroke-width: 1; }
@@ -159,7 +179,7 @@ svg .axis { stroke: var(--axis); stroke-width: 1; }
 
 /* Tooltip */
 #tip { position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border);
-  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 8px 10px; font-size: 12px; max-width: 340px; display: none; }
+  border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 8px 10px; font-size: 12px; max-width: 360px; display: none; }
 #tip .v { font-size: 15px; font-weight: 600; }
 #tip .r { display: flex; align-items: center; gap: 6px; }
 .notes li { margin: 3px 0; }
@@ -188,6 +208,8 @@ svg .axis { stroke: var(--axis); stroke-width: 1; }
     <div id="strip" style="margin-top:6px"></div>
   </section>
 
+  <section class="card section" id="compare" hidden></section>
+
   <div class="layout">
     <section class="card" id="slides">
       <div class="section-head"><h2 id="tbl-title"></h2><span class="muted small">Click a row (or a dot above) for the slide's confusion matrix. ↑/↓ move between rows.</span></div>
@@ -206,7 +228,7 @@ svg .axis { stroke: var(--axis); stroke-width: 1; }
 <script>
 'use strict';
 const D = JSON.parse(document.getElementById('report-data').textContent);
-const C = D.class_names, K = C.length, RUNS = D.runs, MULTI = RUNS.length > 1;
+const C = D.class_names, K = C.length, RUNS = D.runs, MULTI = RUNS.length > 1, EXPS = D.experiments || [];
 const SVGNS = 'http://www.w3.org/2000/svg';
 const $ = sel => document.querySelector(sel);
 
@@ -231,9 +253,11 @@ function sv(tag, attrs, ...kids) { const n = document.createElementNS(SVGNS, tag
 const fmt = (v, d = 3) => (v == null || !isFinite(v)) ? '–' : v.toFixed(d);
 const fmtInt = v => v == null ? '–' : Math.round(v).toLocaleString('en-US');
 const compact = v => v == null ? '–' : v >= 1e6 ? (v / 1e6).toFixed(v >= 1e7 ? 0 : 1) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(v >= 1e4 ? 0 : 1) + 'K' : String(v);
-const fmtDur = s => s == null ? '–' : s >= 3600 ? `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} min` : `${Math.round(s / 60)} min`;
+const fmtDur = s => s == null ? '–' : s >= 3600 ? `${Math.floor(s / 3600)} h ${String(Math.floor(s % 3600 / 60)).padStart(2, '0')} min` : s >= 90 ? `${Math.round(s / 60)} min` : `${Math.round(s)} s`;
 const pct = v => v == null ? '–' : (100 * v).toFixed(v < 0.1 ? 1 : 0) + '%';
+const fmtDelta = d => d == null ? '–' : (d > 0 ? '+' : d < 0 ? '−' : '±') + Math.abs(d).toFixed(3);
 const mean = a => { const b = a.filter(v => v != null && isFinite(v)); return b.length ? b.reduce((x, y) => x + y, 0) / b.length : null; };
+const sum = a => a.reduce((x, y) => x + (y || 0), 0);
 const LW = { none: 'none', by_wsi: 'by slide', by_cell_type: 'by cell type' };
 
 // ---------- colour ----------
@@ -251,6 +275,11 @@ function seq(v) {  // sequential blue; near zero recedes toward the surface in b
 }
 const runColor = ri => `var(--s${(ri % 8) + 1})`;
 const clsColor = i => `var(--s${(i % 8) + 1})`;
+function deltaBg(d, m) {  // diverging: blue = better, red = worse, by the metric's direction
+  if (d == null) return 'transparent';
+  const good = m.hi ? d : -d, alpha = Math.min(0.45, Math.abs(good) / 0.2 * 0.45);
+  return `rgba(var(${good >= 0 ? '--pos' : '--neg'}), ${alpha})`;
+}
 
 // ---------- tooltip ----------
 const tip = $('#tip');
@@ -276,7 +305,7 @@ function hoverable(node, content) {
 // ---------- data index ----------
 const METRICS = [
   { key: 'macro_f1_present', label: 'Macro F1 (classes present)', short: 'macro F1', hi: true },
-  { key: 'macro_f1', label: `Macro F1 (all ${K} classes)`, short: 'macro F1 (all)', hi: true },
+  { key: 'macro_f1', label: 'Macro F1 (all model classes)', short: 'macro F1 (all)', hi: true },
   { key: 'balanced_accuracy', label: 'Balanced accuracy', short: 'bal. acc.', hi: true },
   { key: 'accuracy', label: 'Accuracy', short: 'accuracy', hi: true },
   { key: 'weighted_f1', label: 'Weighted F1', short: 'weighted F1', hi: true },
@@ -284,20 +313,41 @@ const METRICS = [
   ...C.map((c, i) => ({ key: 'f1_' + i, label: `F1 · ${c}`, short: `F1 ${c}`, hi: true, cls: i })),
 ];
 const metricDef = () => METRICS.find(m => m.key === state.metric);
-const mval = (row, m) => !row ? null : m.cls != null ? (row.n[m.cls] > 0 ? row.f1[m.cls] : null) : row[m.key];
+// A within-cohort model only knows its cohort's classes; in_model marks them (all true otherwise).
+const inModel = (row, i) => !row.in_model || row.in_model[i];
+const mval = (row, m) => !row ? null : m.cls != null ? (inModel(row, m.cls) && row.n[m.cls] > 0 ? row.f1[m.cls] : null) : row[m.key];
 
+// Folds: id "<experiment>/<k>", shared by the runs (read-outs) of one experiment.
+const FOLDS = new Map();
+RUNS.forEach((run, ri) => run.folds.forEach(f => {
+  if (!FOLDS.has(f.id)) FOLDS.set(f.id, { id: f.id, experiment: f.experiment, fold: f.fold, name: f.name, held_out: f.held_out, unit: f.unit, test_cohorts: f.test_cohorts, by: [] });
+  FOLDS.get(f.id).by[ri] = f;
+}));
+const expIndex = name => { const i = EXPS.findIndex(x => x.name === name); return i < 0 ? 999 : i; };
+const FOLD_IDS = [...FOLDS.keys()].sort((a, b) => { const A = FOLDS.get(a), B = FOLDS.get(b); return expIndex(A.experiment) - expIndex(B.experiment) || A.fold - B.fold; });
+const foldOf = (ri, id) => FOLDS.get(id)?.by[ri];
+const foldTitle = id => { const F = FOLDS.get(id); return F ? `${F.name} · ${F.held_out} held out` : '?'; };
+const expOf = name => EXPS.find(x => x.name === name) || { name, label: name, short: name, scheme: name };
+const SCHEMES = [...new Set(RUNS.map(r => r.scheme))];
+
+// A test slide is one row across runs (each run tests it once, in its own fold); a val slide is
+// one row per fold. If some run tests a slide twice, test rows are kept per fold as well.
+const DUP_TEST = RUNS.some(run => { const seen = new Set(); return run.slides.some(sl => sl.set === 'test' && (seen.has(sl.wsi) || (seen.add(sl.wsi), false))); });
+const entryKey = sl => sl.set === 'test' && !DUP_TEST ? `test|${sl.wsi}` : `${sl.set}|${sl.fold}|${sl.wsi}`;
 const ENTRIES = [], BYKEY = new Map();
 RUNS.forEach((run, ri) => run.slides.forEach(sl => {
-  const key = `${sl.set}|${sl.fold}|${sl.wsi}`;
+  const key = entryKey(sl);
   let e = BYKEY.get(key);
-  if (!e) { e = { key, set: sl.set, fold: sl.fold, wsi: sl.wsi, cohort: sl.cohort, meta: D.meta[sl.wsi] || {}, by: [] }; BYKEY.set(key, e); ENTRIES.push(e); }
+  if (!e) { e = { key, set: sl.set, wsi: sl.wsi, cohort: sl.cohort, meta: D.meta[sl.wsi] || {}, by: [] }; BYKEY.set(key, e); ENTRIES.push(e); }
   e.by[ri] = sl;
 }));
-const COHORT_ORDER = [];
-RUNS.forEach(run => run.folds.forEach(f => f.test_cohorts.forEach(c => { if (!COHORT_ORDER.includes(c)) COHORT_ORDER.push(c); })));
-const ALL_FOLDS = [...new Set(RUNS.flatMap(r => r.folds.map(f => f.fold)))].sort((a, b) => a - b);
-const foldOf = (ri, k) => RUNS[ri].folds.find(f => f.fold === k);
-function heldOut(k) { for (const run of RUNS) { const f = run.folds.find(f => f.fold === k); if (f) return f.test_cohorts.join('+'); } return '?'; }
+const anyRow = e => e.by[state.ref] || e.by.find(Boolean);
+const eFold = e => anyRow(e).fold;
+const COHORT_ORDER = [...(D.cohort_order || [])].filter(c => ENTRIES.some(e => e.cohort === c));
+ENTRIES.forEach(e => { if (e.cohort && !COHORT_ORDER.includes(e.cohort)) COHORT_ORDER.push(e.cohort); });
+const cohortColor = c => { const i = COHORT_ORDER.indexOf(c); return i >= 0 && i < 8 ? `var(--s${i + 1})` : 'var(--muted)'; };
+const testWsis = ri => new Set(RUNS[ri].slides.filter(s => s.set === 'test').map(s => s.wsi));
+const SETS_DIFFER = MULTI && RUNS.some((_, ri) => { const a = testWsis(0), b = testWsis(ri); return a.size !== b.size || [...b].some(w => !a.has(w)); });
 const tissueOf = e => e.meta.tissue ? e.meta.tissue.replace(/\s*\(.*\)\s*$/, '') : 'unknown tissue';
 const diseaseOf = e => [e.meta.disease_type || e.meta.disease_state, e.meta.subtype].filter(Boolean).join(' · ') || 'unknown';
 const cellsOf = e => { const r = e.by.find(Boolean); return r ? r.n_cells : null; };
@@ -313,40 +363,74 @@ function cmStats(cm) {
   }));
   return { rows, cols, tot, per };
 }
-function pooledVal(fold, set, m) {
-  const blk = fold && fold[set]; if (!blk) return null;
-  if (m.cls != null) { if (!blk.cm) return null; const p = cmStats(blk.cm).per[m.cls]; return p.n > 0 ? p.f1 : null; }
-  return blk.pooled[m.key === 'ce_loss' ? 'loss' : m.key] ?? null;
+// Same definitions as trainer.py's metric set (sklearn, zero_division=0, labels = the model's classes).
+function cmMetrics(cm, mask) {
+  const st = cmStats(cm); if (!st.tot) return null;
+  const f1 = st.per.map(p => p.f1 ?? 0), present = st.rows.map(n => n > 0);
+  const avg = keep => mean(f1.filter((_, i) => keep(i)));
+  return {
+    accuracy: sum(cm.map((r, i) => r[i])) / st.tot,
+    macro_f1: avg(i => !mask || mask[i]), macro_f1_present: avg(i => present[i]),
+    weighted_f1: sum(f1.map((f, i) => f * st.rows[i])) / st.tot,
+    balanced_accuracy: mean(cm.map((r, i) => present[i] ? r[i] / st.rows[i] : null)),
+    f1, n: st.rows,
+  };
+}
+// Pooled = all cells of the rows' slides scored at once: their confusion matrices summed (this
+// reproduces each fold's pooled metrics in results_summary.yaml); CE loss is cell-weighted.
+function pooledVal(rows, ri, m) {
+  const rs = rows.map(e => e.by[ri]).filter(Boolean);
+  if (!rs.length) return null;
+  if (m.key === 'ce_loss') { const w = rs.filter(r => r.ce_loss != null), n = sum(w.map(r => r.n_cells)); return n ? sum(w.map(r => r.ce_loss * r.n_cells)) / n : null; }
+  if (rs.some(r => !r.cm)) return null;
+  const cm = C.map((_, i) => C.map((_, j) => sum(rs.map(r => r.cm[i][j]))));
+  const mask = C.map((_, i) => rs.some(r => inModel(r, i)));
+  const pm = cmMetrics(cm, mask); if (!pm) return null;
+  if (m.cls != null) return mask[m.cls] && pm.n[m.cls] > 0 ? pm.f1[m.cls] : null;
+  return pm[m.key] ?? null;
+}
+// Share of run a's predictions (on rows' slides) that fall in a class run b's model does not have.
+function outsideShare(rows, a, b) {
+  let tot = 0, out = 0;
+  for (const e of rows) {
+    const ra = e.by[a], rb = e.by[b]; if (!ra || !ra.cm || !rb) continue;
+    ra.cm.forEach(row => row.forEach((n, j) => { tot += n; if (!inModel(rb, j)) out += n; }));
+  }
+  return tot ? out / tot : null;
 }
 
 // ---------- state ----------
+function defaultPair() {  // y = cross-cohort, x = the within-cohort run of the same read-out
+  if (!MULTI) return null;
+  const rest = ri => RUNS[ri].parts.slice(1).join('/');
+  for (let y = 0; y < RUNS.length; y++) for (let x = 0; x < RUNS.length; x++)
+    if (RUNS[y].scheme === 'cross_cohort' && RUNS[x].scheme === 'within_cohort' && rest(x) === rest(y)) return { x, y };
+  return { x: 1, y: 0 };
+}
 const state = {
-  set: 'test', metric: 'macro_f1_present', group: 'cohort', query: '',
+  set: 'test', metric: 'macro_f1_present', group: 'cohort', query: '', paired: SETS_DIFFER,
   sort: { key: 'metric', dir: -1 }, visible: RUNS.map(() => true), ref: 0, selected: null, detailRun: null,
+  cmp: defaultPair(), foldExp: null,
 };
 const visRuns = () => RUNS.map((_, i) => i).filter(i => state.visible[i]);
 
 const GROUPS = {
   cohort: { label: 'Cohort', key: e => e.cohort || '—', name: g => g },
-  fold: { label: 'Fold', key: e => 'f' + e.fold, name: g => `Fold ${g.slice(1)} · ${heldOut(+g.slice(1))} held out` },
+  fold: { label: 'Fold', key: e => eFold(e), name: id => foldTitle(id) },
   tissue: { label: 'Tissue', key: tissueOf, name: g => g },
   disease: { label: 'Disease state', key: e => e.meta.disease_state || 'unknown', name: g => g },
   none: { label: 'None', key: () => 'all', name: () => 'All slides' },
 };
-function groupFold(gkey, ri) {  // the fold whose pooled metrics describe a group, if any
-  if (state.group === 'fold') return foldOf(ri, +gkey.slice(1));
-  if (state.group === 'cohort' && state.set === 'test') return RUNS[ri].folds.find(f => f.test_cohorts.length === 1 && f.test_cohorts[0] === gkey);
-  return null;
-}
 
-function filteredRows() {
+function filteredRows({ paired = true } = {}) {
   const q = state.query.trim().toLowerCase(), vr = visRuns();
-  return ENTRIES.filter(e => e.set === state.set && vr.some(ri => e.by[ri]) && (!q || searchText(e).includes(q)));
+  const pair = paired && state.set === 'test' && state.paired && vr.length > 1;
+  return ENTRIES.filter(e => e.set === state.set && (pair ? vr.every(ri => e.by[ri]) : vr.some(ri => e.by[ri])) && (!q || searchText(e).includes(q)));
 }
 function sortGetter(key) {
   const m = metricDef(), ref = state.ref;
   if (key === 'name') return e => e.wsi;
-  if (key === 'fold') return e => e.fold;
+  if (key === 'fold') return e => FOLD_IDS.indexOf(eFold(e));
   if (key === 'cells') return cellsOf;
   if (key === 'metric') return e => mval(e.by[ref], m);
   if (key === 'delta') return e => { const o = visRuns().find(i => i !== ref); const a = mval(e.by[o], m), b = mval(e.by[ref], m); return a == null || b == null ? null : a - b; };
@@ -360,7 +444,7 @@ function sortRows(rows) {
     if (va == null && vb == null) return a.wsi.localeCompare(b.wsi);
     if (va == null) return 1;
     if (vb == null) return -1;
-    return ((typeof va === 'string' ? va.localeCompare(vb) : va - vb) * dir) || a.wsi.localeCompare(b.wsi) || a.fold - b.fold;
+    return ((typeof va === 'string' ? va.localeCompare(vb) : va - vb) * dir) || a.wsi.localeCompare(b.wsi) || a.key.localeCompare(b.key);
   });
 }
 function groupRows(rows) {
@@ -368,11 +452,11 @@ function groupRows(rows) {
   for (const e of rows) { const k = G.key(e); if (!map.has(k)) map.set(k, []); map.get(k).push(e); }
   let groups = [...map.entries()].map(([k, rs]) => ({
     key: k, label: G.name(k), rows: sortRows(rs),
-    stats: RUNS.map((_, ri) => ({ mean: mean(rs.map(e => mval(e.by[ri], m))), pooled: pooledVal(groupFold(k, ri), state.set, m) })),
+    stats: RUNS.map((_, ri) => ({ mean: mean(rs.map(e => mval(e.by[ri], m))), pooled: pooledVal(rs, ri, m) })),
     cells: rs.reduce((a, e) => a + (cellsOf(e) || 0), 0),
   }));
   if (state.group === 'cohort') groups.sort((a, b) => (COHORT_ORDER.indexOf(a.key) + 1 || 99) - (COHORT_ORDER.indexOf(b.key) + 1 || 99) || a.key.localeCompare(b.key));
-  else if (state.group === 'fold') groups.sort((a, b) => +a.key.slice(1) - +b.key.slice(1));
+  else if (state.group === 'fold') groups.sort((a, b) => FOLD_IDS.indexOf(a.key) - FOLD_IDS.indexOf(b.key));
   else groups.sort((a, b) => b.rows.length - a.rows.length || a.key.localeCompare(b.key));
   return groups;
 }
@@ -380,10 +464,14 @@ function groupRows(rows) {
 // ---------- header & controls ----------
 function renderHeader() {
   $('#title').textContent = D.title;
-  const nTest = new Set(ENTRIES.filter(e => e.set === 'test').map(e => e.wsi)).size;
-  const run0 = RUNS[0];
-  const what = MULTI ? `${RUNS.length} runs (${RUNS.map(r => r.label).join(' vs ')})` : run0.full_label;
-  $('#subtitle').textContent = `${what} — ${ALL_FOLDS.length} folds, ${nTest} test slides, ${K} classes (${C.join(', ')})`;
+  const what = MULTI ? `${RUNS.length} runs (${RUNS.map(r => r.label).join(' vs ')})` : RUNS[0].full_label;
+  const per = SCHEMES.map(s => {
+    const rs = RUNS.filter(r => r.scheme === s), exps = rs[0].experiments;
+    const nT = new Set(rs.flatMap(r => r.slides.filter(x => x.set === 'test').map(x => x.wsi))).size;
+    const split = exps.length > 1 ? ` (${exps.map(x => `${expOf(x.name).short} ${x.n_folds}`).join(', ')})` : '';
+    return `${MULTI ? rs[0].scheme_label + ': ' : ''}${sum(exps.map(x => x.n_folds))} folds${split}, ${nT} test slides`;
+  });
+  $('#subtitle').textContent = `${what} — ${per.join('; ')} — ${K} classes (${C.join(', ')})`;
   const incomplete = RUNS.filter(r => r.incomplete_folds.length).map(r => `${r.label}: ${r.incomplete_folds.join(', ')} not finished`);
   $('#generated').textContent = `Generated ${D.generated} from ${D.results_dir}` + (D.report_commit ? ` · report script at ${D.report_commit}` : '') + (incomplete.length ? ` · ${incomplete.join('; ')}` : '');
 }
@@ -391,7 +479,7 @@ function renderHeader() {
 function renderControls() {
   const nav = $('#controls'); nav.replaceChildren();
   const segBtn = (val, label) => h('button', { type: 'button', 'aria-pressed': String(state.set === val), onclick: () => { state.set = val; if (val === 'val' && state.group === 'cohort') state.group = 'fold'; if (val === 'test' && state.group === 'fold') state.group = 'cohort'; renderControls(); renderData(); } }, label);
-  nav.append(h('div', { class: 'ctl' }, h('span', { class: 'lbl' }, 'Slides'), h('div', { class: 'seg', role: 'group', 'aria-label': 'Slide set' }, segBtn('test', 'Test (held-out cohort)'), segBtn('val', 'Val'))));
+  nav.append(h('div', { class: 'ctl' }, h('span', { class: 'lbl' }, 'Slides'), h('div', { class: 'seg', role: 'group', 'aria-label': 'Slide set' }, segBtn('test', 'Test (held out)'), segBtn('val', 'Val'))));
 
   const msel = h('select', { id: 'metric', onchange: ev => { state.metric = ev.target.value; const m = metricDef(); state.sort = { key: 'metric', dir: m.hi ? -1 : 1 }; renderData(); } },
     METRICS.map(m => h('option', { value: m.key, selected: m.key === state.metric }, m.label)));
@@ -414,6 +502,13 @@ function renderControls() {
     nav.append(h('div', { class: 'ctl' }, h('label', { for: 'ref' }, 'Reference'),
       h('select', { id: 'ref', title: 'Run used for sorting, the per-class heat cells, Δ and the fold curves', onchange: ev => { state.ref = +ev.target.value; renderData(); } },
         visRuns().map(ri => h('option', { value: ri, selected: ri === state.ref }, RUNS[ri].label)))));
+    if (SETS_DIFFER && state.set === 'test' && visRuns().length > 1) {
+      const vr = visRuns(), tests = ENTRIES.filter(e => e.set === 'test');
+      const all = tests.filter(e => vr.some(ri => e.by[ri])).length, both = tests.filter(e => vr.every(ri => e.by[ri])).length;
+      nav.append(h('label', { class: 'chk', title: 'Keep only the test slides that every shown run tested, so that all means, tiles and the table compare the same slides' },
+        h('input', { type: 'checkbox', checked: state.paired, onchange: ev => { state.paired = ev.target.checked; renderData(); } }),
+        `Paired slides only (${both} of ${all})`));
+    }
   }
   nav.append(h('span', { class: 'spacer' }));
   nav.append(h('button', { class: 'btn small', type: 'button', onclick: downloadCsv }, 'Download CSV'));
@@ -422,36 +517,38 @@ function renderControls() {
 // ---------- tiles ----------
 function renderTiles() {
   const m = metricDef(), host = $('#tiles'); host.replaceChildren();
-  const tests = ENTRIES.filter(e => e.set === 'test');
+  const rows = filteredRows(), unit = state.set === 'test' ? 'slides' : 'slide × fold scores';
   const perRun = ri => {
-    const rows = tests.filter(e => e.by[ri]);
-    const byCohort = COHORT_ORDER.map(c => mean(rows.filter(e => e.cohort === c).map(e => mval(e.by[ri], m))));
+    const rs = rows.filter(e => e.by[ri]);
+    const groups = COHORT_ORDER.map(c => rs.filter(e => e.cohort === c)).filter(g => g.length);
+    const cmeans = groups.map(g => mean(g.map(e => mval(e.by[ri], m))));
     return {
-      slides: mean(rows.map(e => mval(e.by[ri], m))), nSlides: rows.filter(e => mval(e.by[ri], m) != null).length,
-      cohorts: mean(byCohort), nCohorts: byCohort.filter(v => v != null).length,
-      pooled: mean(RUNS[ri].folds.map(f => pooledVal(f, 'test', m))), nFolds: RUNS[ri].folds.length,
+      slides: mean(rs.map(e => mval(e.by[ri], m))), nSlides: rs.filter(e => mval(e.by[ri], m) != null).length,
+      cohorts: mean(cmeans), nCohorts: cmeans.filter(v => v != null).length,
+      pooled: mean(groups.map(g => pooledVal(g, ri, m))),
     };
   };
   const stats = visRuns().map(ri => [ri, perRun(ri)]);
+  const counts = key => { const v = [...new Set(stats.map(([, s]) => s[key]))]; return v.join(' / '); };
   const tile = (label, key, sub) => {
     const t = h('div', { class: 'tile' }, h('div', { class: 'label' }, label));
     if (stats.length === 1) t.append(h('div', { class: 'value' }, fmt(stats[0][1][key])));
     else stats.forEach(([ri, s]) => t.append(h('div', { class: 'runrow' }, h('span', { class: 'dot', style: { background: runColor(ri) } }), h('b', null, fmt(s[key])), h('span', { class: 'muted' }, RUNS[ri].label))));
-    t.append(h('div', { class: 'sub' }, sub(stats[0][1])));
+    t.append(h('div', { class: 'sub' }, sub));
     return t;
   };
   host.append(
-    tile(`Mean over test slides · ${m.short}`, 'slides', s => `${s.nSlides} slides, each scored on its own cells`),
-    tile(`Mean over held-out cohorts · ${m.short}`, 'cohorts', s => `mean of the ${s.nCohorts} cohorts' slide means`),
-    tile(`Pooled per fold, mean of folds · ${m.short}`, 'pooled', s => `all cells of a held-out cohort at once; ${s.nFolds} folds`),
+    tile(`Mean over ${state.set} ${state.set === 'test' ? 'slides' : 'scores'} · ${m.short}`, 'slides', `${counts('nSlides')} ${unit}, each scored on its own cells`),
+    tile(`Cohort-balanced mean · ${m.short}`, 'cohorts', `mean of ${counts('nCohorts')} cohorts' slide means`),
+    tile(`Pooled per cohort, mean of cohorts · ${m.short}`, 'pooled', 'each cohort\'s cells scored at once (large slides weigh more)'),
   );
 }
 
 // ---------- strip chart ----------
 function niceMax(v) { const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p * 2) / 2 * p; }
-function domainFor(m, rows) {
+function domainFor(m, rows, runs = visRuns()) {
   if (!m.unbounded) return [0, 1];
-  const vs = rows.flatMap(e => visRuns().map(ri => mval(e.by[ri], m))).filter(v => v != null);
+  const vs = rows.flatMap(e => runs.map(ri => mval(e.by[ri], m))).filter(v => v != null);
   return [0, niceMax(Math.max(...vs, 0.1))];
 }
 function ticksFor(dom) { const step = dom[1] <= 1 ? 0.2 : niceMax(dom[1] / 5); const t = []; for (let v = dom[0]; v <= dom[1] + 1e-9; v += step) t.push(+v.toFixed(6)); return t; }
@@ -464,7 +561,7 @@ function slideTip(e, ri, m) {
     MULTI ? h('div', { class: 'r' }, h('span', { class: 'linekey', style: { background: runColor(ri) } }), RUNS[ri].label) : null,
     h('div', { class: 'mono', style: { marginTop: '4px' } }, e.wsi),
     h('div', null, `${tissueOf(e)} · ${diseaseOf(e)}`),
-    h('div', { class: 'muted' }, `${e.cohort} · ${e.set} in fold ${e.fold} (${heldOut(e.fold)} held out) · ${fmtInt(r.n_cells)} cells`),
+    h('div', { class: 'muted' }, `${e.cohort} · ${e.set} in ${foldTitle(r.fold)} · ${fmtInt(r.n_cells)} cells`),
   ];
 }
 
@@ -476,7 +573,7 @@ function renderStrip() {
   leg.append(h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: MULTI ? 'var(--muted)' : runColor(vr[0]) } }), 'one slide'),
     h('span', { class: 'key' }, h('span', { style: { display: 'inline-block', width: '2px', height: '12px', background: 'var(--ink)' } }), 'mean of the group\'s slides'));
   if (groups.some(g => vr.some(ri => g.stats[ri].pooled != null)))
-    leg.append(h('span', { class: 'key' }, svgDiamondKey(), 'pooled over all cells of the fold'));
+    leg.append(h('span', { class: 'key' }, svgDiamondKey(), 'pooled over all the group\'s cells'));
   if (!groups.length) { host.append(h('p', { class: 'muted' }, 'No slides match the filter.')); return; }
 
   const W = Math.max(320, host.clientWidth || 900), narrow = W < 560;
@@ -526,9 +623,124 @@ function diamond(cx, cy, r) { return sv('path', { d: `M${cx} ${cy - r}L${cx + r}
 function svgDiamondKey() { const s = sv('svg', { width: 12, height: 12, viewBox: '0 0 12 12' }); s.append(diamond(6, 6, 4.5)); return s; }
 function truncate(s, px) { const max = Math.max(4, Math.floor(px / 6.4)); return s.length > max ? s.slice(0, max - 1) + '…' : s; }
 
+// ---------- run vs run ----------
+function runDot(ri) { return h('span', { class: 'dot', style: { background: runColor(ri) } }); }
+function renderCompare() {
+  const host = $('#compare');
+  if (!MULTI) { host.hidden = true; return; }
+  host.hidden = false; host.replaceChildren();
+  const m = metricDef(), { x, y } = state.cmp, X = RUNS[x], Y = RUNS[y];
+  host.append(h('div', { class: 'section-head' }, h('h2', null, `Slide by slide: ${Y.label} vs ${X.label}`),
+    h('span', { class: 'muted small' }, `${m.label} of each ${state.set} slide scored by both runs. Follows the filters above except "Runs" and "Paired".`)));
+  const runSel = axis => h('select', { 'aria-label': axis === 'y' ? 'Run on the vertical axis' : 'Run on the horizontal axis', onchange: ev => { state.cmp[axis] = +ev.target.value; renderCompare(); } },
+    RUNS.map((r, i) => h('option', { value: i, selected: i === state.cmp[axis] }, r.label)));
+  host.append(h('div', { class: 'pick' }, 'Vertical', runSel('y'),
+    h('button', { class: 'btn small', type: 'button', title: 'Swap the axes', onclick: () => { state.cmp = { x: y, y: x }; renderCompare(); } }, '⇄ swap'),
+    'Horizontal', runSel('x')));
+  if (x === y) { host.append(h('p', { class: 'muted' }, 'Pick two different runs.')); return; }
+  const rows = filteredRows({ paired: false }).filter(e => mval(e.by[x], m) != null && mval(e.by[y], m) != null);
+  if (!rows.length) {
+    host.append(h('p', { class: 'muted' }, `No ${state.set} slide has a ${m.short} in both runs.` +
+      (state.set === 'val' && X.scheme !== Y.scheme ? ' Val slides are scored per fold, and the two schemes have different folds.' : '')));
+    return;
+  }
+  const body = h('div', { class: 'cmp' }), plot = h('div', null), side = h('div', { style: { 'min-width': 0 } });
+  body.append(plot, side); host.append(body);
+  const cohorts = COHORT_ORDER.filter(c => rows.some(e => e.cohort === c));
+  plot.append(h('div', { class: 'legend', style: { 'margin-bottom': '6px' } },
+    cohorts.map(c => h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: cohortColor(c) } }), c)),
+    h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: 'transparent', border: '2px solid var(--ink-2)', width: '12px', height: '12px' } }), 'cohort mean'),
+    h('span', { class: 'key' }, h('span', { style: { display: 'inline-block', width: '14px', 'border-top': '1px dashed var(--ink-2)' } }), 'equal')));
+  plot.append(scatterSvg(rows, x, y, m, plot.clientWidth || 440));
+  side.append(cohortTable(rows, x, y, m));
+}
+
+function scatterSvg(rows, x, y, m, width) {
+  const P = Math.max(220, Math.min(400, width - 64)), mg = { l: 46, r: 14, t: 10, b: 42 };
+  const W = P + mg.l + mg.r, H = P + mg.t + mg.b, dom = domainFor(m, rows, [x, y]);
+  const fx = v => mg.l + (Math.min(v, dom[1]) - dom[0]) / (dom[1] - dom[0]) * P;
+  const fy = v => mg.t + P - (Math.min(v, dom[1]) - dom[0]) / (dom[1] - dom[0]) * P;
+  // Sized by its viewBox, so it scales down with the container (phone widths) and never up.
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `${m.label}: ${RUNS[y].label} against ${RUNS[x].label}, one dot per slide`, style: { width: '100%', 'max-width': W + 'px', height: 'auto', display: 'block' } });
+  for (const t of ticksFor(dom)) {
+    const lab = dom[1] <= 1 ? t.toFixed(1) : String(t), cls = t === dom[0] ? 'axis' : 'grid';
+    svg.append(sv('line', { class: cls, x1: fx(t), x2: fx(t), y1: mg.t, y2: mg.t + P }), sv('line', { class: cls, x1: mg.l, x2: mg.l + P, y1: fy(t), y2: fy(t) }));
+    svg.append(sv('text', { x: fx(t), y: mg.t + P + 14, 'text-anchor': 'middle' }, lab), sv('text', { x: mg.l - 6, y: fy(t) + 4, 'text-anchor': 'end' }, lab));
+  }
+  svg.append(sv('line', { x1: fx(dom[0]), y1: fy(dom[0]), x2: fx(dom[1]), y2: fy(dom[1]), style: { stroke: 'var(--ink-2)', 'stroke-width': 1, 'stroke-dasharray': '4 4' } }));
+  svg.append(sv('text', { x: mg.l + 6, y: mg.t + 13, style: { fill: 'var(--muted)' } }, `${RUNS[y].label} higher`));
+  svg.append(sv('text', { x: mg.l + P - 6, y: mg.t + P - 7, 'text-anchor': 'end', style: { fill: 'var(--muted)' } }, `${RUNS[x].label} higher`));
+  svg.append(sv('text', { x: mg.l + P / 2, y: H - 8, 'text-anchor': 'middle', style: { fill: 'var(--ink)' } }, `${RUNS[x].label} →`));
+  svg.append(sv('text', { x: 12, y: mg.t + P / 2, 'text-anchor': 'middle', transform: `rotate(-90 12 ${mg.t + P / 2})`, style: { fill: 'var(--ink)' } }, `${RUNS[y].label} →`));
+  const pts = rows.slice().sort((a, b) => (a.key === state.selected) - (b.key === state.selected));
+  for (const e of pts) {
+    const vx = mval(e.by[x], m), vy = mval(e.by[y], m), sel = e.key === state.selected;
+    const g = sv('g', { tabindex: -1, style: { cursor: 'pointer' } });
+    g.append(sv('circle', { cx: fx(vx), cy: fy(vy), r: 9, fill: 'transparent' }));
+    g.append(sv('circle', { cx: fx(vx), cy: fy(vy), r: sel ? 6.5 : 4.5, style: { fill: cohortColor(e.cohort), stroke: sel ? 'var(--ink)' : 'var(--surface)', 'stroke-width': sel ? 2 : 1.5 } }));
+    hoverable(g, () => [
+      h('div', { class: 'v' }, `${fmtDelta(vy - vx)}`), h('div', { class: 'muted' }, `${m.label}: ${RUNS[y].label} − ${RUNS[x].label}`),
+      [y, x].map(ri => h('div', { class: 'r' }, runDot(ri), h('b', null, fmt(mval(e.by[ri], m))), h('span', { class: 'muted' }, `${RUNS[ri].label} · ${foldTitle(e.by[ri].fold)}`))),
+      h('div', { class: 'mono', style: { marginTop: '4px' } }, e.wsi), h('div', null, `${e.cohort} · ${tissueOf(e)} · ${diseaseOf(e)}`)]);
+    g.addEventListener('click', () => select(e.key, true));
+    svg.append(g);
+  }
+  for (const c of COHORT_ORDER) {
+    const rs = rows.filter(e => e.cohort === c); if (!rs.length) continue;
+    const mx = mean(rs.map(e => mval(e.by[x], m))), my = mean(rs.map(e => mval(e.by[y], m)));
+    const g = sv('g', { tabindex: -1 });
+    g.append(sv('circle', { cx: fx(mx), cy: fy(my), r: 8.5, style: { fill: 'none', stroke: 'var(--surface)', 'stroke-width': 5 } }));
+    g.append(sv('circle', { cx: fx(mx), cy: fy(my), r: 8.5, style: { fill: 'none', stroke: cohortColor(c), 'stroke-width': 2.5 } }));
+    hoverable(g, () => [h('div', { class: 'v' }, `${c}: ${fmtDelta(my - mx)}`), h('div', { class: 'muted' }, `mean over ${rs.length} slides`),
+      [[y, my], [x, mx]].map(([ri, v]) => h('div', { class: 'r' }, runDot(ri), h('b', null, fmt(v)), h('span', { class: 'muted' }, RUNS[ri].label)))]);
+    svg.append(g);
+  }
+  return svg;
+}
+
+function cohortTable(rows, x, y, m) {
+  const better = (a, b) => a != null && b != null && (m.hi ? a > b : a < b);
+  const stat = rs => {
+    const mx = mean(rs.map(e => mval(e.by[x], m))), my = mean(rs.map(e => mval(e.by[y], m)));
+    return { n: rs.length, mx, my, d: mx == null || my == null ? null : my - mx, wins: rs.filter(e => better(mval(e.by[y], m), mval(e.by[x], m))).length,
+      outY: outsideShare(rs, y, x), outX: outsideShare(rs, x, y) };
+  };
+  const groups = COHORT_ORDER.map(c => [c, rows.filter(e => e.cohort === c)]).filter(([, rs]) => rs.length).map(([c, rs]) => [c, stat(rs)]);
+  const all = stat(rows), cb = { mx: mean(groups.map(([, s]) => s.mx)), my: mean(groups.map(([, s]) => s.my)) }; cb.d = cb.my - cb.mx;
+  const showY = groups.some(([, s]) => s.outY > 0), showX = groups.some(([, s]) => s.outX > 0);
+  const lacks = (a, b) => COHORT_ORDER.map(c => [c, C.filter((_, i) => rows.some(e => e.cohort === c && !inModel(e.by[a], i) && inModel(e.by[b], i)))]).filter(([, l]) => l.length);
+  const tb = h('tbody'), row = (label, s, cls, cohort) => tb.append(h('tr', { class: cls },
+    h('td', null, cohort ? h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: cohortColor(cohort) } }), label) : label),
+    h('td', { class: 'num' }, s.n ?? '–'), h('td', { class: 'num' }, fmt(s.mx)), h('td', { class: 'num' }, fmt(s.my)),
+    h('td', { class: 'num delta' }, h('div', { style: { background: deltaBg(s.d, m) } }, fmtDelta(s.d))),
+    h('td', { class: 'num' }, s.wins != null ? `${s.wins} / ${s.n}` : '–'),
+    showY ? h('td', { class: 'num' }, s.outY != null ? pct(s.outY) : '–') : null, showX ? h('td', { class: 'num' }, s.outX != null ? pct(s.outX) : '–') : null));
+  groups.forEach(([c, s]) => row(c, s, null, c));
+  row('All slides', all, 'total');
+  row('Cohort-balanced', { ...cb, wins: null, outY: null, outX: null }, null);
+  const th = (kids, num = true) => h('th', { class: num ? 'num' : null }, kids);
+  const head = h('tr', null, th('Cohort', false), th('Slides'), th([runDot(x), ' ', RUNS[x].label]), th([runDot(y), ' ', RUNS[y].label]),
+    th(`Δ (${RUNS[y].label} − ${RUNS[x].label})`), th(`${RUNS[y].label} ${m.hi ? 'higher' : 'lower'} on`),
+    showY ? th(`${RUNS[y].label} cells predicted as a class ${RUNS[x].label} lacks`) : null,
+    showX ? th(`${RUNS[x].label} cells predicted as a class ${RUNS[y].label} lacks`) : null);
+  const out = h('div', null, h('div', { class: 'scroll-x' }, h('table', { class: 'ftable ctable' }, h('thead', null, head), tb)),
+    h('p', { class: 'muted small', style: { margin: '8px 0 0' } }, `Means over the slides scored by both runs (${m.label}). Cohort-balanced = mean of the cohort rows.`));
+  for (const [a, b, shown] of [[x, y, showY], [y, x, showX]]) {
+    const l = lacks(a, b); if (!l.length) continue;
+    out.append(h('p', { class: 'ink2 small', style: { margin: '8px 0 0' } }, h('b', null, 'Label space differs. '),
+      `${RUNS[a].label} models know only the classes of their training cells (${l.map(([c, cs]) => `${c}: no ${cs.join(', ')}`).join('; ')}), so they cannot confuse a cell with those classes, while ${RUNS[b].label} can.`,
+      shown ? ` The last column${showX && showY ? 's give' : ' gives'} the share of predictions that fell in such a class: errors one model is spared by construction, part of the Δ that is not about seeing the cohort.` : ''));
+  }
+  return out;
+}
+
 // ---------- table ----------
 function heatCell(row, i) {
   if (!row) return h('td', { class: 'heat' }, h('div', null, ''));
+  if (!inModel(row, i)) {
+    const td = h('td', { class: 'heat nomodel', tabindex: -1 }, h('div', null, '×'));
+    return hoverable(td, () => [h('div', { class: 'v' }, 'not a class of this model'), h('div', null, `${C[i]} had no training cells in this fold`), row.n_dropped ? h('div', { class: 'muted' }, `${fmtInt(row.n_dropped)} cells of absent classes dropped from the slide`) : null]);
+  }
   const n = row.n[i], pred = row.cm ? row.cm.reduce((a, r) => a + r[i], 0) : null;
   if (!n) {
     const td = h('td', { class: 'heat absent', tabindex: -1 }, h('div', null, '—'));
@@ -566,9 +778,7 @@ function deltaCell(e, m) {
   const td = h('td', { class: 'delta' }), ref = state.ref, b = mval(e.by[ref], m);
   for (const ri of visRuns().filter(i => i !== ref)) {
     const a = mval(e.by[ri], m), d = a == null || b == null ? null : a - b;
-    const good = d == null ? 0 : (m.hi ? d : -d), alpha = Math.min(0.45, Math.abs(good) / 0.2 * 0.45);
-    td.append(h('div', { style: { background: d == null ? 'transparent' : `rgba(var(${good >= 0 ? '--pos' : '--neg'}), ${alpha})` }, title: `${RUNS[ri].label} − ${RUNS[ref].label}` },
-      d == null ? '–' : (d > 0 ? '+' : d < 0 ? '−' : '±') + Math.abs(d).toFixed(3)));
+    td.append(h('div', { style: { background: deltaBg(d, m) }, title: `${RUNS[ri].label} − ${RUNS[ref].label}` }, fmtDelta(d)));
   }
   return td;
 }
@@ -576,10 +786,12 @@ function deltaCell(e, m) {
 function renderTable() {
   const tbl = $('#tbl'), m = metricDef(), rows = filteredRows(), groups = groupRows(rows), ref = state.ref, vr = visRuns();
   const dom = domainFor(m, rows), showFold = state.set === 'val' && state.group !== 'fold';
-  $('#tbl-title').textContent = `All ${state.set === 'test' ? 'test' : 'val'} slides (${rows.length})`;
+  $('#tbl-title').textContent = `${state.set === 'test' && state.paired && SETS_DIFFER && vr.length > 1 ? 'Paired' : 'All'} ${state.set === 'test' ? 'test' : 'val'} slides (${rows.length})`;
   const leg = $('#tbl-legend'); leg.replaceChildren();
   const ramp = h('span', { class: 'key' }, 'F1 per class', ...[0, 0.25, 0.5, 0.75, 1].map(v => h('span', { class: 'sw', style: { background: seq(v).fill, width: '18px' } })), '0 → 1');
   leg.append(ramp, h('span', { class: 'key' }, h('span', { class: 'sw absent', style: { width: '18px', border: '1px solid var(--border)' } }), 'class not in slide'));
+  if (rows.some(e => e.by[ref] && e.by[ref].in_model && e.by[ref].in_model.includes(false)))
+    leg.append(h('span', { class: 'key' }, h('span', { class: 'sw nomodel', style: { width: '18px', border: '1px solid var(--border)' } }), '× class not in the model'));
   if (MULTI) leg.append(h('span', { class: 'muted' }, `Sorting, heat cells and other columns use the reference run (${RUNS[ref].label}).`));
 
   const sortBtn = (key, label, title) => {
@@ -594,7 +806,7 @@ function renderTable() {
   const scal = [['balanced_accuracy', 'Bal. acc.'], ['accuracy', 'Acc.']];
   const head1 = h('tr', null,
     h('th', { rowspan: 2 }, sortBtn('name', 'Slide')),
-    showFold ? h('th', { rowspan: 2, class: 'num' }, sortBtn('fold', 'Fold')) : null,
+    showFold ? h('th', { rowspan: 2 }, sortBtn('fold', 'Fold')) : null,
     h('th', { rowspan: 2, class: 'num' }, sortBtn('cells', 'Cells')),
     h('th', { rowspan: 2 }, sortBtn('metric', m.label)),
     MULTI && vr.length > 1 ? h('th', { rowspan: 2, class: 'num' }, sortBtn('delta', 'Δ vs ref.', 'Run minus reference run, on the selected metric')) : null,
@@ -610,10 +822,10 @@ function renderTable() {
       tbody.append(h('tr', { class: 'grp' }, h('th', { colspan: nCols }, g.label, h('span', { class: 'muted' }, ` — ${g.rows.length} slides, ${compact(g.cells)} cells · mean ${m.short} ${means}${pooled}`))));
     }
     for (const e of g.rows) {
-      const r = e.by[ref] || e.by.find(Boolean);
+      const r = e.by[ref] || e.by.find(Boolean), F = FOLDS.get(eFold(e));
       const tr = h('tr', { class: 'row' + (e.key === state.selected ? ' sel' : ''), 'data-key': e.key, tabindex: e.key === state.selected ? 0 : -1 },
         h('td', { class: 'name' }, h('div', { class: 'mono' }, e.wsi), h('div', { class: 'sub' }, `${tissueOf(e)} · ${diseaseOf(e)}${state.group !== 'cohort' ? ' · ' + e.cohort : ''}`)),
-        showFold ? h('td', { class: 'num' }, String(e.fold)) : null,
+        showFold ? h('td', { class: 'small', title: foldTitle(F.id) }, F.name) : null,
         h('td', { class: 'num', title: fmtInt(cellsOf(e)) }, compact(cellsOf(e))),
         metricCell(e, m, dom),
         MULTI && vr.length > 1 ? deltaCell(e, m) : null,
@@ -639,13 +851,13 @@ function select(key, scroll) {
   state.selected = key;
   document.querySelectorAll('#tbl tr.row').forEach(tr => { const on = tr.dataset.key === key; tr.classList.toggle('sel', on); tr.tabIndex = on ? 0 : -1; });
   if (scroll) { const tr = document.querySelector(`#tbl tr.row[data-key="${CSS.escape(key)}"]`); if (tr) tr.scrollIntoView({ block: 'nearest' }); }
-  renderStrip(); renderDetail();
+  renderStrip(); renderCompare(); renderDetail();
 }
 
 // ---------- confusion matrix ----------
 let svgUid = 0;
-function cmSvg(cm, { cell = 46, showLabels = true, font = 11 } = {}) {
-  const st = cmStats(cm), uid = 'h' + (++svgUid);
+function cmSvg(cm, { cell = 46, showLabels = true, font = 11, mask = null } = {}) {
+  const st = cmStats(cm), uid = 'h' + (++svgUid), inM = i => !mask || mask[i];
   const lw = showLabels ? 76 : 30, th = showLabels ? 34 : 18, W = lw + K * cell, H = th + K * cell;
   // Scales down with its container (small-multiple cards, phone widths), never up.
   const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': 'Confusion matrix, rows true class, columns predicted class, shaded by fraction of the true class',
@@ -653,20 +865,26 @@ function cmSvg(cm, { cell = 46, showLabels = true, font = 11 } = {}) {
   const pat = sv('pattern', { id: uid, width: 6, height: 6, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, sv('line', { x1: 0, y1: 0, x2: 0, y2: 6, style: { stroke: 'var(--hatch)', 'stroke-width': 1.5 } }));
   svg.append(sv('defs', null, pat));
   svg.append(sv('text', { x: lw + K * cell / 2, y: 10, 'text-anchor': 'middle', style: { fill: 'var(--muted)' } }, 'predicted →'));
-  C.forEach((c, j) => svg.append(sv('text', { x: lw + j * cell + cell / 2, y: th - 6, 'text-anchor': 'middle', style: { 'font-size': font + 'px' } }, showLabels ? c.slice(0, 4) + (c.length > 4 ? '.' : '') : c[0], sv('title', null, c))));
+  C.forEach((c, j) => svg.append(sv('text', { x: lw + j * cell + cell / 2, y: th - 6, 'text-anchor': 'middle', style: { 'font-size': font + 'px', fill: inM(j) ? null : 'var(--muted)' } }, showLabels ? c.slice(0, 4) + (c.length > 4 ? '.' : '') : c[0], sv('title', null, inM(j) ? c : `${c} (not a class of this model)`))));
   cm.forEach((row, i) => {
     const y = th + i * cell;
     svg.append(sv('text', { x: lw - 6, y: y + cell / 2 + 4, 'text-anchor': 'end', style: { 'font-size': font + 'px' } }, showLabels ? c_trunc(C[i]) : C[i][0], sv('title', null, `true ${C[i]}`)));
     if (!st.rows[i]) {
-      const g = sv('g', { tabindex: -1 });
+      const g = sv('g', { tabindex: -1 }), why = inM(i) ? `no true ${C[i]} cells` : `${C[i]} not in the model`;
       g.append(sv('rect', { x: lw + 1, y: y + 1, width: K * cell - 2, height: cell - 2, rx: 2, style: { fill: `url(#${uid})` } }));
-      if (showLabels) g.append(sv('text', { x: lw + K * cell / 2, y: y + cell / 2 + 4, 'text-anchor': 'middle', style: { fill: 'var(--muted)' } }, `no true ${C[i]} cells`));
-      hoverable(g, () => [h('div', { class: 'v' }, `no true ${C[i]} cells`), h('div', { class: 'muted' }, 'row left empty')]);
+      if (showLabels) g.append(sv('text', { x: lw + K * cell / 2, y: y + cell / 2 + 4, 'text-anchor': 'middle', style: { fill: 'var(--muted)' } }, why));
+      hoverable(g, () => [h('div', { class: 'v' }, why), h('div', { class: 'muted' }, 'row left empty')]);
       svg.append(g);
       return;
     }
     row.forEach((n, j) => {
-      const f = n / st.rows[i], c = seq(f), g = sv('g', { tabindex: -1 });
+      const g = sv('g', { tabindex: -1 });
+      if (!inM(j)) {
+        g.append(sv('rect', { x: lw + j * cell + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 2, style: { fill: `url(#${uid})` } }));
+        hoverable(g, () => [h('div', { class: 'v' }, `${C[j]}: not a class of this model`), h('div', { class: 'muted' }, 'it can never be predicted')]);
+        svg.append(g); return;
+      }
+      const f = n / st.rows[i], c = seq(f);
       g.append(sv('rect', { x: lw + j * cell + 1, y: y + 1, width: cell - 2, height: cell - 2, rx: 2, style: { fill: c.fill, stroke: i === j ? 'var(--ink)' : 'none', 'stroke-width': i === j ? 1 : 0 } }));
       if (cell >= 26) g.append(sv('text', { x: lw + j * cell + cell / 2, y: y + cell / 2 + 4, 'text-anchor': 'middle', style: { fill: c.ink, 'font-size': (cell >= 40 ? 12 : 10) + 'px' } }, cell >= 40 ? pct(f) : Math.round(100 * f)));
       hoverable(g, () => [h('div', { class: 'v' }, `${pct(f)} of true ${C[i]}`), h('div', null, `${fmtInt(n)} of ${fmtInt(st.rows[i])} cells predicted ${C[j]}`)]);
@@ -695,16 +913,29 @@ function renderDetail() {
   host.append(h('div', { class: 'mono', style: { 'font-size': '14px', 'font-weight': 600 } }, e.wsi));
   host.append(h('div', { class: 'ink2 small' }, `${e.meta.tissue || 'unknown tissue'}${e.meta.site && e.meta.site !== e.meta.tissue ? ' (' + e.meta.site + ')' : ''} · ${diseaseOf(e)}`));
   host.append(h('div', { class: 'chips' },
-    h('span', { class: 'chip' }, `${e.set === 'test' ? 'Test' : 'Val'} · fold ${e.fold} (${heldOut(e.fold)} held out)`),
+    h('span', { class: 'chip' }, e.set === 'test' ? 'Test slide' : `Val · ${foldTitle(eFold(e))}`),
     h('span', { class: 'chip' }, `Cohort ${e.cohort}`), h('span', { class: 'chip' }, `${fmtInt(r.n_cells)} cells`),
     r.n_dropped ? h('span', { class: 'chip' }, `${fmtInt(r.n_dropped)} cells dropped (class absent from train)`) : null));
-  if (avail.length > 1) host.append(h('div', { class: 'tabs', role: 'group', 'aria-label': 'Run' }, avail.map(i =>
-    h('button', { type: 'button', 'aria-pressed': String(i === ri), onclick: () => { state.detailRun = i; renderDetail(); } }, h('span', { class: 'dot', style: { background: runColor(i) } }), RUNS[i].label))));
+  if (e.set === 'test') host.append(h('div', { class: 'heldin' }, (avail.length ? avail : [ri]).map(i =>
+    h('div', { class: 'key' }, MULTI ? runDot(i) : null, `${MULTI ? RUNS[i].label + ': ' : ''}tested in ${foldTitle(e.by[i].fold)}`))));
+
+  if (avail.length > 1) {
+    host.append(h('div', { class: 'subhead', style: { 'margin-top': '4px' } }, 'This slide in each run'));
+    const tb = h('tbody');
+    avail.forEach(i => { const x = e.by[i]; tb.append(h('tr', null,
+      h('td', null, h('span', { class: 'key' }, runDot(i), RUNS[i].label)), h('td', { class: 'num' }, fmt(x.macro_f1_present)),
+      C.map((_, c) => heatCell(x, c)), h('td', { class: 'num' }, fmt(x.accuracy)))); });
+    host.append(h('div', { class: 'scroll-x' }, h('table', { class: 'ptable' }, h('thead', null, h('tr', null, h('th', null, 'Run'), h('th', { class: 'num', title: 'Macro F1 (classes present)' }, 'mF1'),
+      C.map(c => h('th', { class: 'num', title: `F1 · ${c}`, style: { 'text-align': 'center' } }, c.slice(0, 4) + '.')), h('th', { class: 'num' }, 'Acc.'))), tb)));
+    host.append(h('div', { class: 'subhead' }, 'Run shown below'));
+    host.append(h('div', { class: 'tabs', role: 'group', 'aria-label': 'Run' }, avail.map(i =>
+      h('button', { type: 'button', 'aria-pressed': String(i === ri), onclick: () => { state.detailRun = i; renderDetail(); } }, runDot(i), RUNS[i].label))));
+  }
 
   const box = (l, v) => h('div', null, h('div', { class: 'l' }, l), h('div', { class: 'v' }, v));
   host.append(h('div', { class: 'mgrid' },
     box('Macro F1 (present)', fmt(r.macro_f1_present)), box('Balanced acc.', fmt(r.balanced_accuracy)), box('Accuracy', fmt(r.accuracy)),
-    box(`Macro F1 (all ${K})`, fmt(r.macro_f1)), box('Weighted F1', fmt(r.weighted_f1)), box('CE loss', fmt(r.ce_loss))));
+    box('Macro F1 (all model cl.)', fmt(r.macro_f1)), box('Weighted F1', fmt(r.weighted_f1)), box('CE loss', fmt(r.ce_loss))));
 
   if (r.cm) {
     const st = cmStats(r.cm);
@@ -713,24 +944,29 @@ function renderDetail() {
     host.append(h('div', { class: 'stackrow' }, 'Predicted', stackBar(st.cols, st.tot, 'predicted')));
     host.append(h('div', { class: 'legend', style: { margin: '6px 0 0 78px' } }, C.map((c, i) => h('span', { class: 'key' }, h('span', { class: 'sw', style: { background: clsColor(i) } }), c))));
     host.append(h('div', { class: 'subhead' }, 'Confusion matrix (row-normalised: share of each true class)'));
-    host.append(h('div', { class: 'scroll-x' }, cmSvg(r.cm, { cell: 52 })));
+    host.append(h('div', { class: 'scroll-x' }, cmSvg(r.cm, { cell: 52, mask: r.in_model })));
     const tb = h('tbody');
     st.per.forEach((p, i) => tb.append(h('tr', null,
       h('td', null, h('span', { class: 'key' }, h('span', { class: 'sw', style: { background: clsColor(i) } }), C[i])),
       h('td', { class: 'num' }, fmtInt(p.n)), h('td', { class: 'num' }, fmtInt(p.pred)),
       h('td', { class: 'num' }, fmt(p.prec, 2)), h('td', { class: 'num' }, fmt(p.rec, 2)),
-      h('td', { class: 'num' }, p.n ? fmt(r.f1[i], 3) : 'absent'))));
+      !inModel(r, i) ? h('td', { class: 'num', title: 'not a class of this model' }, '× model') : h('td', { class: 'num' }, p.n ? fmt(r.f1[i], 3) : 'absent'))));
     host.append(h('table', { class: 'ptable' }, h('thead', null, h('tr', null, ['Class', 'True', 'Predicted', 'Precision', 'Recall', 'F1'].map((x, j) => h('th', { class: j ? 'num' : null }, x)))), tb));
   } else host.append(h('p', { class: 'muted small' }, 'No per-slide confusion matrix in this run\'s outputs.'));
 
   const others = ENTRIES.filter(o => o.wsi === e.wsi && o.key !== e.key);
   if (others.length) {
-    const m = METRICS[0];
-    host.append(h('div', { class: 'subhead' }, 'Same slide in other folds'));
-    host.append(h('ul', { style: { margin: 0, 'padding-left': '18px', 'font-size': '12.5px' } }, others.sort((a, b) => a.fold - b.fold).map(o =>
-      h('li', null, h('button', { class: 'linkbtn', type: 'button', onclick: () => { if (o.set !== state.set) { state.set = o.set; renderControls(); renderData(); } select(o.key, true); } },
-        `${o.set} in fold ${o.fold} (${heldOut(o.fold)} held out)`), ` — ${m.short} ${visRuns().filter(i => o.by[i]).map(i => fmt(mval(o.by[i], m))).join(' / ')}`,
-        o.set === 'val' ? h('span', { class: 'muted' }, ' · its cohort is in train there') : null))));
+    const m0 = METRICS[0], score = o => { const i = visRuns().find(j => o.by[j]) ?? o.by.findIndex(Boolean); return fmt(mval(o.by[i], m0), 2); };
+    const go = o => () => { if (o.set !== state.set) { state.set = o.set; renderControls(); renderData(); } select(o.key, true); };
+    const byExp = new Map();
+    others.filter(o => o.set === 'val').sort((a, b) => FOLD_IDS.indexOf(eFold(a)) - FOLD_IDS.indexOf(eFold(b))).forEach(o => {
+      const x = FOLDS.get(eFold(o)).experiment; if (!byExp.has(x)) byExp.set(x, []); byExp.get(x).push(o); });
+    host.append(h('div', { class: 'subhead' }, `Same slide elsewhere (${m0.short})`));
+    host.append(h('ul', { class: 'others' },
+      others.filter(o => o.set === 'test').map(o => h('li', null, h('button', { class: 'linkbtn', type: 'button', onclick: go(o) }, 'as a test slide'),
+        ` — ${visRuns().filter(i => o.by[i]).map(i => `${MULTI ? RUNS[i].label + ' ' : ''}${fmt(mval(o.by[i], m0), 2)}`).join(' · ')}`)),
+      [...byExp].map(([x, os]) => h('li', null, `val in ${expOf(x).label} (its cohort is in train): `,
+        os.map((o, j) => [j ? ' · ' : '', h('button', { class: 'linkbtn', type: 'button', title: foldTitle(eFold(o)), onclick: go(o) }, `f${FOLDS.get(eFold(o)).fold}`), ` ${score(o)}`])))));
   }
 
   const md = e.meta, rowsMd = [
@@ -786,43 +1022,80 @@ function lineChart({ series, width, height = 130, marker = null, label }) {
 // ---------- folds ----------
 function renderFolds() {
   const host = $('#folds'); host.replaceChildren();
-  const vr = visRuns(), ref = state.ref, multiShown = vr.length > 1;
-  host.append(h('div', { class: 'section-head' }, h('h2', null, 'Folds'), h('span', { class: 'muted small' }, 'Each fold holds out one cohort as test; the model and its epoch are chosen on val only.')));
+  const vr = visRuns();
+  const exps = EXPS.filter(x => vr.some(ri => RUNS[ri].folds.some(f => f.experiment === x.name)));
+  if (!exps.length) return;
+  if (!exps.some(x => x.name === state.foldExp)) {
+    const refExp = RUNS[state.ref].folds[0]?.experiment;
+    state.foldExp = exps.some(x => x.name === refExp) ? refExp : exps[0].name;
+  }
+  const ids = FOLD_IDS.filter(id => FOLDS.get(id).experiment === state.foldExp);
+  const rr = vr.filter(ri => ids.some(id => foldOf(ri, id)));
+  const ref = rr.includes(state.ref) ? state.ref : rr[0], multiShown = rr.length > 1, cur = expOf(state.foldExp);
+  host.append(h('div', { class: 'section-head' }, h('h2', null, 'Folds'), h('span', { class: 'muted small' }, 'The model and its epoch are chosen on val only.')));
+
+  // Experiments overview: one row per experiment and run; a click shows that experiment's folds.
+  if (exps.length > 1) {
+    const tb0 = h('tbody');
+    exps.forEach(x => vr.forEach(ri => {
+      const fs = RUNS[ri].folds.filter(f => f.experiment === x.name); if (!fs.length) return;
+      const ts = RUNS[ri].slides.filter(s => s.set === 'test' && FOLDS.get(s.fold).experiment === x.name);
+      const tr = h('tr', { class: 'pick-row' + (x.name === state.foldExp ? ' on' : ''), tabindex: 0, onclick: () => { state.foldExp = x.name; renderFolds(); },
+        onkeydown: ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); state.foldExp = x.name; renderFolds(); } } },
+        h('td', null, x.label), vr.length > 1 ? h('td', null, h('span', { class: 'key' }, runDot(ri), RUNS[ri].label)) : null,
+        h('td', { class: 'num' }, String(fs.length)), h('td', { class: 'num' }, String(ts.length)), h('td', { class: 'num' }, compact(sum(fs.map(f => f.test_size)))),
+        h('td', { class: 'num' }, fmt(mean(fs.map(f => f.selection.val_score)))),
+        h('td', { class: 'num' }, fmt(mean(ts.map(s => s.macro_f1_present)))), h('td', { class: 'num' }, fmt(mean(fs.map(f => f.test.pooled.macro_f1_present)))),
+        h('td', { class: 'num' }, fmtDur(sum(fs.map(f => (f.timing.load_seconds || 0) + (f.timing.grid_seconds || 0))))));
+      tb0.append(tr);
+    }));
+    host.append(h('div', { class: 'scroll-x' }, h('table', { class: 'ftable' }, h('thead', null, h('tr', null,
+      ['Experiment', vr.length > 1 ? 'Run' : null, 'Folds', 'Test slides', 'Test cells', 'Val sel. score (mean)', 'Test mF1 slide-mean', 'Test mF1 pooled, mean of folds', 'Compute (load + train)']
+        .filter(Boolean).map((c, j) => h('th', { class: j < (vr.length > 1 ? 2 : 1) ? null : 'num' }, c)))), tb0)));
+    host.append(h('div', { class: 'pick', style: { margin: '12px 0 6px' } }, 'Show the folds of',
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'Experiment' }, exps.map(x =>
+        h('button', { type: 'button', 'aria-pressed': String(x.name === state.foldExp), onclick: () => { state.foldExp = x.name; renderFolds(); } }, x.short)))));
+  }
+  const unit = FOLDS.get(ids[0]).unit;
+  host.append(h('p', { class: 'ink2 small', style: { margin: '4px 0 8px' } }, unit === 'cohort'
+    ? `${cur.label}: each fold holds out one whole cohort as test.`
+    : `${cur.label}: each fold holds out one donor (all of its slides) as test; the cohort's other donors train, and val is the same slides in every fold.`));
 
   // Summary table
   const sumHead = ['Fold', 'Held out', multiShown ? 'Run' : null, 'Slides tr / val / test', 'Test cells', 'Loss weights', 'Epoch sel. / run', 'Val sel. score', 'Test mF1 slide-mean', 'Test mF1 pooled', 'Test acc. pooled', 'Test bal. acc. slide-mean', 'Time load + train'].filter(Boolean);
-  const tb = h('tbody'), agg = vr.map(() => ({ val: [], sm: [], pm: [], pa: [], sb: [] }));
-  ALL_FOLDS.forEach(k => vr.forEach((ri, j) => {
-    const f = foldOf(ri, k); if (!f) return;
+  const tb = h('tbody'), agg = rr.map(() => ({ val: [], sm: [], pm: [], pa: [], sb: [] }));
+  ids.forEach(id => rr.forEach((ri, j) => {
+    const f = foldOf(ri, id); if (!f) return;
     const t = f.timing || {}, sel = f.selection || {};
-    agg[j].val.push(sel.val_score); agg[j].sm.push(f.test.slide_mean.macro_f1_present); agg[j].pm.push(f.test.pooled.macro_f1); agg[j].pa.push(f.test.pooled.accuracy); agg[j].sb.push(f.test.slide_mean.balanced_accuracy);
-    tb.append(h('tr', null, h('td', null, String(k)), h('td', null, f.test_cohorts.join('+')),
-      multiShown ? h('td', null, h('span', { class: 'key' }, h('span', { class: 'dot', style: { background: runColor(ri) } }), RUNS[ri].label)) : null,
+    agg[j].val.push(sel.val_score); agg[j].sm.push(f.test.slide_mean.macro_f1_present); agg[j].pm.push(f.test.pooled.macro_f1_present); agg[j].pa.push(f.test.pooled.accuracy); agg[j].sb.push(f.test.slide_mean.balanced_accuracy);
+    tb.append(h('tr', null, h('td', null, String(f.fold)), h('td', null, f.held_out),
+      multiShown ? h('td', null, h('span', { class: 'key' }, runDot(ri), RUNS[ri].label)) : null,
       h('td', { class: 'num' }, `${f.n_slides.train} / ${f.n_slides.val} / ${f.n_slides.test}`), h('td', { class: 'num' }, compact(f.test_size)),
       h('td', null, LW[f.best_config?.loss_weights] ?? String(f.best_config?.loss_weights ?? '–')),
       h('td', { class: 'num' }, `${sel.selected_epoch ?? '–'} / ${sel.epochs_trained ?? '–'}`), h('td', { class: 'num' }, fmt(sel.val_score)),
-      h('td', { class: 'num' }, fmt(f.test.slide_mean.macro_f1_present)), h('td', { class: 'num' }, fmt(f.test.pooled.macro_f1)),
+      h('td', { class: 'num' }, fmt(f.test.slide_mean.macro_f1_present)), h('td', { class: 'num' }, fmt(f.test.pooled.macro_f1_present)),
       h('td', { class: 'num' }, fmt(f.test.pooled.accuracy)), h('td', { class: 'num' }, fmt(f.test.slide_mean.balanced_accuracy)),
       h('td', { class: 'num' }, `${fmtDur(t.load_seconds)} + ${fmtDur(t.grid_seconds)}`)));
   }));
-  const foot = h('tfoot', null, vr.map((ri, j) => h('tr', null, h('td', { colspan: 2 }, 'Mean over folds'),
+  const foot = h('tfoot', null, rr.map((ri, j) => h('tr', null, h('td', { colspan: 2 }, 'Mean over folds'),
     multiShown ? h('td', null, RUNS[ri].label) : null, h('td'), h('td'), h('td'), h('td'),
     h('td', { class: 'num' }, fmt(mean(agg[j].val))), h('td', { class: 'num' }, fmt(mean(agg[j].sm))), h('td', { class: 'num' }, fmt(mean(agg[j].pm))),
     h('td', { class: 'num' }, fmt(mean(agg[j].pa))), h('td', { class: 'num' }, fmt(mean(agg[j].sb))), h('td'))));
   const textCols = ['Fold', 'Held out', 'Run', 'Loss weights'];
   host.append(h('div', { class: 'scroll-x' }, h('table', { class: 'ftable' }, h('thead', null, h('tr', null, sumHead.map(x => h('th', { class: textCols.includes(x) ? null : 'num' }, x)))), tb, foot)));
-  host.append(h('p', { class: 'muted small', style: { margin: '6px 0 0' } }, 'mF1 = macro F1. Slide-mean averages each slide\'s macro F1 over the classes present in it; pooled scores all cells of the held-out cohort at once (large slides dominate). Val sel. score = the selection metric at the chosen epoch.'));
+  host.append(h('p', { class: 'muted small', style: { margin: '6px 0 0' } }, 'mF1 = macro F1 over the classes present. Slide-mean averages each test slide\'s score; pooled scores all the fold\'s test cells at once (large slides dominate). Val sel. score = the selection metric at the chosen epoch.'));
 
   // Trial grid
-  const lwVals = [...new Set(RUNS.flatMap(r => r.folds.flatMap(f => f.trials.map(t => String(t.loss_weights)))))];
-  const otherHp = RUNS.flatMap(r => r.folds.flatMap(f => f.trials)).some(t => t.learning_rate !== RUNS[0].folds[0].trials[0]?.learning_rate);
+  const trials = rr.flatMap(ri => ids.flatMap(id => foldOf(ri, id)?.trials || []));
+  const lwVals = [...new Set(trials.map(t => String(t.loss_weights)))];
+  const otherHp = trials.some(t => t.learning_rate !== trials[0]?.learning_rate);
   if (lwVals.length) {
-    host.append(h('div', { class: 'subhead' }, 'Grid search: val selection score / pooled test macro F1 per trial (✓ = selected on val)'));
+    host.append(h('div', { class: 'subhead' }, 'Grid search: val selection score / pooled test macro F1 (all model classes) per trial (✓ = selected on val)'));
     const tb2 = h('tbody');
-    ALL_FOLDS.forEach(k => vr.forEach(ri => {
-      const f = foldOf(ri, k); if (!f) return;
+    ids.forEach(id => rr.forEach(ri => {
+      const f = foldOf(ri, id); if (!f) return;
       const best = Math.max(...f.trials.map(t => t.val_selection_score ?? -Infinity));
-      tb2.append(h('tr', null, h('td', null, `${k} · ${f.test_cohorts.join('+')}`), multiShown ? h('td', null, RUNS[ri].label) : null,
+      tb2.append(h('tr', null, h('td', null, `${f.fold} · ${f.held_out}`), multiShown ? h('td', null, RUNS[ri].label) : null,
         lwVals.map(lw => {
           const ts = f.trials.filter(t => String(t.loss_weights) === lw);
           return h('td', { class: 'num' }, ts.length ? ts.map(t => h('div', { style: { 'font-weight': t.val_selection_score === best ? 600 : 400 } },
@@ -834,56 +1107,62 @@ function renderFolds() {
   }
 
   // Curves
-  host.append(h('div', { class: 'subhead' }, `Training curves${multiShown ? ` (losses: reference run ${RUNS[ref].label})` : ''}`));
+  host.append(h('div', { class: 'subhead' }, `Training curves${multiShown ? ` (losses: ${RUNS[ref].label})` : ''}`));
   host.append(h('div', { class: 'legend', style: { 'margin-bottom': '6px' } },
     h('span', null, 'Top: val selection score per epoch (vertical line = selected epoch).'),
     h('span', { class: 'key' }, h('span', { class: 'linekey', style: { background: 'var(--muted)' } }), 'train loss'),
     h('span', { class: 'key' }, h('span', { class: 'linekey', style: { background: 'var(--ink)' } }), 'val loss')));
   const grid = h('div', { class: 'grid-cards', id: 'curve-grid' });
   host.append(grid);
-  const cards = ALL_FOLDS.map(k => { const c = h('div', { class: 'minicard' }, h('h3', null, `Fold ${k} · ${heldOut(k)} held out`)); grid.append(c); return [k, c]; });
-  requestAnimationFrame(() => cards.forEach(([k, c]) => {
-    const w = Math.max(220, c.clientWidth - 24), fr = foldOf(ref, k);
-    const scoreSeries = vr.map(ri => ({ name: `${MULTI ? RUNS[ri].label + ' · ' : ''}val selection score`, values: foldOf(ri, k)?.curves.val_score || [], color: runColor(ri) })).filter(s => s.values.length);
+  const cards = ids.map(id => { const c = h('div', { class: 'minicard' }, h('h3', null, foldTitle(id))); grid.append(c); return [id, c]; });
+  requestAnimationFrame(() => cards.forEach(([id, c]) => {
+    const w = Math.max(220, c.clientWidth - 24), fr = foldOf(ref, id);
+    const scoreSeries = rr.map(ri => ({ name: `${MULTI ? RUNS[ri].label + ' · ' : ''}val selection score`, values: foldOf(ri, id)?.curves.val_score || [], color: runColor(ri) })).filter(s => s.values.length);
     const selI = fr && fr.selection.selected_epoch != null ? fr.selection.selected_epoch - 1 : null;
-    c.append(lineChart({ series: scoreSeries, width: w, height: 120, marker: selI != null ? { i: selI } : null, label: `Val selection score per epoch, fold ${k}` }));
+    c.append(lineChart({ series: scoreSeries, width: w, height: 120, marker: selI != null ? { i: selI } : null, label: `Val selection score per epoch, ${foldTitle(id)}` }));
     if (fr) c.append(lineChart({ series: [
       { name: 'train loss', values: fr.curves.train_loss || [], color: 'var(--muted)', endLabel: 'train' },
       { name: 'val loss', values: fr.curves.val_loss || [], color: 'var(--ink)', endLabel: 'val' }].filter(s => s.values.length),
-      width: w, height: 120, marker: selI != null ? { i: selI } : null, label: `Train and val loss per epoch, fold ${k}` }));
+      width: w, height: 120, marker: selI != null ? { i: selI } : null, label: `Train and val loss per epoch, ${foldTitle(id)}` }));
     c.append(h('div', { class: 'muted small' }, 'epoch →'));
   }));
 
   // Pooled confusion matrices
   host.append(h('div', { class: 'subhead' }, `Pooled test confusion matrices (row-normalised)${multiShown ? ` · ${RUNS[ref].label}` : ''}`));
   const g2 = h('div', { class: 'grid-cards' });
-  ALL_FOLDS.forEach(k => { const f = foldOf(ref, k); if (!f || !f.test.cm) return; g2.append(h('div', { class: 'minicard' }, h('h3', null, `Fold ${k} · ${f.test_cohorts.join('+')} · ${compact(f.test_size)} cells`), h('div', { class: 'scroll-x' }, cmSvg(f.test.cm, { cell: 38, font: 10.5 })))); });
+  ids.forEach(id => { const f = foldOf(ref, id); if (!f || !f.test.cm) return; g2.append(h('div', { class: 'minicard' }, h('h3', null, `${foldTitle(id)} · ${compact(f.test_size)} cells`), h('div', { class: 'scroll-x' }, cmSvg(f.test.cm, { cell: 38, font: 10.5, mask: f.in_model })))); });
   host.append(g2);
 }
 
 // ---------- notes ----------
 function renderNotes() {
   const host = $('#notes'); host.replaceChildren();
+  const has = s => SCHEMES.includes(s), anyLacks = RUNS.some(r => r.folds.some(f => f.in_model && f.in_model.includes(false)));
   host.append(h('h2', null, 'How to read this'));
   host.append(h('ul', null,
-    h('li', null, 'Each slide is a test slide in exactly one fold: the fold that holds out its cohort. Its test scores therefore measure transfer to an unseen cohort. Val slides belong to cohorts that are in training, so the same slide can score higher there.'),
-    h('li', null, h('b', null, 'Macro F1 (classes present)'), ' averages the per-class F1 over the classes that have at least one true cell in the slide. This is the per-slide score used for model selection. ', h('b', null, `Macro F1 (all ${K})`), ' counts absent classes as 0, so it is low by construction on slides that lack some classes.'),
+    has('cross_cohort') ? h('li', null, h('b', null, 'Cross-cohort: '), 'each fold holds out one whole cohort as test, so a test score measures transfer to a cohort the model never saw. Every slide is a test slide in exactly one fold.') : null,
+    has('within_cohort') ? h('li', null, h('b', null, 'Within-cohort: '), 'one leave-one-donor-out experiment per cohort. Each fold tests one donor and trains on the cohort\'s other donors; val is the same donors in every fold and is never tested. A test score measures transfer to a new donor of a cohort the model has seen. 10X and the cohorts\' val donors have no within-cohort score.') : null,
+    has('cross_cohort') && has('within_cohort') ? h('li', null, 'On a slide tested under both, cross-cohort minus within-cohort is roughly the cost of not having seen the cohort. "Paired slides only" restricts every mean, tile and row to the slides both runs tested. The two schemes also differ in training-set size and in label space (next point), so the gap is not purely the cohort shift.') : null,
+    anyLacks ? h('li', null, h('b', null, 'Label space: '), 'a within-cohort model only has the classes present in its cohort\'s training cells (e.g. no Malignant in a fibrosis or fetal cohort). It cannot predict the missing classes, so it is spared the confusions with them; × marks such classes in the heat cells and hatched columns in the confusion matrices. Cells of a class absent from training are dropped from the slide\'s scores ("cells dropped").') : null,
+    h('li', null, h('b', null, 'Macro F1 (classes present)'), ' averages the per-class F1 over the classes with at least one true cell in the slide. This is the per-slide score used for model selection. ', h('b', null, 'Macro F1 (all model classes)'), ' also counts the model\'s classes that are absent from the slide as 0; it is low by construction on slides lacking classes, and models with fewer classes are not comparable on it.'),
     h('li', null, 'Per-class heat cells show F1 for the classes present in the slide. Hatched cells mark classes the slide does not contain; their stored F1 of 0 is not a score. Hover a cell to see how many cells were predicted as that class anyway.'),
-    h('li', null, '"Pooled" metrics score all cells of a held-out cohort at once, so large slides dominate them. "Slide-mean" averages the per-slide scores with each slide weighted equally.'),
-    h('li', null, 'Val selection score = the run\'s training.selection_metric on the fold\'s val slides (cohort-balanced: the mean over val cohorts of their slide-mean macro F1). It chooses both the epoch (early stopping) and the trial.')));
+    h('li', null, '"Pooled" scores all the cells of a group of slides at once (their confusion matrices summed), so large slides dominate it; per fold this is exactly the pooled score in results_summary.yaml. "Slide-mean" weights each slide equally; "cohort-balanced" weights each cohort equally.'),
+    h('li', null, 'Val selection score = the run\'s training.selection_metric on the fold\'s val slides (cross-cohort: the mean over val cohorts of their slide-mean macro F1). It chooses both the epoch (early stopping) and the trial.')));
   host.append(h('h3', { style: { 'margin-top': '12px' } }, 'Run settings'));
   RUNS.forEach((run, ri) => {
     const s = run.settings || {}, hp = s.hparams || {}, prov = run.folds.map(f => f.provenance || {});
     const commits = [...new Set(prov.map(p => p.git_commit && p.git_commit.slice(0, 7)).filter(Boolean))];
     const times = prov.map(p => p.timestamp).filter(Boolean).sort();
     const items = [
-      ['Run', run.full_label], ['Path', run.id], ['Mapping', s.mapping], ['Read-out', (s.embeddings_datasets || []).join(', ')],
+      ['Run', run.full_label], ['Experiments', run.experiments.map(x => `${x.name}: ${x.n_folds}/${x.n_expected} folds in ${x.path}`).join(' · ')],
+      ['Model classes', (run.model_classes || []).map(cs => cs.join(', ')).join('  |  ')],
+      ['Mapping', s.mapping], ['Read-out', (s.embeddings_datasets || []).join(', ')],
       ['Matching only', String(s.consider_matching)], ['Cells per slide cap', s.max_cells_per_wsi == null ? 'none (all cells)' : String(s.max_cells_per_wsi)],
       ['Hyper-parameters', Object.entries(hp).map(([k, v]) => `${k}=${Array.isArray(v) ? '[' + v.join(', ') + ']' : v}`).join(' · ')],
       ['Training', `≤${s.num_epochs} epochs, batch ${s.batch_size}, early stopping patience ${s.early_stopping?.patience ?? '–'}, selection ${s.selection_metric}, seed ${s.seed}`],
       ['Trained from', `${commits.join(', ') || '–'}${prov.some(p => p.git_dirty) ? ' (with uncommitted changes)' : ''}${times.length ? `, ${times[0].replace('T', ' ')} → ${times[times.length - 1].replace('T', ' ')}` : ''}`],
     ].filter(([, v]) => v != null && v !== '');
-    host.append(h('div', { class: 'key', style: { margin: '6px 0 2px', color: 'var(--ink)', 'font-weight': 600 } }, MULTI ? h('span', { class: 'dot', style: { background: runColor(ri) } }) : null, run.label));
+    host.append(h('div', { class: 'key', style: { margin: '6px 0 2px', color: 'var(--ink)', 'font-weight': 600 } }, MULTI ? runDot(ri) : null, run.label));
     host.append(h('dl', { class: 'meta', style: { 'grid-template-columns': '150px 1fr' } }, items.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
   });
 }
@@ -892,12 +1171,13 @@ function renderNotes() {
 function downloadCsv() {
   const q = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const scal = ['n_cells', 'accuracy', 'balanced_accuracy', 'macro_f1', 'macro_f1_present', 'weighted_f1', 'ce_loss'];
-  const runCols = RUNS.flatMap(r => [...scal, ...C.map(c => 'f1_' + c), ...C.map(c => 'n_' + c)].map(c => MULTI ? `${r.label} | ${c}` : c));
-  const head = ['set', 'fold', 'held_out', 'wsi', 'cohort', 'tissue', 'disease_state', 'disease_type', 'subtype', 'donor', ...runCols];
+  const runCols = RUNS.flatMap(r => ['fold', 'held_out', ...scal, ...C.map(c => 'f1_' + c), ...C.map(c => 'n_' + c)].map(c => MULTI ? `${r.label} | ${c}` : c));
+  const head = ['set', 'wsi', 'cohort', 'tissue', 'disease_state', 'disease_type', 'subtype', 'donor', ...runCols];
   const lines = [head.map(q).join(',')];
   for (const e of filteredRows()) {
-    const base = [e.set, e.fold, heldOut(e.fold), e.wsi, e.cohort, e.meta.tissue, e.meta.disease_state, e.meta.disease_type, e.meta.subtype, e.meta.donor];
-    const vals = RUNS.flatMap((_, ri) => { const r = e.by[ri]; return r ? [...scal.map(k => r[k]), ...r.f1.map((f, i) => r.n[i] ? f : ''), ...r.n] : Array(scal.length + 2 * K).fill(''); });
+    const base = [e.set, e.wsi, e.cohort, e.meta.tissue, e.meta.disease_state, e.meta.disease_type, e.meta.subtype, e.meta.donor];
+    const vals = RUNS.flatMap((_, ri) => { const r = e.by[ri]; if (!r) return Array(2 + scal.length + 2 * K).fill(''); const F = FOLDS.get(r.fold);
+      return [F.name, F.held_out, ...scal.map(k => r[k]), ...r.f1.map((f, i) => r.n[i] && inModel(r, i) ? f : ''), ...r.n]; });
     lines.push([...base, ...vals].map(q).join(','));
   }
   const a = h('a', { href: URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' })), download: `${D.experiment}_${state.set}_per_slide.csv` });
@@ -919,19 +1199,20 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => rend
 function renderData() {
   const m = metricDef();
   $('#ov-title').textContent = `${m.label} per slide, by ${GROUPS[state.group].label.toLowerCase()}`;
-  $('#ov-note').textContent = state.set === 'test' ? 'Test slides: each scored by the fold that held out its cohort.' : 'Val slides: a slide appears once per fold it validates.';
+  const how = SCHEMES.length > 1 ? 'the fold that held it out (its cohort in cross-cohort, its donor in within-cohort)' : 'the fold that held it out';
+  $('#ov-note').textContent = state.set === 'test' ? `Test slides: each scored by ${how}.` : 'Val slides: a slide appears once per fold it validates.';
   const rows = filteredRows();
   if (!rows.some(e => e.key === state.selected)) {
     const g = groupRows(rows); state.selected = g.length && g[0].rows.length ? g[0].rows[0].key : null;
   }
-  renderTiles(); renderStrip(); renderTable(); renderDetail(); renderFolds();
+  renderTiles(); renderStrip(); renderCompare(); renderTable(); renderDetail(); renderFolds();
 }
 applyTheme(getTheme());
 renderHeader(); renderControls(); renderNotes(); renderData();
 let rz, stripW = $('#strip').clientWidth;
 new ResizeObserver(() => {
   const w = $('#strip').clientWidth; if (w === stripW) return; stripW = w;
-  cancelAnimationFrame(rz); rz = requestAnimationFrame(renderStrip);
+  cancelAnimationFrame(rz); rz = requestAnimationFrame(() => { renderStrip(); renderCompare(); });
 }).observe($('#strip'));
 let lastW = innerWidth; addEventListener('resize', () => { if (Math.abs(innerWidth - lastW) > 40) { lastW = innerWidth; renderFolds(); } });
 </script>
