@@ -95,6 +95,23 @@ button, select, input { font: inherit; color: inherit; }
 .ctable tr.total td { border-top: 1px solid var(--axis); font-weight: 600; }
 .ctable td.delta div { display: inline-block; min-width: 56px; }
 
+/* Train x test matrix */
+.mtable { border-collapse: separate; border-spacing: 3px; width: auto; }
+.mtable th, .mtable td { border: 0; padding: 0; }
+.mtable thead th { position: static; text-align: center; padding: 4px 6px; font-size: 12px; white-space: nowrap; }
+.mtable thead th.corner { text-align: right; color: var(--muted); font-weight: 400; }
+.mtable tbody th { text-align: right; padding: 0 10px 0 0; font-size: 12.5px; white-space: nowrap; color: var(--ink); font-weight: 600; }
+.mtable td.mcell { width: 104px; min-width: 92px; height: 54px; text-align: center; border-radius: 4px; cursor: pointer; font-variant-numeric: tabular-nums; }
+.mtable td.mcell .v { font-size: 16px; font-weight: 600; line-height: 1.2; }
+.mtable td.mcell .t { font-size: 10.5px; opacity: 0.85; }
+.mtable td.mcell.diag { box-shadow: inset 0 0 0 2px var(--ink); }
+.mtable td.mcell.sel { outline: 3px solid var(--accent); outline-offset: 1px; }
+.mtable td.mcell.empty { background: transparent; color: var(--muted); font-size: 11.5px; box-shadow: inset 0 0 0 1px var(--axis); cursor: default; }
+.mtable td.mmean { text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; color: var(--ink-2); padding: 0 8px; }
+.mtable tr.mgap td { height: 8px; }
+.mlayout { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 1100px) { .mlayout { grid-template-columns: minmax(0, 1fr); } }
+
 /* Main layout */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 410px; gap: 16px; margin-top: 16px; align-items: start; }
 @media (max-width: 1180px) { .layout { grid-template-columns: minmax(0, 1fr); } }
@@ -209,6 +226,7 @@ svg .axis { stroke: var(--axis); stroke-width: 1; }
   </section>
 
   <section class="card section" id="compare" hidden></section>
+  <section class="card section" id="matrix" hidden></section>
 
   <div class="layout">
     <section class="card" id="slides">
@@ -228,7 +246,11 @@ svg .axis { stroke: var(--axis); stroke-width: 1; }
 <script>
 'use strict';
 const D = JSON.parse(document.getElementById('report-data').textContent);
-const C = D.class_names, K = C.length, RUNS = D.runs, MULTI = RUNS.length > 1, EXPS = D.experiments || [];
+const C = D.class_names, K = C.length, ALL_RUNS = D.runs, EXPS = D.experiments || [];
+// single_cohort runs test a slide once per training cohort: they feed the train x test matrix,
+// every other view shows the remaining runs (one test score per slide each).
+const RUNS = ALL_RUNS.filter(r => r.scheme !== 'single_cohort'), SINGLE = ALL_RUNS.filter(r => r.scheme === 'single_cohort');
+const MULTI = RUNS.length > 1;
 const SVGNS = 'http://www.w3.org/2000/svg';
 const $ = sel => document.querySelector(sel);
 
@@ -378,8 +400,8 @@ function cmMetrics(cm, mask) {
 }
 // Pooled = all cells of the rows' slides scored at once: their confusion matrices summed (this
 // reproduces each fold's pooled metrics in results_summary.yaml); CE loss is cell-weighted.
-function pooledVal(rows, ri, m) {
-  const rs = rows.map(e => e.by[ri]).filter(Boolean);
+const pooledVal = (rows, ri, m) => pooledOf(rows.map(e => e.by[ri]).filter(Boolean), m);
+function pooledOf(rs, m) {  // rs: per-slide result rows
   if (!rs.length) return null;
   if (m.key === 'ce_loss') { const w = rs.filter(r => r.ce_loss != null), n = sum(w.map(r => r.n_cells)); return n ? sum(w.map(r => r.ce_loss * r.n_cells)) / n : null; }
   if (rs.some(r => !r.cm)) return null;
@@ -411,7 +433,7 @@ function defaultPair() {  // y = cross-cohort (test classes if run), x = the wit
 const state = {
   set: 'test', metric: 'macro_f1_present', group: 'cohort', query: '', paired: SETS_DIFFER,
   sort: { key: 'metric', dir: -1 }, visible: RUNS.map(() => true), ref: 0, selected: null, detailRun: null,
-  cmp: defaultPair(), foldExp: null,
+  cmp: defaultPair(), foldExp: null, matrixRun: null, matrixAgg: 'slides', matrixSel: null,
 };
 const visRuns = () => RUNS.map((_, i) => i).filter(i => state.visible[i]);
 
@@ -472,8 +494,9 @@ function renderHeader() {
     const split = exps.length > 1 ? ` (${exps.map(x => `${expOf(x.name).short} ${x.n_folds}`).join(', ')})` : '';
     return `${MULTI ? rs[0].scheme_label + ': ' : ''}${sum(exps.map(x => x.n_folds))} folds${split}, ${nT} test slides`;
   });
+  SINGLE.forEach(r => per.push(`${r.scheme_label}${SINGLE.length > 1 ? ' · ' + r.readout_label : ''}: ${r.folds.length} of ${sum(r.experiments.map(x => x.n_expected))} models`));
   $('#subtitle').textContent = `${what} — ${per.join('; ')} — ${K} classes (${C.join(', ')})`;
-  const incomplete = RUNS.filter(r => r.incomplete_folds.length).map(r => `${r.label}: ${r.incomplete_folds.join(', ')} not finished`);
+  const incomplete = ALL_RUNS.filter(r => r.incomplete_folds.length).map(r => `${r.label}: ${r.incomplete_folds.join(', ')} not finished`);
   $('#generated').textContent = `Generated ${D.generated} from ${D.results_dir}` + (D.report_commit ? ` · report script at ${D.report_commit}` : '') + (incomplete.length ? ` · ${incomplete.join('; ')}` : '');
 }
 
@@ -733,6 +756,108 @@ function cohortTable(rows, x, y, m) {
       shown ? ` The last column${showX && showY ? 's give' : ' gives'} the share of predictions that fell in such a class: errors one model is spared by construction, part of the Δ that is not about seeing the cohort.` : ''));
   }
   return out;
+}
+
+// ---------- train on one cohort: train x test cohort matrix ----------
+// Cells: single_cohort splits (one model per training cohort and label space, tested on several
+// cohorts); diagonal: the within-cohort run; bottom row: cross-cohort (its test-classes variant
+// for the cohorts it covers). Twins share model / correction / mapping / matching / read-out.
+const missingTag = mask => { const miss = C.filter((_, i) => mask && !mask[i]); return miss.length ? 'no ' + miss.map(c => c.slice(0, 3)).join(', ') : `all ${K}`; };
+function matrixData(S) {
+  const rest = S.parts.slice(1).join('/');
+  const twin = scheme => RUNS.find(r => r.scheme === scheme && r.parts.slice(1).join('/') === rest);
+  const within = twin('within_cohort'), cross = twin('cross_cohort'), masked = twin('cross_cohort_test_classes');
+  const cells = new Map(), byFold = new Map();
+  S.slides.forEach(sl => { if (sl.set === 'test') { if (!byFold.has(sl.fold)) byFold.set(sl.fold, []); byFold.get(sl.fold).push(sl); } });
+  for (const f of S.folds) {
+    const T = f.train_cohorts.join('+'), groups = new Map();
+    (byFold.get(f.id) || []).forEach(sl => { if (!groups.has(sl.cohort)) groups.set(sl.cohort, []); groups.get(sl.cohort).push(sl); });
+    groups.forEach((rows, U) => cells.set(`${T}|${U}`, { rows, mask: f.in_model, src: `${S.label}: one model trained on ${T} (split_${f.fold}, tested on ${f.test_cohorts.join(' + ')})` }));
+  }
+  const planned = S.experiments.flatMap(x => x.planned || []);
+  const pending = new Map(planned.filter(p => !p.done).flatMap(p => p.test.map(U => [`${p.train.join('+')}|${U}`, `split_${p.fold}`])));
+  const cohorts = (D.cohort_order || []).filter(c => planned.some(p => p.train.includes(c) || p.test.includes(c)) || S.folds.some(f => f.train_cohorts.includes(c)));
+  const fromRun = (run, U, src) => {
+    const rows = run ? run.slides.filter(sl => sl.set === 'test' && sl.cohort === U) : [];
+    return rows.length ? { rows, mask: rows[0].in_model, src } : null;
+  };
+  for (const U of cohorts) {
+    const d = fromRun(within, U, `${within?.label}: leave one donor out within ${U} (its val donors are not tested)`);
+    if (d) cells.set(`${U}|${U}`, d);
+    const o = fromRun(masked, U, `${masked?.label}: trained on the 4 other cohorts, only on ${U}'s cell types`) || fromRun(cross, U, `${cross?.label}: trained on the 4 other cohorts`);
+    if (o) cells.set(`others|${U}`, o);
+  }
+  return { cells, pending, cohorts };
+}
+
+function renderMatrix() {
+  const host = $('#matrix');
+  if (!SINGLE.length) { host.hidden = true; return; }
+  host.hidden = false; host.replaceChildren();
+  if (state.matrixRun == null) {
+    const rest = RUNS[state.ref]?.parts.slice(1).join('/'), i = SINGLE.findIndex(r => r.parts.slice(1).join('/') === rest);
+    state.matrixRun = Math.max(0, i);
+  }
+  const S = SINGLE[state.matrixRun], m = metricDef(), md = matrixData(S), pooled = state.matrixAgg === 'pooled';
+  const val = d => !d ? null : pooled ? pooledOf(d.rows, m) : mean(d.rows.map(r => mval(r, m)));
+  const vals = [...md.cells.values()].map(val).filter(v => v != null), top = m.unbounded ? niceMax(Math.max(...vals, 0.1)) : 1;
+  host.append(h('div', { class: 'section-head' }, h('h2', null, 'Train on one cohort, test on another'),
+    h('span', { class: 'muted small' }, `${m.label}, ${pooled ? 'pooled over each cell\'s test cells' : 'mean over each cell\'s test slides'}. Rows: training data; columns: test cohort.`)));
+  const segB = (v, l) => h('button', { type: 'button', 'aria-pressed': String(state.matrixAgg === v), onclick: () => { state.matrixAgg = v; renderMatrix(); } }, l);
+  host.append(h('div', { class: 'pick' }, 'Score', h('div', { class: 'seg', role: 'group', 'aria-label': 'Aggregate' }, segB('slides', 'Slide mean'), segB('pooled', 'Pooled')),
+    SINGLE.length > 1 ? ['Run', h('select', { onchange: ev => { state.matrixRun = +ev.target.value; state.matrixSel = null; renderMatrix(); } },
+      SINGLE.map((r, i) => h('option', { value: i, selected: i === state.matrixRun }, r.full_label)))] : null));
+
+  const cellTd = (key, T, U) => {
+    const d = md.cells.get(key), v = val(d), diag = T === U, sel = key === state.matrixSel;
+    const what = T === 'others' ? `Train on the 4 other cohorts → test on ${U}` : diag ? `Within ${U}: train on its other donors` : `Train on ${T} → test on ${U}`;
+    if (!d) {
+      const p = md.pending.get(key);
+      const td = h('td', { class: 'mcell empty', tabindex: -1 }, p ? 'not run yet' : diag ? 'no within-cohort run' : '–');
+      return hoverable(td, () => [h('div', { class: 'v' }, what), h('div', { class: 'muted' }, p ? `${S.label} ${p} has no results_summary.yaml yet` : 'no run of this pair')]);
+    }
+    const c = v == null ? null : seq(v / top);
+    const td = h('td', { class: 'mcell' + (diag ? ' diag' : '') + (sel ? ' sel' : ''), tabindex: 0, style: c ? { background: c.fill, color: c.ink } : null,
+      onclick: () => { state.matrixSel = sel ? null : key; renderMatrix(); },
+      onkeydown: ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); state.matrixSel = sel ? null : key; renderMatrix(); } } },
+      h('div', { class: 'v' }, fmt(v)), h('div', { class: 't' }, `${missingTag(d.mask)} · ${d.rows.length} sl.`));
+    const dropped = sum(d.rows.map(r => r.n_dropped));
+    return hoverable(td, () => [h('div', { class: 'v' }, fmt(v)), h('div', { class: 'muted' }, `${m.label} · ${pooled ? 'pooled' : 'slide mean'}`),
+      h('div', null, what), h('div', null, `${d.rows.length} test slides, ${compact(sum(d.rows.map(r => r.n_cells)))} cells scored`
+        + (dropped ? ` (${compact(dropped)} cells of types the model lacks left out)` : '')),
+      h('div', null, `Model classes: ${C.filter((_, i) => !d.mask || d.mask[i]).join(', ')}`), h('div', { class: 'muted' }, d.src)]);
+  };
+  const rowMean = keys => mean(keys.map(k => val(md.cells.get(k))));
+  const tb = h('tbody');
+  md.cohorts.forEach(T => tb.append(h('tr', null, h('th', null, T), md.cohorts.map(U => cellTd(`${T}|${U}`, T, U)),
+    h('td', { class: 'mmean', title: `Mean over the ${md.cohorts.length - 1} other test cohorts` }, fmt(rowMean(md.cohorts.filter(U => U !== T).map(U => `${T}|${U}`)))))));
+  tb.append(h('tr', { class: 'mgap' }, h('td', { colspan: md.cohorts.length + 2 })));
+  tb.append(h('tr', null, h('th', null, 'All 4 others'), md.cohorts.map(U => cellTd(`others|${U}`, 'others', U)),
+    h('td', { class: 'mmean' }, fmt(rowMean(md.cohorts.map(U => `others|${U}`))))));
+  const table = h('table', { class: 'mtable' }, h('thead', null, h('tr', null, h('th', { class: 'corner' }, 'train ↓  test →'),
+    md.cohorts.map(U => h('th', null, U)), h('th', { title: 'Mean over the test cohorts of the row, diagonal excluded' }, 'Mean'))), tb);
+
+  const side = h('div', { style: { 'min-width': 0 } });
+  side.append(h('div', { class: 'legend', style: { 'margin-bottom': '8px' } },
+    h('span', { class: 'key' }, m.short, ...[0, 0.25, 0.5, 0.75, 1].map(v => h('span', { class: 'sw', style: { background: seq(v).fill, width: '18px' } })), m.unbounded ? `0 → ${top}` : '0 → 1'),
+    h('span', { class: 'key' }, h('span', { class: 'sw', style: { 'box-shadow': 'inset 0 0 0 2px var(--ink)', width: '14px', height: '14px' } }), 'within-cohort')));
+  side.append(h('ul', { class: 'notes', style: { margin: '0 0 8px', 'padding-left': '18px' } },
+    h('li', null, 'Under each value: the model\'s classes ("no Mal" = without Malignant) and its number of test slides. A model only knows the cell types both cohorts contain; test cells of the other types are left out.'),
+    h('li', null, h('b', null, 'Compare cells of a column only when they carry the same tag: '), 'a model with fewer classes is scored on fewer cell types and has fewer ways to be wrong.'),
+    h('li', null, 'Diagonal: within-cohort, leave one donor out (val donors untested). Bottom row: trained on all four other cohorts (cross-cohort; trained on the test cohort\'s types when it lacks one).')));
+  const sel = state.matrixSel && md.cells.get(state.matrixSel);
+  if (sel) {
+    const [T, U] = state.matrixSel.split('|');
+    const rs = sel.rows.slice().sort((a, b) => (mval(b, m) ?? -1) - (mval(a, m) ?? -1));
+    side.append(h('div', { class: 'subhead', style: { 'margin-top': '4px' } }, `${T === 'others' ? 'All 4 others' : T === U ? `Within ${U}` : T} → ${U}: ${rs.length} test slides`));
+    side.append(h('div', { class: 'scroll-x', style: { 'max-height': '340px', overflow: 'auto' } }, h('table', { class: 'ptable' },
+      h('thead', null, h('tr', null, h('th', null, 'Slide'), h('th', { class: 'num' }, m.short), h('th', { class: 'num' }, 'Cells'), h('th', { class: 'num', title: 'Cells of types the model lacks, left out' }, 'Left out'))),
+      h('tbody', null, rs.map(r => { const e = BYKEY.get(`test|${r.wsi}`);
+        return h('tr', null, h('td', null, e ? h('button', { class: 'linkbtn mono', type: 'button', title: 'Show in the slide table', onclick: () => { if (state.set !== 'test') { state.set = 'test'; renderControls(); renderData(); } select(e.key, true); } }, r.wsi) : h('span', { class: 'mono' }, r.wsi),
+            h('div', { class: 'muted small' }, `${tissueOf({ meta: D.meta[r.wsi] || {} })} · ${diseaseOf({ meta: D.meta[r.wsi] || {} })}`)),
+          h('td', { class: 'num' }, fmt(mval(r, m))), h('td', { class: 'num' }, compact(r.n_cells)), h('td', { class: 'num' }, r.n_dropped ? compact(r.n_dropped) : '–')); })))));
+  } else side.append(h('p', { class: 'muted small' }, 'Click a cell to list its test slides.'));
+  host.append(h('div', { class: 'mlayout' }, h('div', { class: 'scroll-x' }, table), side));
 }
 
 // ---------- table ----------
@@ -1143,6 +1268,7 @@ function renderNotes() {
   host.append(h('ul', null,
     has('cross_cohort') ? h('li', null, h('b', null, 'Cross-cohort: '), 'each fold holds out one whole cohort as test, so a test score measures transfer to a cohort the model never saw. Every slide is a test slide in exactly one fold.') : null,
     has('cross_cohort_test_classes') ? h('li', null, h('b', null, 'Cross-cohort, test classes: '), 'the cross-cohort folds, but each trains and validates only on the cell types present in its test cohort, so its label space matches a within-cohort model\'s. It uses which types the test slides contain (not their cells), which a deployed model would not know: it measures what the label space costs. Folds whose test cohort has every type would equal cross-cohort\'s and are not run.') : null,
+    SINGLE.length ? h('li', null, h('b', null, 'Single cohort (matrix): '), 'one model per training cohort and label space: trained on that cohort\'s slides except its val donors, chosen on those donors (the within-cohort val), and tested on every slide of each other cohort that shares the label space. These runs appear only in the train × test matrix, since they test a slide once per training cohort.') : null,
     has('within_cohort') ? h('li', null, h('b', null, 'Within-cohort: '), 'one leave-one-donor-out experiment per cohort. Each fold tests one donor and trains on the cohort\'s other donors; val is the same donors in every fold and is never tested. A test score measures transfer to a new donor of a cohort the model has seen. 10X and the cohorts\' val donors have no within-cohort score.') : null,
     has('cross_cohort') && has('within_cohort') ? h('li', null, 'On a slide tested under both, cross-cohort minus within-cohort is roughly the cost of not having seen the cohort. "Paired slides only" restricts every mean, tile and row to the slides both runs tested. The two schemes also differ in training-set size and in label space (next point), so the gap is not purely the cohort shift.') : null,
     anyLacks ? h('li', null, h('b', null, 'Label space: '), 'a within-cohort model only has the classes present in its cohort\'s training cells (e.g. no Malignant in a fibrosis or fetal cohort). It cannot predict the missing classes, so it is spared the confusions with them; × marks such classes in the heat cells and hatched columns in the confusion matrices. Cells of a class absent from training are dropped from the slide\'s scores ("cells dropped").') : null,
@@ -1151,7 +1277,8 @@ function renderNotes() {
     h('li', null, '"Pooled" scores all the cells of a group of slides at once (their confusion matrices summed), so large slides dominate it; per fold this is exactly the pooled score in results_summary.yaml. "Slide-mean" weights each slide equally; "cohort-balanced" weights each cohort equally.'),
     h('li', null, 'Val selection score = the run\'s training.selection_metric on the fold\'s val slides (cross-cohort: the mean over val cohorts of their slide-mean macro F1). It chooses both the epoch (early stopping) and the trial.')));
   host.append(h('h3', { style: { 'margin-top': '12px' } }, 'Run settings'));
-  RUNS.forEach((run, ri) => {
+  ALL_RUNS.forEach(run => {
+    const ri = RUNS.indexOf(run);  // -1 for single-cohort runs: no colour, they are not in the per-slide views
     const s = run.settings || {}, hp = s.hparams || {}, prov = run.folds.map(f => f.provenance || {});
     const commits = [...new Set(prov.map(p => p.git_commit && p.git_commit.slice(0, 7)).filter(Boolean))];
     const times = prov.map(p => p.timestamp).filter(Boolean).sort();
@@ -1164,7 +1291,7 @@ function renderNotes() {
       ['Training', `≤${s.num_epochs} epochs, batch ${s.batch_size}, early stopping patience ${s.early_stopping?.patience ?? '–'}, selection ${s.selection_metric}, seed ${s.seed}`],
       ['Trained from', `${commits.join(', ') || '–'}${prov.some(p => p.git_dirty) ? ' (with uncommitted changes)' : ''}${times.length ? `, ${times[0].replace('T', ' ')} → ${times[times.length - 1].replace('T', ' ')}` : ''}`],
     ].filter(([, v]) => v != null && v !== '');
-    host.append(h('div', { class: 'key', style: { margin: '6px 0 2px', color: 'var(--ink)', 'font-weight': 600 } }, MULTI ? runDot(ri) : null, run.label));
+    host.append(h('div', { class: 'key', style: { margin: '6px 0 2px', color: 'var(--ink)', 'font-weight': 600 } }, MULTI && ri >= 0 ? runDot(ri) : null, run.label));
     host.append(h('dl', { class: 'meta', style: { 'grid-template-columns': '150px 1fr' } }, items.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
   });
 }
@@ -1207,7 +1334,7 @@ function renderData() {
   if (!rows.some(e => e.key === state.selected)) {
     const g = groupRows(rows); state.selected = g.length && g[0].rows.length ? g[0].rows[0].key : null;
   }
-  renderTiles(); renderStrip(); renderCompare(); renderTable(); renderDetail(); renderFolds();
+  renderTiles(); renderStrip(); renderCompare(); renderMatrix(); renderTable(); renderDetail(); renderFolds();
 }
 applyTheme(getTheme());
 renderHeader(); renderControls(); renderNotes(); renderData();

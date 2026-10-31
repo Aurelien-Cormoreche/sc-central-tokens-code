@@ -7,7 +7,8 @@ read-out), not from the folder layout. The within_cohort_* experiments (one per 
 leave-one-donor-out) are merged into one "within-cohort" run per read-out, so each slide can be
 compared between holding out its cohort (cross_cohort) and holding out only its donor;
 cross_cohort_test_classes (cross-cohort folds trained only on the test cohort's cell types) sits
-in between. Several runs (schemes, read-outs) are shown side by side. Slide metadata (tissue, disease, donor, H&E)
+in between. Several runs (schemes, read-outs) are shown side by side. single_cohort runs (one
+training cohort, several test cohorts per split) fill a train x test cohort matrix instead. Slide metadata (tissue, disease, donor, H&E)
 comes from xenium_metadata.csv. The page needs no network: open the file in a browser.
 
 Usage (repo root):
@@ -36,9 +37,9 @@ except AttributeError:
     _YAML_LOADER = yaml.SafeLoader
 
 CORNER_READOUT = "bottom_left_bottom_right_top_left_top_right"
-DEFAULT_EXPERIMENTS = ("cross_cohort", "cross_cohort_test_classes", "within_cohort_*")
+DEFAULT_EXPERIMENTS = ("cross_cohort", "cross_cohort_test_classes", "within_cohort_*", "single_cohort")
 SCHEME_LABELS = {"cross_cohort": "cross-cohort", "cross_cohort_test_classes": "cross-cohort, test classes",
-                 "within_cohort": "within-cohort"}
+                 "within_cohort": "within-cohort", "single_cohort": "single cohort"}
 SLIDE_METRICS = ("accuracy", "balanced_accuracy", "macro_f1", "macro_f1_present", "weighted_f1", "ce_loss")
 SUMMARY_METRICS = ("accuracy", "balanced_accuracy", "macro_f1", "macro_f1_present", "weighted_f1", "loss", "ce_loss")
 META_COLUMNS = {
@@ -145,6 +146,7 @@ def _read_fold(fold_dir: Path, experiment: str, cohorts: dict | None, by_folder:
         "fold": fold_idx,
         **_held_out(fold_idx, experiment, test_wsis, test_cohorts, train_cohorts, by_folder),
         "test_cohorts": test_cohorts,
+        "train_cohorts": sorted(train_cohorts),
         "class_names": class_names,
         "n_slides": {side: len(info.get(side) or {}) for side in ("train", "val", "test")},
         "test_size": info.get("test_size"),
@@ -301,10 +303,17 @@ def main() -> None:
                 folds.append((fold, fold_slides))
             found = {int(d.name.split("_")[-1]) for d in fold_dirs}
             expected = len(cfg.get("splits") or []) or max(found) + 1
-            missing = [f"split_{i}" for i in range(expected) if i not in found]
-            incomplete += [f"{experiment} {m}" for m in missing]
+            # Train/test cohorts of every split in the config, finished or not (names the gaps).
+            planned = []
+            for i, sp in enumerate(cfg.get("splits") or []):
+                side = lambda s: sorted({_wsi_cohort(w, cfg.get("cohorts")) or "?" for w in (sp.get(s) or {}) if w != "cell_type_proportions"})
+                planned.append({"fold": i, "train": side("train"), "test": side("test"), "done": i in found})
+            incomplete += [f"{experiment} split_{p['fold']}"
+                           + (f" ({'+'.join(p['train'])} → {'+'.join(p['test'])})" if _scheme(experiment) == "single_cohort" else "")
+                           for p in planned if not p["done"]]
+            incomplete += [f"{experiment} split_{i}" for i in range(len(planned), expected) if i not in found]
             run_exps.append({"name": experiment, "n_folds": len(found), "n_expected": expected,
-                             "path": str(run_dir.relative_to(results_dir))})
+                             "path": str(run_dir.relative_to(results_dir)), "planned": planned})
             if experiment not in experiments:
                 scheme = _scheme(experiment)
                 if scheme == "within_cohort":
@@ -355,7 +364,8 @@ def main() -> None:
     scheme_names = [SCHEME_LABELS.get(s, s.replace("_", "-")) for s in schemes]
     all_wsis = {x["wsi"] for r in runs for x in r["slides"]}
     data = {
-        "title": args.title or (" vs ".join(scheme_names) + " results").capitalize(),
+        "title": args.title or ((" vs ".join(scheme_names) + " results").capitalize() if len(schemes) <= 2
+                                else "Cell-type classifier results across cohorts"),
         "experiment": "_vs_".join(schemes),
         "results_dir": str(results_dir.relative_to(REPO)) if results_dir.is_relative_to(REPO) else str(results_dir),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
