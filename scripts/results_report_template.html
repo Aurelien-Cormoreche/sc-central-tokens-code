@@ -400,11 +400,12 @@ function outsideShare(rows, a, b) {
 }
 
 // ---------- state ----------
-function defaultPair() {  // y = cross-cohort, x = the within-cohort run of the same read-out
+function defaultPair() {  // y = cross-cohort (test classes if run), x = the within-cohort run of the same read-out
   if (!MULTI) return null;
   const rest = ri => RUNS[ri].parts.slice(1).join('/');
-  for (let y = 0; y < RUNS.length; y++) for (let x = 0; x < RUNS.length; x++)
-    if (RUNS[y].scheme === 'cross_cohort' && RUNS[x].scheme === 'within_cohort' && rest(x) === rest(y)) return { x, y };
+  for (const scheme of ['cross_cohort_test_classes', 'cross_cohort'])
+    for (let y = 0; y < RUNS.length; y++) for (let x = 0; x < RUNS.length; x++)
+      if (RUNS[y].scheme === scheme && RUNS[x].scheme === 'within_cohort' && rest(x) === rest(y)) return { x, y };
   return { x: 1, y: 0 };
 }
 const state = {
@@ -1141,6 +1142,7 @@ function renderNotes() {
   host.append(h('h2', null, 'How to read this'));
   host.append(h('ul', null,
     has('cross_cohort') ? h('li', null, h('b', null, 'Cross-cohort: '), 'each fold holds out one whole cohort as test, so a test score measures transfer to a cohort the model never saw. Every slide is a test slide in exactly one fold.') : null,
+    has('cross_cohort_test_classes') ? h('li', null, h('b', null, 'Cross-cohort, test classes: '), 'the cross-cohort folds, but each trains and validates only on the cell types present in its test cohort, so its label space matches a within-cohort model\'s. It uses which types the test slides contain (not their cells), which a deployed model would not know: it measures what the label space costs. Folds whose test cohort has every type are unchanged.') : null,
     has('within_cohort') ? h('li', null, h('b', null, 'Within-cohort: '), 'one leave-one-donor-out experiment per cohort. Each fold tests one donor and trains on the cohort\'s other donors; val is the same donors in every fold and is never tested. A test score measures transfer to a new donor of a cohort the model has seen. 10X and the cohorts\' val donors have no within-cohort score.') : null,
     has('cross_cohort') && has('within_cohort') ? h('li', null, 'On a slide tested under both, cross-cohort minus within-cohort is roughly the cost of not having seen the cohort. "Paired slides only" restricts every mean, tile and row to the slides both runs tested. The two schemes also differ in training-set size and in label space (next point), so the gap is not purely the cohort shift.') : null,
     anyLacks ? h('li', null, h('b', null, 'Label space: '), 'a within-cohort model only has the classes present in its cohort\'s training cells (e.g. no Malignant in a fibrosis or fetal cohort). It cannot predict the missing classes, so it is spared the confusions with them; × marks such classes in the heat cells and hatched columns in the confusion matrices. Cells of a class absent from training are dropped from the slide\'s scores ("cells dropped").') : null,

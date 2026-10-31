@@ -656,6 +656,11 @@ data:
   # drawn while reading, so memory scales with the cap (WSI proportions then apply
   # on top). null = every cell.
   max_cells_per_wsi: null
+  # If true, each split trains only on the cell types present in its test slides:
+  # train cells of the other types are dropped, and so are val cells of those types
+  # (no train support left, see experiment.py). A held-out cohort then gets the label
+  # space a model trained on that cohort has (configs/train_cross_cohort_test_classes.yaml).
+  drop_classes_absent_from_test: false
 
 # ── MLflow ─────────────────────────────────────────────────────────────────
 mlflow:

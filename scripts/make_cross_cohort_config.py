@@ -5,8 +5,14 @@ donor-grouped, leakage-checked): fold i holds out one cohort as test; val is a f
 of donors drawn from each of the other four cohorts; train is the rest. Everything
 else is taken from configs/train.yaml, with the cross-cohort settings below swapped in.
 
+With --drop-classes-absent-from-test it writes configs/train_cross_cohort_test_classes.yaml
+instead: the same folds, but each trains (and validates) only on the cell types present in
+its test cohort (data.drop_classes_absent_from_test), the label space of a within-cohort
+model (scripts/make_within_cohort_configs.py). Experiment cross_cohort_test_classes.
+
 Usage (repo root):
-    python scripts/make_cross_cohort_config.py [--splits-csv _metadata_work/splits.csv]
+    python scripts/make_cross_cohort_config.py [--splits-csv _metadata_work/splits.csv] \
+        [--drop-classes-absent-from-test]
 """
 import argparse
 import csv
@@ -98,8 +104,13 @@ def _replace_once(text: str, old: str, new: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--splits-csv", type=Path, default=REPO / "_metadata_work" / "splits.csv")
-    parser.add_argument("--out", type=Path, default=REPO / "configs" / "train_cross_cohort.yaml")
+    parser.add_argument("--drop-classes-absent-from-test", action="store_true",
+                        help="write the cross_cohort_test_classes variant (see above)")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="default: configs/train_cross_cohort.yaml (train_cross_cohort_test_classes.yaml with the flag)")
     args = parser.parse_args()
+    experiment = "cross_cohort_test_classes" if args.drop_classes_absent_from_test else "cross_cohort"
+    out = args.out or REPO / "configs" / f"train_{experiment}.yaml"
 
     with open(args.splits_csv, newline="", encoding="utf-8") as fh:
         rows = [r for r in csv.DictReader(fh) if r["experiment"] == "E4_loso"]
@@ -144,8 +155,20 @@ def main() -> None:
     text = _replace_once(text, "  auto_time: true\n", "  auto_time: false\n")
     text = _replace_once(text, '  time: "05:00:00"\n', '  time: "24:00:00"\n')
 
-    args.out.write_text(text)
-    print(f"wrote {args.out} ({len({r['fold'] for r in rows})} folds, "
+    if args.drop_classes_absent_from_test:
+        text = _replace_once(
+            text,
+            "# scripts/make_cross_cohort_config.py from configs/train.yaml; edit there or here.\n",
+            "# scripts/make_cross_cohort_config.py --drop-classes-absent-from-test from\n"
+            "# configs/train.yaml; edit there or here. Same folds as train_cross_cohort.yaml, but\n"
+            "# each trains and validates only on the cell types present in its test cohort.\n",
+        )
+        text = _replace_once(text, "experiment: cross_cohort\n", f"experiment: {experiment}\n")
+        text = _replace_once(text, "  experiment_name: embeddings_eval_cross_cohort\n", f"  experiment_name: embeddings_eval_{experiment}\n")
+        text = _replace_once(text, "  drop_classes_absent_from_test: false\n", "  drop_classes_absent_from_test: true\n")
+
+    out.write_text(text)
+    print(f"wrote {out} ({len({r['fold'] for r in rows})} folds, "
           f"{len({r['xenium_folder'] for r in rows})} slides)")
 
 

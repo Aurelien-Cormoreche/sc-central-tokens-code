@@ -425,6 +425,7 @@ def run_split_experiment(
     rng = np.random.default_rng(seed)
     save_test_predictions: bool = bool(OmegaConf.select(cfg, "training.save_test_predictions", default=False))
     max_cells_per_wsi: Optional[int] = OmegaConf.select(cfg, "data.max_cells_per_wsi", default=None)
+    drop_classes_absent_from_test = bool(OmegaConf.select(cfg, "data.drop_classes_absent_from_test", default=False))
     # Defaults (pooled selection, no early stopping) reproduce runs from before these
     # options existed; configs/train.yaml sets the recommended values.
     selection_metric = str(OmegaConf.select(cfg, "training.selection_metric", default="pooled_macro_f1"))
@@ -576,6 +577,25 @@ def run_split_experiment(
     full_val_class_counts = _class_counts(val_labels, num_classes, class_names)
     full_test_class_counts = _class_counts(test_labels, num_classes, class_names)
 
+    # ── data.drop_classes_absent_from_test: train only on the cell types the test slides
+    # contain (only which types, not their cells). Dropping them from train is enough:
+    # _restrict_to_train_classes below then drops val cells of those types too. Done after
+    # loading so the seeded subsampling is unchanged, and no copy when nothing is dropped ──
+    absent_from_test_info: dict[str, Any] = {}
+    if drop_classes_absent_from_test:
+        test_present = set(torch.unique(test_labels).tolist())
+        absent = [class_names[i] for i in range(num_classes) if i not in test_present]
+        keep = np.isin(train_labels.numpy(), sorted(test_present))
+        n_train_dropped = int((~keep).sum())
+        if n_train_dropped:
+            train_emb, train_labels, train_wsi = train_emb[keep], train_labels[keep], train_wsi[keep]
+        absent_from_test_info = {
+            "classes_absent_from_test": absent,
+            "train_cells_dropped_absent_from_test": n_train_dropped,
+        }
+        print(f"[experiment] {split_label}: drop_classes_absent_from_test -- classes absent from test: "
+              f"{absent or 'none'}; {n_train_dropped} train cells dropped")
+
     # ── restrict the model's class space to what's actually present in train;
     # val/test cells of classes with zero train support are dropped (see docstring) ──
     train_labels, restricted, class_names = _restrict_to_train_classes(
@@ -596,6 +616,7 @@ def run_split_experiment(
                 "test_size": int(len(test_labels)),
                 "val_cells_dropped_absent_from_train": n_val_dropped,
                 "test_cells_dropped_absent_from_train": n_test_dropped,
+                **absent_from_test_info,
                 "class_names": class_names,
                 "train_class_counts": full_train_class_counts,
                 "val_class_counts": full_val_class_counts,
