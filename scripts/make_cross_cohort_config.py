@@ -6,9 +6,10 @@ of donors drawn from each of the other four cohorts; train is the rest. Everythi
 else is taken from configs/train.yaml, with the cross-cohort settings below swapped in.
 
 With --drop-classes-absent-from-test it writes configs/train_cross_cohort_test_classes.yaml
-instead: the same folds, but each trains (and validates) only on the cell types present in
-its test cohort (data.drop_classes_absent_from_test), the label space of a within-cohort
-model (scripts/make_within_cohort_configs.py). Experiment cross_cohort_test_classes.
+instead: the folds holding out a cohort that lacks a cell type (COHORTS_MISSING_A_TYPE),
+each trained (and validated) only on the cell types present in its test cohort
+(data.drop_classes_absent_from_test), the label space of a within-cohort model
+(scripts/make_within_cohort_configs.py). Experiment cross_cohort_test_classes.
 
 Usage (repo root):
     python scripts/make_cross_cohort_config.py [--splits-csv _metadata_work/splits.csv] \
@@ -47,6 +48,11 @@ VAL_DONOR_OVERRIDES = {
     "VANNAN": {"VANNAN::THD0008", "VANNAN::VUILD106"},    # healthy, IPF (one donor per site)
 }
 
+# Cohorts with no cell of some simplified_broad type (VANNAN, JOHNSON: no Malignant; MCCORD:
+# no Epithelial -- the cross_cohort runs' test_class_counts). --drop-classes-absent-from-test
+# keeps only their folds: SPLIT and 10X have every type, so theirs would rerun cross_cohort's.
+COHORTS_MISSING_A_TYPE = {"VANNAN", "MCCORD", "JOHNSON"}
+
 COHORTS_BLOCK = """cohorts:
   SPLIT: ["GSM9509*"]              # breast + lung cancer (SPLIT, Nature Methods)
   VANNAN: ["GSM7990*"]             # pulmonary fibrosis TMAs, 20x
@@ -62,10 +68,14 @@ def _wsi_name(xenium_folder: str) -> str:
     return xenium_folder[: -len("_out")] if xenium_folder.endswith("_out") else xenium_folder
 
 
-def _splits_block(rows: list[dict]) -> str:
+def _splits_block(rows: list[dict], test_cohorts: set[str] | None = None) -> str:
+    """All folds, or (test_cohorts given) only those holding out one of these cohorts,
+    renumbered from 0 with their fold number in train_cross_cohort.yaml in the comment."""
     folds: dict[int, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for r in rows:
         folds[int(r["fold"])][r["split"]].append(r)
+    held_out = {f: sorted({COHORT_NAMES[r["source"]] for r in sides["test"]}) for f, sides in folds.items()}
+    kept = [f for f in sorted(folds) if test_cohorts is None or set(held_out[f]) <= test_cohorts]
 
     lines = [
         "# Scheme: leave-one-cohort-out over the 5 cohorts (see `cohorts`), from",
@@ -75,16 +85,18 @@ def _splits_block(rows: list[dict]) -> str:
         "# THD0008 healthy + VUILD106 IPF; others: splits.csv's every-5th donor); train = the",
         "# remaining slides. Splits are donor-grouped. Left out (no embeddings):",
         f"# {', '.join(sorted(EXCLUDED_WSIS))}.",
-        "splits:",
     ]
-    for fold in sorted(folds):
+    if test_cohorts is not None:
+        lines.append(f"# Only the folds holding out {', '.join(sorted(test_cohorts))} (see COHORTS_MISSING_A_TYPE).")
+    lines.append("splits:")
+    for i, fold in enumerate(kept):
         sides = folds[fold]
-        held = sorted({COHORT_NAMES[r["source"]] for r in sides["test"]})
         val_cohorts = defaultdict(int)
         for r in sides["val"]:
             val_cohorts[COHORT_NAMES[r["source"]]] += 1
+        origin = f" (split {fold} of train_cross_cohort.yaml)" if test_cohorts is not None else ""
         lines.append(
-            f"  # split {fold}: test = {'+'.join(held)} ({len(sides['test'])} slides); "
+            f"  # split {i}{origin}: test = {'+'.join(held_out[fold])} ({len(sides['test'])} slides); "
             f"val = {len(sides['val'])} slides ({', '.join(f'{c} {n}' for c, n in sorted(val_cohorts.items()))}); "
             f"train = {len(sides['train'])} slides"
         )
@@ -128,7 +140,8 @@ def main() -> None:
     text = (REPO / "configs" / "train.yaml").read_text()
     head, rest = text.split("# Scheme:", 1)
     _, tail = rest.split("# When true, the launcher also submits", 1)
-    text = head + _splits_block(rows) + "\n# When true, the launcher also submits" + tail
+    test_cohorts = COHORTS_MISSING_A_TYPE if args.drop_classes_absent_from_test else None
+    text = head + _splits_block(rows, test_cohorts) + "\n# When true, the launcher also submits" + tail
 
     text = _replace_once(
         text,
@@ -160,15 +173,17 @@ def main() -> None:
             text,
             "# scripts/make_cross_cohort_config.py from configs/train.yaml; edit there or here.\n",
             "# scripts/make_cross_cohort_config.py --drop-classes-absent-from-test from\n"
-            "# configs/train.yaml; edit there or here. Same folds as train_cross_cohort.yaml, but\n"
-            "# each trains and validates only on the cell types present in its test cohort.\n",
+            "# configs/train.yaml; edit there or here. The folds of train_cross_cohort.yaml that\n"
+            "# hold out a cohort missing a cell type, each trained and validated only on the\n"
+            "# cell types present in its test cohort.\n",
         )
         text = _replace_once(text, "experiment: cross_cohort\n", f"experiment: {experiment}\n")
         text = _replace_once(text, "  experiment_name: embeddings_eval_cross_cohort\n", f"  experiment_name: embeddings_eval_{experiment}\n")
         text = _replace_once(text, "  drop_classes_absent_from_test: false\n", "  drop_classes_absent_from_test: true\n")
 
     out.write_text(text)
-    print(f"wrote {out} ({len({r['fold'] for r in rows})} folds, "
+    written = [r for r in rows if test_cohorts is None or COHORT_NAMES[r["source"]] in test_cohorts]
+    print(f"wrote {out} ({len({r['fold'] for r in written if r['split'] == 'test'})} folds, "
           f"{len({r['xenium_folder'] for r in rows})} slides)")
 
 
