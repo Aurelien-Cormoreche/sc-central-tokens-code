@@ -48,10 +48,12 @@ VAL_DONOR_OVERRIDES = {
     "VANNAN": {"VANNAN::THD0008", "VANNAN::VUILD106"},    # healthy, IPF (one donor per site)
 }
 
-# Cohorts with no cell of some simplified_broad type (VANNAN, JOHNSON: no Malignant; MCCORD:
-# no Epithelial -- the cross_cohort runs' test_class_counts). --drop-classes-absent-from-test
-# keeps only their folds: SPLIT and 10X have every type, so theirs would rerun cross_cohort's.
-COHORTS_MISSING_A_TYPE = {"VANNAN", "MCCORD", "JOHNSON"}
+# simplified_broad cell types with no cell at all in a cohort (the cross_cohort runs'
+# test_class_counts); SPLIT and 10X have every type. --drop-classes-absent-from-test keeps
+# only the folds of these cohorts (SPLIT's and 10X's would rerun cross_cohort's), and
+# make_single_cohort_config.py groups test cohorts by the types a model may know.
+MISSING_TYPES = {"VANNAN": {"Malignant"}, "MCCORD": {"Epithelial"}, "JOHNSON": {"Malignant"}}
+COHORTS_MISSING_A_TYPE = set(MISSING_TYPES)
 
 COHORTS_BLOCK = """cohorts:
   SPLIT: ["GSM9509*"]              # breast + lung cancer (SPLIT, Nature Methods)
