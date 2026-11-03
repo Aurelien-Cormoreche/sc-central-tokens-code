@@ -19,8 +19,12 @@ data.max_cells_per_wsi). Each config is its own experiment
 logs never collide. Everything else is copied from train_cross_cohort.yaml, so rerun this
 script if it changes.
 
+--hidden-dim H fixes the classifier head to one hidden layer of H units (hparams.hidden_dim;
+the source's default is 0 = logistic regression) and appends _hd{H} to the experiment and
+file names. --fractions 1.0 gives the 100% point of a head the existing runs don't cover.
+
 Usage (repo root):
-    python scripts/make_scaling_configs.py [--fractions 0.05] [--seeds 42 43 44]
+    python scripts/make_scaling_configs.py [--fractions 0.05] [--seeds 42 43 44] [--hidden-dim 32]
 Then, per config (on the cluster):
     python -m src.python.classifier_training.launcher \
         --config-name=scaling/train_cross_cohort_test_classes_frac05_seed42 \
@@ -66,9 +70,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fractions", type=float, nargs="+", default=[0.05])
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
+    parser.add_argument("--hidden-dim", type=int, default=None,
+                        help="classifier hidden units (0 = logistic regression); default: the source config's")
     parser.add_argument("--out-dir", type=Path, default=REPO / "configs" / "scaling")
     args = parser.parse_args()
     assert all(0 < f <= 1 for f in args.fractions), args.fractions
+    head = "" if args.hidden_dim is None else f"_hd{args.hidden_dim}"
 
     source = (REPO / "configs" / f"{SOURCE}.yaml").read_text()
     n_folds = len(re.findall(r"^  - train:$", source, flags=re.M))
@@ -76,7 +83,7 @@ def main() -> None:
 
     for fraction in args.fractions:
         for seed in args.seeds:
-            experiment = f"{EXPERIMENT}_scaling_{_tag(fraction)}_seed{seed}"
+            experiment = f"{EXPERIMENT}_scaling_{_tag(fraction)}_seed{seed}{head}"
             text, n_train = _subsample_train(source, fraction)
             assert n_train and source.count(": 1.0\n") - n_train == text.count(": 1.0\n"), "train entries not found"
 
@@ -102,8 +109,15 @@ def main() -> None:
                 text, "  experiment_name: embeddings_eval_cross_cohort\n", f"  experiment_name: embeddings_eval_{experiment}\n"
             )
             text = cc._replace_once(text, '  time: "24:00:00"\n', f'  time: "{TIME}"\n')
+            if args.hidden_dim is not None:
+                text = cc._replace_once(
+                    text,
+                    "  hidden_dim:\n    tune: False\n    values: [0,32]   # 0 = logistic regression\n",
+                    f"  hidden_dim:\n    tune: False\n    values: [{args.hidden_dim}]   # 0 = logistic regression "
+                    "(scripts/make_scaling_configs.py --hidden-dim)\n",
+                )
 
-            out = args.out_dir / f"train_{EXPERIMENT}_{_tag(fraction)}_seed{seed}.yaml"
+            out = args.out_dir / f"train_{EXPERIMENT}_{_tag(fraction)}_seed{seed}{head}.yaml"
             out.write_text(text)
             print(f"wrote {out.relative_to(REPO)} ({n_folds} folds, {n_train} train slide entries at {fraction:g})")
 
