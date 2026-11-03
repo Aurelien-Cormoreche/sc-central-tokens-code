@@ -23,6 +23,8 @@ script if it changes.
 the source's default is 0 = logistic regression) and appends _hd{H} to the experiment and
 file names. --fractions 1.0 gives the 100% point of a head the existing runs don't cover.
 
+{pp} is the percentage: frac05 = 5%, frac100 = 100%, frac0p5 = 0.5%.
+
 Usage (repo root):
     python scripts/make_scaling_configs.py [--fractions 0.05] [--seeds 42 43 44] [--hidden-dim 32]
 Then, per config (on the cluster):
@@ -46,7 +48,9 @@ TIME = "06:00:00"
 
 
 def _tag(fraction: float) -> str:
-    return f"frac{round(100 * fraction):02d}"
+    """Percentage of train cells: frac05 = 5%, frac100 = 100%, frac0p5 = 0.5%."""
+    pct = round(100 * fraction, 6)
+    return f"frac{int(pct):02d}" if pct.is_integer() else "frac" + f"{pct:g}".replace(".", "p")
 
 
 def _subsample_train(text: str, fraction: float) -> tuple[str, int]:
