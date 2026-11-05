@@ -117,6 +117,104 @@ def load_unique_wsi(args):
     return cmapped_labels, embeddings, cell_ids, np.full(len(cell_labels), i), wsi_file, matching
 
 
+# ── two-pass loading: labels first, then only the embedding rows that are kept ──
+
+def _wsi_h5(embeddings_file_path, wsi_file):
+    return os.path.join(embeddings_file_path, wsi_file, 'embeddings_dataset.h5')
+
+
+def _embedding_keys(f, embeddings_datasets):
+    if len(embeddings_datasets) == 0:
+        return [key.split('embeddings_')[1] for key in f.keys() if key.startswith('embeddings_')]
+    return embeddings_datasets
+
+
+def _labelled_rows(args):
+    '''Pass 1 for one WSI, without touching its embeddings: the file rows load_unique_wsi keeps --
+    matching filter (if consider_matching), labels mapping to 'Unknown' dropped, then the
+    max_cells_per_wsi cap with the same seeded draw -- in file order, and their mapped labels.'''
+    wsi_file, embeddings_file_path, mapping, consider_matching, max_cells, seed = args
+    with h5py.File(_wsi_h5(embeddings_file_path, wsi_file), 'r') as f:
+        cell_labels = f['cell_labels'][()]
+        if consider_matching and 'matching' in f:
+            keep = f['matching'][()].astype(bool)
+        else:
+            keep = np.ones(len(cell_labels), dtype=bool)
+    mapped = np.array([mapping.get(label, 'Unknown') for label in cell_labels])
+    keep &= mapped != 'Unknown'
+    rows = np.flatnonzero(keep)
+    if max_cells is not None and len(rows) > max_cells:
+        rng = np.random.default_rng([seed, zlib.crc32(wsi_file.encode())])
+        rows = np.sort(rng.choice(rows, size=max_cells, replace=False))
+    return rows, mapped[rows]
+
+
+def load_labelled_rows(embeddings_file_path, wsi_to_process, mapping, consider_matching=True,
+                       max_cells_per_wsi=None, seed=0):
+    '''Per WSI (input order): (rows, labels) -- the typed cells load_data would return for it
+    (file rows, in file order) and their mapped labels. Reads labels and matching only.'''
+    args = [(wsi_file, embeddings_file_path, mapping, consider_matching, max_cells_per_wsi, seed)
+            for wsi_file in wsi_to_process]
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        return list(executor.map(_labelled_rows, args))
+
+
+def _read_mean_rows(args):
+    '''Pass 2 for one WSI: out[dest[j]] = mean over the embedding datasets of file row rows[j]
+    (rows sorted), read one block of rows at a time -- a thread holds about two blocks, never
+    a whole dataset. The mean is accumulated in place in dataset order and divided once, the
+    same operations as load_unique_wsi's np.mean over axis 0, so the result is bit-identical.
+    Returns the cell_ids of rows (same order).'''
+    wsi_file, embeddings_file_path, embeddings_datasets, rows, dest, out, block_size = args
+    with h5py.File(_wsi_h5(embeddings_file_path, wsi_file), 'r') as f:
+        if len(rows) == 0:
+            return f['cell_ids'][()][rows]
+        dsets = [f[f'embeddings_{key}'] for key in _embedding_keys(f, embeddings_datasets)]
+        # np.mean accumulates float32/float64 in their own dtype; others (e.g. float16) need np.mean itself.
+        in_place = dsets[0].dtype in (np.float32, np.float64)
+        for start in range(0, dsets[0].shape[0], block_size):
+            stop = min(start + block_size, dsets[0].shape[0])
+            lo, hi = np.searchsorted(rows, [start, stop])
+            if hi > lo:
+                local = rows[lo:hi] - start
+                if in_place:
+                    acc = dsets[0][start:stop][local]
+                    for d in dsets[1:]:
+                        acc += d[start:stop][local]
+                    acc /= len(dsets)
+                else:
+                    acc = np.mean([d[start:stop][local] for d in dsets], axis=0)
+                out[dest[lo:hi]] = acc
+        return f['cell_ids'][()][rows]
+
+
+def load_embedding_rows(embeddings_file_path, embeddings_datasets, wsi_to_process, rows_per_wsi,
+                        block_size=8192):
+    '''Embeddings (mean over embeddings_datasets) and cell_ids of the given file rows of each WSI,
+    concatenated over WSIs in input order, each WSI's rows in the order given (any order, no
+    repeats). Only those rows are read, straight into one preallocated array, so peak memory
+    is the result plus a block per dataset per reading thread.'''
+    with h5py.File(_wsi_h5(embeddings_file_path, wsi_to_process[0]), 'r') as f:
+        first = f[f'embeddings_{_embedding_keys(f, embeddings_datasets)[0]}']
+        dim = first.shape[1]
+        dtype = np.mean(np.zeros((1, 1, dim), dtype=first.dtype), axis=0).dtype
+    offsets = np.concatenate([[0], np.cumsum([len(r) for r in rows_per_wsi])]).astype(int)
+    out = np.empty((offsets[-1], dim), dtype=dtype)
+    orders, args = [], []
+    for wsi_file, rows, offset in zip(wsi_to_process, rows_per_wsi, offsets[:-1]):
+        order = np.argsort(rows, kind='stable')
+        orders.append(order)
+        args.append((wsi_file, embeddings_file_path, embeddings_datasets, rows[order], offset + order, out, block_size))
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        sorted_ids = list(executor.map(_read_mean_rows, args))
+    cell_ids = []
+    for ids, order in zip(sorted_ids, orders):
+        given = np.empty_like(ids)
+        given[order] = ids
+        cell_ids.append(given)
+    return out, np.concatenate(cell_ids)
+
+
 def load_unique_wsi_with_coords(args):
     """Like load_unique_wsi but also loads x_centroid and y_centroid."""
     i, wsi_file, embeddings_file_path, embeddings_datasets, mapping, consider_matching = args

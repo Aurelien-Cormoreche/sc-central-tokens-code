@@ -33,7 +33,7 @@ import hydra
 from src.python.classifier_training.saved_models import save_classifier, train_cohorts_label
 from src.python.classifier_training.trainer import TrainConfig, classification_metrics, train_and_evaluate
 from src.python.code_configs.mappings import mapping_factory
-from src.python.utils.loading_functions import load_data
+from src.python.utils.loading_functions import load_embedding_rows, load_labelled_rows
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -68,36 +68,35 @@ def _load_wsi_data(
     cells later (see run_split_experiment's save_test_predictions).
 
     max_cells_per_wsi caps every WSI while it is read (a seeded random subset of its
-    typed cells, see load_data_separate); the proportions below then apply to that subset.
+    typed cells, see load_labelled_rows); the proportions below then apply to that subset.
+
+    Two passes: every WSI's labels first (load_labelled_rows), then only the kept cells'
+    embeddings (load_embedding_rows), so memory scales with the cells kept rather than with
+    the WSIs. The draws are those of the former single-pass loader -- rng.choice over each
+    WSI's typed cells, WSIs in input order -- so a seed keeps the same cells in the same order.
     """
     wsi_names = list(wsi_proportions.keys())
 
-    embeddings, cell_labels, cell_ids, wsi_origin, _, wsi_idx_map = load_data(
-        base_path, embeddings_datasets, wsi_names, mapping, consider_matching=consider_matching,
+    # Per WSI: its typed cells ("Unknown" dropped before any proportion sampling, so e.g.
+    # proportion=1.0 keeps 100% of the WSI's typed cells rather than 100% of everything).
+    labelled = load_labelled_rows(
+        base_path, wsi_names, mapping, consider_matching=consider_matching,
         max_cells_per_wsi=max_cells_per_wsi, seed=seed,
     )
-    cell_ids = np.asarray([c.decode("utf-8") if isinstance(c, bytes) else c for c in cell_ids])
-
-    # Drop "Unknown" cells before any proportion sampling, so e.g. proportion=1.0
-    # keeps 100% of the WSI's typed cells rather than 100% of everything.
-    known_mask = cell_labels != "Unknown"
-    embeddings = embeddings[known_mask]
-    cell_labels = cell_labels[known_mask]
-    wsi_origin = wsi_origin[known_mask]
-    cell_ids = cell_ids[known_mask]
 
     keep_indices: list[np.ndarray] = []
-    for wsi_idx, wsi_name in enumerate(wsi_idx_map):
+    for wsi_name, (rows, cell_labels) in zip(wsi_names, labelled):
         proportion = float(wsi_proportions[wsi_name])
-        wsi_mask = np.where(wsi_origin == wsi_idx)[0]
-        if len(wsi_mask) == 0:
+        if len(rows) == 0:
             raise ValueError(
                 f"WSI '{wsi_name}' contributed 0 usable cells (either its "
                 f"embeddings_dataset.h5 has no cells, or every cell's label "
                 f"mapped to 'Unknown' and was dropped) -- base_path={base_path!r}"
             )
-        n_keep = max(1, int(len(wsi_mask) * proportion))
-        selected = rng.choice(wsi_mask, size=n_keep, replace=False)
+        # Positions into the WSI's typed cells: rng.choice(n) draws exactly as the former
+        # rng.choice(<the WSI's n cell indices>) did.
+        n_keep = max(1, int(len(rows) * proportion))
+        selected = rng.choice(len(rows), size=n_keep, replace=False)
 
         ct_props = wsi_cell_type_proportions.get(wsi_name) if wsi_cell_type_proportions else None
         if ct_props:
@@ -120,11 +119,13 @@ def _load_wsi_data(
 
         keep_indices.append(selected)
 
-    keep = np.concatenate(keep_indices)
-    emb = embeddings[keep]
-    labels_str = cell_labels[keep]
-    wsi_orig = wsi_origin[keep]
-    ids = cell_ids[keep]
+    emb, cell_ids = load_embedding_rows(
+        base_path, embeddings_datasets, wsi_names,
+        [rows[selected] for (rows, _), selected in zip(labelled, keep_indices)],
+    )
+    ids = np.asarray([c.decode("utf-8") if isinstance(c, bytes) else c for c in cell_ids])
+    labels_str = np.concatenate([cell_labels[selected] for (_, cell_labels), selected in zip(labelled, keep_indices)])
+    wsi_orig = np.concatenate([np.full(len(selected), wsi_idx) for wsi_idx, selected in enumerate(keep_indices)])
 
     labels_int = torch.tensor(
         [label_enc[lbl] for lbl in labels_str],
@@ -496,8 +497,8 @@ def run_split_experiment(
         test_wsi = wsi_orig[perm[cut_val:]]
         test_ids = ids[perm[cut_val:]]
         # wsi_orig indices (train/val/test alike) index into this same list, since all three
-        # were sliced from one _load_wsi_data call over all_wsi_props -- see _load_wsi_data's
-        # wsi_idx_map (== wsi_proportions.keys() order, load_data preserves input order).
+        # were sliced from one _load_wsi_data call over all_wsi_props -- its wsi_origin is the
+        # position in wsi_proportions.keys().
         test_wsi_name_list = list(all_wsi_props.keys())
         val_wsi_name_list = test_wsi_name_list
         split_label = "same_wsi_split"
@@ -529,8 +530,8 @@ def run_split_experiment(
             consider_matching=consider_matching,
             max_cells_per_wsi=max_cells_per_wsi, seed=seed,
         )
-        # test_wsi indices index into this list (see _load_wsi_data's wsi_idx_map ==
-        # wsi_proportions.keys() order) -- used to decode test predictions back to WSI names.
+        # test_wsi indices index into this list (_load_wsi_data's wsi_origin is the position in
+        # wsi_proportions.keys()) -- used to decode test predictions back to WSI names.
         test_wsi_name_list = list(test_props.keys())
 
         # Splits with no `val` key (e.g. configs/unbalanced/train_unbalanced_alpha_*.yaml,
