@@ -109,6 +109,13 @@ def main() -> None:
         text = _replace_once(text, "  embeddings_datasets:  [cls]\n", f"  embeddings_datasets: {CORNERS}\n")
         text = _replace_once(text, "  gene_interval: [10,20,30,40,50]\n", "  gene_interval: [50,100,200,300]\n")
         text = _replace_once(text, "  hvg_dir: data/HVGsSplitColon\n", f"  hvg_dir: data/HVGsSplitLOPO_{name}\n")
+        # load_hvg_table drops ranked genes absent from the test slides and needs num_genes left:
+        # rank more than num_genes so they are replaced (the Prime lymph node's development panel
+        # lacks 377 of the 5,001 release genes).
+        text = _replace_once(
+            text, "  hvg_max_genes: 300\n",
+            "  hvg_max_genes: 500   # > num_genes: ranked genes absent from a test slide get replaced\n",
+        )
         text = _replace_once(text, "  experiment_name: deepcell_embeddings_eval_colon\n",
                              f"  experiment_name: deepcell_embeddings_eval_lopo_{name}\n")
         text = _replace_once(text, "  mem: 64G\n", f"  mem: {mem}\n")

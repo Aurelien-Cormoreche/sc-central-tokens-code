@@ -347,7 +347,7 @@ data:
   hvg_dir: data/HVGsSplitLOPO_vannan
   hvg_flavor: seurat_v3_paper
   hvg_batch_key: sampleID
-  hvg_max_genes: 300
+  hvg_max_genes: 500   # > num_genes: ranked genes absent from a test slide get replaced
   n_neighbors: 0
   resolution: 0
   cell_context: cell
