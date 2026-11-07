@@ -1,0 +1,125 @@
+"""Write configs/deepspot_lopo_{vannan,prime}.yaml: leave-one-patient-out gene-expression
+prediction (deepspot_training) on
+
+  vannan -- the VANNAN pulmonary-fibrosis cohort (343-gene lung panel, healthy + fibrotic),
+  prime  -- every human Xenium Prime 5K slide (SPLIT's 6 NSCLC slides + 10x's lymph node,
+            prostate and skin; the 10x ones use development versions of the 5K panel).
+
+Patients are splits.csv's donor_key (donor-grouped, as for the classifier folds); slides
+without embeddings (make_cross_cohort_config.EXCLUDED_WSIS) are left out. Fold i: test = every
+slide of one patient, train = every other slide of the dataset. Like
+configs/deepspot_train_colon.yaml, which everything else is copied from (fixed hyperparameters,
+single-cell context, 300 HVGs), there is no val side: the test slides double as the early-
+stopping set. HVGs are ranked per fold over the inner join of the train slides' panels, then
+restricted to genes present in the test slides (compute_hvgs.py).
+
+Usage (repo root):
+    python scripts/make_deepspot_lopo_configs.py [--splits-csv _metadata_work/splits.csv]
+Then on the cluster, per config:
+    sbatch scripts/compute_hvgs.sh --config-name=deepspot_lopo_vannan
+    python -m src.python.deepspot_training.launcher --config-name=deepspot_lopo_vannan \\
+        data.model_name=UNI2 data.correction_name=raw
+"""
+import argparse
+import csv
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import make_cross_cohort_config as cc  # noqa: E402
+
+REPO = cc.REPO
+TEMPLATE = "deepspot_train_colon"
+CORNERS = "[bottom_left, bottom_right, top_left, top_right]"
+DATASETS = {
+    # name: (description, slide filter on (splits.csv row, xenium_metadata row), slurm.mem)
+    "vannan": ("the VANNAN pulmonary-fibrosis cohort (GSE250346; 343-gene lung panel)",
+               lambda r, meta: r["source"] == "VANNAN", "64G"),
+    # Largest slide: 10x lymph node, ~0.65M typed cells; deepspot reads every cell's 4 tokens.
+    "prime": ("every human Xenium Prime 5K slide (SPLIT NSCLC + 10x lymph node, prostate, skin)",
+              lambda r, meta: meta["chemistry"] == "Xenium Prime 5K" and meta["species"] == "Homo sapiens", "128G"),
+}
+
+
+def _replace_once(text: str, old: str, new: str) -> str:
+    assert text.count(old) == 1, f"configs/{TEMPLATE}.yaml no longer contains exactly one {old!r}"
+    return text.replace(old, new)
+
+
+def _splits_block(slides: dict[str, str], excluded: set[str]) -> str:
+    """slides: WSI -> donor_key. One fold per patient, in donor_key order; `excluded` only
+    goes in the comment."""
+    by_donor = defaultdict(list)
+    for wsi, donor in slides.items():
+        by_donor[donor].append(wsi)
+    lines = [
+        "# ── WSI splits ─────────────────────────────────────────────────────────────",
+        f"# Leave-one-patient-out over {len(slides)} slides of {len(by_donor)} patients (splits.csv donor_key);",
+        "# regenerate with scripts/make_deepspot_lopo_configs.py. Left out (no embeddings):",
+        f"# {', '.join(sorted(excluded)) or 'none'}.",
+        "splits:",
+    ]
+    for i, donor in enumerate(sorted(by_donor)):
+        test = sorted(by_donor[donor])
+        train = sorted(w for w in slides if w not in test)
+        lines.append(f"  # split {i}: test = {donor} ({len(test)} slide{'s' * (len(test) > 1)}); "
+                     f"train = {len(train)} slides of {len(by_donor) - 1} patients")
+        lines.append("  - train:")
+        lines += [f"      {w}: 1.0" for w in train]
+        lines.append("    test:")
+        lines += [f"      {w}: 1.0" for w in test]
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--splits-csv", type=Path, default=REPO / "_metadata_work" / "splits.csv")
+    parser.add_argument("--datasets", nargs="+", choices=sorted(DATASETS), default=sorted(DATASETS))
+    args = parser.parse_args()
+
+    with open(args.splits_csv, newline="", encoding="utf-8") as fh:
+        rows = {r["xenium_folder"]: r for r in csv.DictReader(fh) if r["experiment"] == "E4_loso"}
+    with open(REPO / "xenium_metadata.csv", newline="", encoding="utf-8") as fh:
+        meta = {r["xenium_folder"]: r for r in csv.DictReader(fh)}
+    template = (REPO / "configs" / f"{TEMPLATE}.yaml").read_text()
+    _, body = template.split("defaults:\n", 1)
+    head, rest = body.split("# ── WSI splits", 1)
+    _, tail = rest.split("# No same-WSI", 1)
+
+    for name in args.datasets:
+        description, keep, mem = DATASETS[name]
+        chosen = {cc._wsi_name(f): r["donor_key"] for f, r in rows.items() if keep(r, meta[f])}
+        excluded = set(chosen) & cc.EXCLUDED_WSIS
+        slides = {w: d for w, d in chosen.items() if w not in excluded}
+        assert slides, name
+
+        text = (
+            "# Leave-one-patient-out gene-expression prediction (deepspot_training) on\n"
+            f"# {description} -- generated by\n"
+            f"# scripts/make_deepspot_lopo_configs.py from configs/{TEMPLATE}.yaml; edit there.\n"
+            "# Fold i: test = every slide of one patient; train = the rest. No val side: the test slides\n"
+            "# double as the early-stopping set (as in the template; hyperparameters are fixed).\n"
+            "# Before the experiments, precompute the per-fold HVGs (data.hvg_dir):\n"
+            f"#   sbatch scripts/compute_hvgs.sh --config-name=deepspot_lopo_{name}\n"
+            "\ndefaults:\n" + head + _splits_block(slides, excluded) + "\n# No same-WSI" + tail
+        )
+        text = _replace_once(text, "output_dir: outputs_deepspot_colon\n", f"output_dir: outputs_deepspot_lopo_{name}\n")
+        text = _replace_once(text, "  embeddings_datasets:  [cls]\n", f"  embeddings_datasets: {CORNERS}\n")
+        text = _replace_once(text, "  gene_interval: [10,20,30,40,50]\n", "  gene_interval: [50,100,200,300]\n")
+        text = _replace_once(text, "  hvg_dir: data/HVGsSplitColon\n", f"  hvg_dir: data/HVGsSplitLOPO_{name}\n")
+        text = _replace_once(text, "  experiment_name: deepcell_embeddings_eval_colon\n",
+                             f"  experiment_name: deepcell_embeddings_eval_lopo_{name}\n")
+        text = _replace_once(text, "  mem: 64G\n", f"  mem: {mem}\n")
+        text = _replace_once(text, "  output_dir: slurm_logs_deepspot_colon\n", f"  output_dir: slurm_logs_deepspot_lopo_{name}\n")
+
+        out = REPO / "configs" / f"deepspot_lopo_{name}.yaml"
+        out.write_text(text)
+        n_patients = len(set(slides.values()))
+        print(f"wrote {out.relative_to(REPO)}: {len(slides)} slides, {n_patients} patients -> {n_patients} folds"
+              + (f" (left out, no embeddings: {sorted(excluded)})" if excluded else ""))
+
+
+if __name__ == "__main__":
+    main()
