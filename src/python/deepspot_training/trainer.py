@@ -62,19 +62,30 @@ def _per_gene_pearson(y_pred: np.ndarray, y_true: np.ndarray, gene_names: np.nda
     return per_gene
 
 
-def _evaluate(model, loader: DataLoader, dataset, gene_names: np.ndarray, device: str) -> dict:
-    """Run inference over `loader` and compute per-gene Pearson against `dataset`'s targets."""
-    predictions = run_inference_from_dataloader(model, loader, device)
-    y_true = dataset.transcriptomics_df.values
-
-    per_gene_pearson = _per_gene_pearson(predictions, y_true, gene_names)
+def _summarize(per_gene_pearson: dict) -> dict:
     valid_r = np.array([r for r in per_gene_pearson.values() if not np.isnan(r)])
-
     return {
         "mean_pearson": float(np.mean(valid_r)) if len(valid_r) else float("nan"),
         "median_pearson": float(np.median(valid_r)) if len(valid_r) else float("nan"),
-        "per_gene_pearson": per_gene_pearson,
     }
+
+
+def _evaluate(model, loader: DataLoader, dataset, gene_names: np.ndarray, device: str) -> dict:
+    """Run inference over `loader` and compute per-gene Pearson against `dataset`'s targets, over
+    all its cells and (`per_slide`) over each slide's own cells -- `dataset.coordinates_df.sampleID`,
+    in the same row order as `transcriptomics_df`."""
+    predictions = run_inference_from_dataloader(model, loader, device)
+    y_true = dataset.transcriptomics_df.values
+    slides = dataset.coordinates_df["sampleID"].to_numpy()
+
+    per_gene_pearson = _per_gene_pearson(predictions, y_true, gene_names)
+    per_slide = {}
+    for slide in np.unique(slides):
+        rows = slides == slide
+        slide_pearson = _per_gene_pearson(predictions[rows], y_true[rows], gene_names)
+        per_slide[slide] = {"n_cells": int(rows.sum()), **_summarize(slide_pearson), "per_gene_pearson": slide_pearson}
+
+    return {**_summarize(per_gene_pearson), "per_gene_pearson": per_gene_pearson, "per_slide": per_slide}
 
 
 def _prefix_metrics(metrics: dict, prefix: str) -> dict:
@@ -103,9 +114,11 @@ def train_and_evaluate(
         device: "cuda" or "cpu".
 
     Returns:
-        dict with keys: val_mean_pearson, val_median_pearson, val_per_gene_pearson,
-                        test_mean_pearson, test_median_pearson, test_per_gene_pearson,
+        dict with keys: val_mean_pearson, val_median_pearson, val_per_gene_pearson, val_per_slide,
+                        test_mean_pearson, test_median_pearson, test_per_gene_pearson, test_per_slide,
                         train_loss_curve, val_loss_curve
+        (*_per_slide: slide -> {n_cells, mean_pearson, median_pearson, per_gene_pearson}, Pearson
+        over that slide's cells only.)
     """
     train_loader = DataLoader(
         train_dataset, batch_size=config.batch_size, shuffle=True,

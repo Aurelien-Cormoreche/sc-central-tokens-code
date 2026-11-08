@@ -201,6 +201,34 @@ class _CellSubset:
     def transcriptomics_df(self):
         return self.base.transcriptomics_df.iloc[self.indices]
 
+    @property
+    def coordinates_df(self):
+        return self.base.coordinates_df.iloc[self.indices]
+
+
+def _write_per_slide(output_dir: Path, per_slide_by_set: dict[str, dict], genes_table: pd.DataFrame) -> list[dict]:
+    """per_slide_metrics.csv (one row per val/test slide: cells, genes with a defined Pearson,
+    mean/median Pearson over the slide's own cells) and per_slide_gene_pearson.csv (one row per
+    slide x trained gene). per_slide_by_set: set name -> trainer's `{val,test}_per_slide`.
+    Returns the per_slide_metrics rows."""
+    rank = genes_table.set_index("gene_name")["highly_variable_rank"]
+    slide_rows, gene_rows = [], []
+    for set_name, slides in per_slide_by_set.items():
+        for wsi, s in slides.items():
+            pearson = s["per_gene_pearson"]
+            slide_rows.append({
+                "set": set_name, "wsi": wsi, "n_cells": s["n_cells"],
+                "n_genes_valid": int(sum(not np.isnan(r) for r in pearson.values())),
+                "mean_pearson": s["mean_pearson"], "median_pearson": s["median_pearson"],
+            })
+            gene_rows += [
+                {"set": set_name, "wsi": wsi, "gene_name": g, "highly_variable_rank": rank[g], "pearson": r}
+                for g, r in pearson.items()
+            ]
+    pd.DataFrame(slide_rows).to_csv(output_dir / "per_slide_metrics.csv", index=False)
+    pd.DataFrame(gene_rows).to_csv(output_dir / "per_slide_gene_pearson.csv", index=False)
+    return slide_rows
+
 
 def _plot_pearson_distribution(per_gene_pearson: dict, out_path: Path) -> None:
     values = [v for v in per_gene_pearson.values() if not np.isnan(v)]
@@ -420,6 +448,12 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     per_gene_table = genes_table[genes_table["highly_variable"]][["gene_name", "highly_variable_rank"]].copy()
     per_gene_table["pearson"] = per_gene_table["gene_name"].map(best_trial["test_per_gene_pearson"])
     per_gene_table.sort_values("highly_variable_rank").to_csv(output_dir / "per_gene_pearson.csv", index=False)
+    # Per slide: Pearson over each slide's own cells (val slides too when val is a separate set).
+    per_slide_by_set = {"test": best_trial["test_per_slide"]}
+    if val_dataset is not test_dataset:
+        per_slide_by_set = {"val": best_trial["val_per_slide"], **per_slide_by_set}
+    per_slide_rows = _write_per_slide(output_dir, per_slide_by_set, genes_table)
+    test_slide_means = [r["mean_pearson"] for r in per_slide_rows if r["set"] == "test"]
 
     # Post-hoc reporting only — no retraining, no further HVG computation (see
     # _gene_interval_stats docstring): mean/median Pearson restricted to the top-N most variable
@@ -437,7 +471,10 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
             "val_median_pearson": best_trial["val_median_pearson"],
             "test_mean_pearson": best_trial["test_mean_pearson"],
             "test_median_pearson": best_trial["test_median_pearson"],
+            # Mean over test slides of each slide's own mean Pearson (== test_mean_pearson for one slide).
+            "test_slide_mean_pearson": float(np.nanmean(test_slide_means)),
         },
+        "per_slide": per_slide_rows,
         "num_genes": num_genes,
         "n_neighbors": int(cfg.data.n_neighbors),
         "gene_interval_stats": gene_interval_stats.to_dict(orient="records"),
