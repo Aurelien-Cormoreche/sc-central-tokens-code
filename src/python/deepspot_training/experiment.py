@@ -416,6 +416,10 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     per_gene = pd.Series(best_trial["test_per_gene_pearson"], name="pearson").sort_values(ascending=False)
     per_gene.dropna().head(10).to_csv(output_dir / "top10_genes.csv", header=True)
     per_gene.dropna().tail(10).to_csv(output_dir / "worst10_genes.csv", header=True)
+    # Every trained gene's test Pearson (NaN: constant over the test cells), most variable first.
+    per_gene_table = genes_table[genes_table["highly_variable"]][["gene_name", "highly_variable_rank"]].copy()
+    per_gene_table["pearson"] = per_gene_table["gene_name"].map(best_trial["test_per_gene_pearson"])
+    per_gene_table.sort_values("highly_variable_rank").to_csv(output_dir / "per_gene_pearson.csv", index=False)
 
     # Post-hoc reporting only — no retraining, no further HVG computation (see
     # _gene_interval_stats docstring): mean/median Pearson restricted to the top-N most variable

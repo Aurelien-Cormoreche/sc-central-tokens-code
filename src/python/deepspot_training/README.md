@@ -100,6 +100,7 @@ outputs_deepspot/{model_name}/{correction_name}/{all_cells|matching}/{token}/{nu
   best_val_loss_curve.npy
   best_training_curve.png
   pearson_distribution.png     # histogram of per-gene Pearson (best trial, all num_genes)
+  per_gene_pearson.csv         # gene_name, highly_variable_rank, pearson -- every trained gene, test set
   top10_genes.csv
   worst10_genes.csv
   gene_interval_stats.csv      # mean/median pearson per gene_interval value (see above)
