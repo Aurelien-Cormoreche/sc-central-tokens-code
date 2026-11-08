@@ -2,26 +2,77 @@
 
 A corrupt compressed tile makes every read_region touching it fail (TIFFRGBAImageGet failed),
 so instead of reading every cell's crop this reads each of the slide's storage tiles once,
-then flags the cells whose crop overlaps a bad tile. Slides/cells are resolved exactly as
-extraction resolves them (load_run_config + build_run_configs), so samples, wsi_filename,
-converted/raw root, cells_info_root, offsets and patch size all match.
+then flags the cells whose crop overlaps a bad tile. Slides/cells are resolved like
+extraction resolves them (samples / samples_manifest / exclude_samples, wsi_filename,
+converted/raw root, cells_info_root[_by_prefix], size, builder_kwargs offsets).
+
+CPU-only: deliberately does not import extract_embeddings.py (which pulls in torch), so
+resolve_slides() mirrors its _resolve_samples + build_run_configs path logic -- keep the
+two in sync if the config format changes.
 
 Usage (from the repo root, with .env sourced):
-    python -m src.python.extract_embeddings.check_wsi_regions configs/extract_embeddings/uni2_224_batches_2
-    python -m src.python.extract_embeddings.check_wsi_regions a.json b.json --bad-cells-csv bad_cells.csv
+    python -m src.python.extract_embeddings.check_wsi_regions configs/extract_embeddings/uni2_224.json
+    python -m src.python.extract_embeddings.check_wsi_regions a.json dir/ --bad-cells-csv bad_cells.csv
 """
 import argparse
 import contextlib
 import csv
+import json
 import os
 import sys
+from pathlib import Path
 
 import h5py
 import numpy as np
 import openslide as Openslide
 
-from .extract_embeddings import build_run_configs, load_run_config
+from src.python.code_configs import paths
 from .run_configs import _expand
+
+_CELLS_INFO_ROOTS = {'xenium_processed': paths.XENIUM_PROCESSED_OUTPUT_ROOT,
+                     'positions_converted': paths.POSITIONS_CONVERTED_ROOT}
+
+
+def _read_manifest(path: Path) -> dict[str, dict]:
+    with open(path, newline='') as f:
+        return {row['dataset']: {'converted': row['converted'].strip().lower() in ('true', '1'),
+                                 'wsi_filename': row['wsi_filename']}
+                for row in csv.DictReader(f) if row.get('status', 'ok') == 'ok'}
+
+
+def resolve_slides(config_path: Path) -> list[dict]:
+    """[{wsi_path, cells_info_path, x_size, y_size, offset_x, offset_y}] one JSON run config reads."""
+    with open(config_path) as f:
+        cfg = {k: v for k, v in json.load(f).items() if not k.startswith('_')}
+    manifest = (_read_manifest((config_path.parent / cfg['samples_manifest']).resolve())
+                if 'samples_manifest' in cfg else None)
+    samples = cfg.get('samples')
+    if samples is None:
+        infos = dict(manifest or {})
+    elif isinstance(samples, list):
+        infos = {name: (manifest or {}).get(name, {'converted': False}) for name in samples}
+    else:
+        infos = {name: {'converted': False, **(manifest or {}).get(name, {}), **(info or {})}
+                 for name, info in samples.items()}
+    for name in cfg.get('exclude_samples', []):
+        infos.pop(name, None)
+
+    size = cfg.get('size', 224)
+    builder_kwargs = cfg.get('builder_kwargs', {})
+    default_root = cfg.get('cells_info_root', 'xenium_processed')
+    by_prefix = cfg.get('cells_info_root_by_prefix', {})
+    slides = []
+    for name, info in infos.items():
+        root = info.get('cells_info_root') or next(
+            (r for prefix, r in by_prefix.items() if name.startswith(prefix)), default_root)
+        wsi_root = paths.WSI_CONVERTED_ROOT if info.get('converted') else paths.WSI_RAW_ROOT
+        slides.append({
+            'wsi_path': os.path.join(wsi_root, info.get('wsi_filename', f'{name}_he_image.ome.tif')),
+            'cells_info_path': os.path.join(_CELLS_INFO_ROOTS.get(root, root), name, 'patch_coordinates.h5'),
+            'x_size': size, 'y_size': size,
+            'offset_x': builder_kwargs.get('offset_x', 0), 'offset_y': builder_kwargs.get('offset_y', 0),
+        })
+    return slides
 
 
 @contextlib.contextmanager
@@ -83,12 +134,10 @@ def main(argv: list[str] | None = None) -> int:
     # every distinct (slide, coordinates, geometry) the configs would read
     runs = {}
     for config in _expand(args.configs):
-        for model_cfg in build_run_configs(load_run_config(config)).values():
-            for run in model_cfg['inference_runs']:
-                dc = run['dataset_configs']
-                key = (str(dc['wsi_path']), str(dc.get('cells_info_path')), dc.get('x_size'),
-                       dc.get('y_size'), dc.get('offset_x', 0), dc.get('offset_y', 0))
-                runs.setdefault(key, dc)
+        for dc in resolve_slides(config):
+            key = (dc['wsi_path'], dc['cells_info_path'], dc['x_size'], dc['y_size'],
+                   dc['offset_x'], dc['offset_y'])
+            runs.setdefault(key, dc)
     print(f"{len(runs)} slide/coordinate combination(s) to check", flush=True)
 
     scanned = {}
