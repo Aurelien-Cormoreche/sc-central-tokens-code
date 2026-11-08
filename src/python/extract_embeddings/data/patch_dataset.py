@@ -126,6 +126,9 @@ class PatchDataset(Dataset):
                 f"(wsi dims={self.wsi_w}x{self.wsi_h}): {e} -- using a black placeholder patch."
             )
             patch = Image.new('RGB', (self.x_size, self.y_size))
+            # An OpenSlide handle stays in an error state after any failed read, so
+            # every later read_region would fail too -- reopen to recover.
+            self.wsi = Openslide.OpenSlide(self.wsi_path)
 
         patch = self._maybe_mask(patch)
         if self.transform:
