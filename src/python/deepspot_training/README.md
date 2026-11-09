@@ -15,9 +15,12 @@ exactly what was changed vs. the original `DeepCellDataLoader.__init__`.
 ## Architecture (3 layers, same shape as classifier_training/, + one offline precompute step)
 
 0. **HVG precompute** (`compute_hvgs.py`, run once via `scripts/compute_hvgs.sh` on a big-memory
-   node, ~80G) — for each split's train WSIs, loads every WSI's full Xenium AnnData and ranks the
-   top `data.hvg_max_genes` (default 500) genes by (batch-corrected) variability, no cell/gene
-   subsampling shortcuts. Also flags, per gene, whether it's present in every one of that split's
+   node, ~80G) — for each split's train WSIs, loads every WSI's full Xenium AnnData and orders genes
+   by (batch-corrected) variability, no cell/gene subsampling shortcuts: each train WSI ranks its
+   genes by seurat_v3 normalised variance and keeps its top `data.hvg_max_genes` (default 500);
+   genes are then ordered as Seurat's SelectIntegrationFeatures does (scanpy's `seurat_v3_paper`):
+   by the number of train WSIs they are in the top of, then by median rank over those WSIs.
+   Also flags, per gene, whether it's present in every one of that split's
    val/test WSI(s) (`present_in_test`) — a gene ranked highly variable from the train WSIs is
    useless if it's simply absent from the panel of the WSI we'll evaluate on. Writes one CSV per
    split to `data.hvg_dir` (default `data/HVGsSplit/`). Do this **before** running any experiments.
@@ -87,7 +90,8 @@ correlation look if we only care about the most variable genes", not "train N se
 
 ```
 data/HVGsSplit/                        # written by compute_hvgs.py (data.hvg_dir)
-  {split}.csv                          # gene_name, highly_variable_rank, present_in_test
+  {split}.csv                          # gene_name, highly_variable_rank (selection order, 0 = first),
+                                       # highly_variable_nbatches, scanpy_median_rank, present_in_test
   {split}_wsis.txt                     # train WSIs used for that split's ranking
   {split}_test_wsis.txt                # val/test WSI(s) checked for gene-panel presence
 

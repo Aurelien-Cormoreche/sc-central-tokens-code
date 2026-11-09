@@ -4,18 +4,25 @@ Precompute highly-variable genes (HVGs) per split, offline, on a big-memory node
 For each split's TRAIN WSIs, loads the full Xenium AnnData (raw counts, `layers['counts']`) for
 every WSI, concatenates them (no cell subsampling, no embeddings/matching filtering — HVG selection
 is a property of the transcriptomics data alone), and ranks genes by (batch-corrected) variability
-via scanpy (`sc.pp.highly_variable_genes`, flavor="seurat_v3_paper" by default, gives a
-`highly_variable_rank` per gene) — up to `data.hvg_max_genes` (default 500; num_genes/gene_interval
-never need more). This full-cell-population computation is intentionally memory-heavy — run it on a
-large-memory node (see scripts/compute_hvgs.sh, ~80G), not as part of a regular training job.
+via scanpy (`sc.pp.highly_variable_genes`, flavor="seurat_v3_paper" by default, batch = WSI): each
+train WSI ranks its genes by seurat_v3 normalised variance and keeps its top `data.hvg_max_genes`
+(default 500); genes are then ordered as the flavor selects them (see `selection_order`: for
+seurat_v3_paper, the number of train WSIs a gene is in the top of first, then its median rank over
+those WSIs, as Seurat's SelectIntegrationFeatures). This full-cell-population computation is
+intentionally memory-heavy — run it on a large-memory node (see scripts/compute_hvgs.sh, ~80G), not
+as part of a regular training job.
 
 Also checks, for each ranked gene, whether it's present in every one of the split's val/test WSI(s)
 — a gene ranked highly variable from the train WSIs is useless if it's simply absent from the panel
 of the WSI we'll evaluate on (e.g. differing Xenium panel versions across samples).
 
 Writes, per split, into `data.hvg_dir` (default `data/HVGsSplit/`):
-  {split_label}.csv         — one row per gene: gene_name, highly_variable_rank (ascending, 0 = most
-                               variable), present_in_test (bool). Rank is independent of any later
+  {split_label}.csv         — one row per gene: gene_name, highly_variable_rank (position in the
+                               flavor's selection order, 0 = selected first; NaN if the gene is in
+                               no train WSI's top hvg_max_genes), highly_variable_nbatches (number of
+                               train WSIs it is in the top of), scanpy_median_rank (scanpy's
+                               highly_variable_rank: median within-WSI rank over those WSIs only),
+                               present_in_test (bool). The order is independent of any later
                                `num_genes` cutoff — pick any top-N later (see
                                custom_dataloader.load_hvg_table, which also applies the
                                present_in_test filter) without recomputing.
@@ -36,6 +43,31 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from omegaconf import DictConfig, OmegaConf
+
+# How sc.pp.highly_variable_genes orders genes when selecting its n_top_genes (scanpy 1.11), written
+# out so the order doesn't depend on the scanpy version: (sort columns, ascending).
+# seurat_v3_paper = Seurat's SelectIntegrationFeatures: number of batches the gene is in the top
+# n_top_genes of first, then median within-batch rank. scanpy's highly_variable_rank on its own is
+# only that median, taken over just the batches where the gene made the top n_top_genes -- ordering
+# by it alone ranks a gene that is variable in a single batch first.
+_SELECTION_SORT = {
+    "seurat_v3_paper": (["highly_variable_nbatches", "highly_variable_rank"], [False, True]),
+    "seurat_v3": (["highly_variable_rank", "highly_variable_nbatches"], [True, False]),
+}
+
+
+def selection_order(var: pd.DataFrame, flavor: str) -> np.ndarray:
+    """Each gene's position (0 = selected first) in the order `flavor` selects highly variable genes,
+    NaN for genes in no batch's top n_top_genes. `var` = adata.var after sc.pp.highly_variable_genes
+    (without a batch_key there is one batch and no highly_variable_nbatches column)."""
+    if flavor not in _SELECTION_SORT:
+        raise ValueError(f"hvg flavor {flavor!r} not supported; use one of {sorted(_SELECTION_SORT)}")
+    cols, ascending = _SELECTION_SORT[flavor]
+    ranked = var.loc[var["highly_variable_rank"].notna(), ["highly_variable_rank"]].copy()
+    ranked["highly_variable_nbatches"] = var.get("highly_variable_nbatches", pd.Series(1, index=var.index))
+    order = pd.Series(np.nan, index=var.index)
+    order[ranked.sort_values(cols, ascending=ascending, kind="stable").index] = np.arange(len(ranked))
+    return order.to_numpy()
 
 
 def _resolve_train_wsis(cfg: DictConfig, split_idx: int) -> list[str]:
@@ -77,8 +109,8 @@ def compute_split_hvgs(
     max_genes: int = 500,
 ) -> pd.DataFrame:
     """Concatenate every train WSI's raw counts (full cell population, no cell subsampling — uses
-    everything) and rank genes by (batch-corrected) variability, keeping rank info for only the top
-    `max_genes` (num_genes/gene_interval never need more than that; genes outside the top `max_genes`
+    everything) and order genes by (batch-corrected) variability as `flavor` selects them (see
+    `selection_order`), each WSI contributing its top `max_genes` (genes in no WSI's top `max_genes`
     get a NaN rank and are simply never selected downstream). Also flags, per gene, whether it's
     present in every WSI in `val_wsis`."""
     adatas = []
@@ -104,9 +136,13 @@ def compute_split_hvgs(
         val_adata = sc.read_h5ad(adata_path_template.format(sample=wsi), backed="r")
         present_in_test &= np.isin(gene_names, val_adata.var_names.to_numpy())
 
+    var = combined.var
+    nbatches = var.get("highly_variable_nbatches", var["highly_variable_rank"].notna().astype(int))
     genes = pd.DataFrame({
         "gene_name": gene_names,
-        "highly_variable_rank": combined.var["highly_variable_rank"].to_numpy(),
+        "highly_variable_rank": selection_order(var, flavor),
+        "highly_variable_nbatches": nbatches.to_numpy(),
+        "scanpy_median_rank": var["highly_variable_rank"].to_numpy(),
         "present_in_test": present_in_test,
     })
     genes = genes.sort_values("highly_variable_rank", na_position="last").reset_index(drop=True)

@@ -43,6 +43,8 @@ from deepspot.utils.utils_dataloader import (
     spatial_upsample_and_smooth,
 )
 
+from src.python.deepspot_training.compute_hvgs import selection_order
+
 
 # ── data loading ─────────────────────────────────────────────────────────────────
 
@@ -86,11 +88,12 @@ def _compute_highly_variable_genes(
 ) -> pd.DataFrame:
     """
     Select the `num_genes` most (batch-corrected) highly variable genes — this is the trained gene
-    set. One `sc.pp.highly_variable_genes` call (flavor="seurat_v3_paper"/"seurat_v3" gives a
-    `highly_variable_rank` per selected gene, 0 = most variable), so downstream reporting can slice
-    "top-N most variable of the trained set" (`gene_interval` in experiment.py) without any further
-    HVG (re)computation — training happens once, on `num_genes`; `gene_interval` only affects how
-    validation-set correlations are aggregated afterwards, not what's trained on.
+    set. One `sc.pp.highly_variable_genes` call; `highly_variable_rank` is each gene's position in
+    the flavor's selection order (compute_hvgs.selection_order, 0 = selected first), so downstream
+    reporting can slice "top-N most variable of the trained set" (`gene_interval` in experiment.py)
+    without any further HVG (re)computation — training happens once, on `num_genes`;
+    `gene_interval` only affects how validation-set correlations are aggregated afterwards, not
+    what's trained on.
     """
     adata = ad.AnnData(
         counts.values.astype(np.float32),
@@ -100,9 +103,10 @@ def _compute_highly_variable_genes(
 
     sc.pp.highly_variable_genes(adata, flavor=flavor, batch_key=batch_key, n_top_genes=num_genes)
 
+    order = selection_order(adata.var, flavor)
     genes = pd.DataFrame({"gene_name": counts.columns.values}, index=counts.columns)
-    genes["highly_variable"] = adata.var["highly_variable"].values
-    genes["highly_variable_rank"] = adata.var["highly_variable_rank"].values
+    genes["highly_variable"] = order < num_genes
+    genes["highly_variable_rank"] = order
     return genes
 
 
@@ -241,11 +245,19 @@ def load_hvg_table(path: str, num_genes: int) -> pd.DataFrame:
     Load a precomputed HVG ranking (see compute_hvgs.py): drop genes not present in every val/test
     WSI of that split (the `present_in_test` column — ranked-variable-in-train is useless if the
     gene is simply absent from the panel we'll evaluate on), then select the `num_genes` most
-    variable genes among what's left (by `highly_variable_rank`, ascending). The rank itself is
-    independent of num_genes (computed once over the full train-WSI gene panel), so any num_genes
-    cutoff can be derived from the same file without recomputing anything.
+    variable genes among what's left (by `highly_variable_rank`, ascending: the HVG flavor's
+    selection order). The order itself is independent of num_genes (computed once over the full
+    train-WSI gene panel), so any num_genes cutoff can be derived from the same file without
+    recomputing anything.
     """
     genes = pd.read_csv(path)
+    if "highly_variable_nbatches" not in genes.columns:
+        # Older files ranked by scanpy's median rank alone, which puts genes variable in a single
+        # train WSI first (see compute_hvgs.selection_order).
+        raise ValueError(
+            f"{path!r} was written before compute_hvgs.py ordered genes as the HVG flavor selects "
+            "them; recompute it (sbatch scripts/compute_hvgs.sh --config-name=...)."
+        )
     if "present_in_test" in genes.columns:
         genes = genes[genes["present_in_test"]].copy()
 
