@@ -39,7 +39,6 @@ from tqdm import tqdm
 from deepspot.cell.dataloader import DeepCellDataLoader
 from deepspot.utils.utils_dataloader import (
     get_balanced_index,
-    log1p_normalization,
     spatial_upsample_and_smooth,
 )
 
@@ -134,7 +133,9 @@ def load_data(
             see src/python/code_configs/paths.py and .env.example).
         embeddings_dir: directory containing `{sample}/embeddings_dataset.h5`
             (i.e. f"{base_dir}/{model_name}_h5/{correction_name}").
-        factor: log1p normalization target sum (ignored if raw_counts=True).
+        factor: log1p normalization target sum (ignored if raw_counts=True): y =
+            log1p(counts / cell total * factor), the cell total taken over the sample's full gene
+            panel, not just the selected genes (as DeepSpot's load_data).
         raw_counts: if True, skip log1p normalization and return raw counts.
         highly_variable_genes: gene table with `gene_name`/`highly_variable`/`highly_variable_rank`
             columns (see `load_hvg_table` for the precomputed-file case, or `_compute_highly_variable_genes`
@@ -161,7 +162,7 @@ def load_data(
     node) and pass the result in as `highly_variable_genes` instead — then this function never
     densifies more than `num_genes` columns per sample, independent of full panel size.
     """
-    y_parts, X_parts, coords_parts = [], [], []
+    y_parts, X_parts, coords_parts, totals_parts = [], [], [], []
 
     kept_gene_names: Optional[np.ndarray] = None
     if highly_variable_genes is not None:
@@ -171,6 +172,10 @@ def load_data(
 
     for sample in tqdm(samples, desc="Loading samples"):
         adata = sc.read_h5ad(adata_path.format(sample=sample))
+        # Per-cell totals over the sample's full panel, before any gene restriction: log1p
+        # normalisation divides by them, as DeepSpot's load_data does (it normalises the whole
+        # panel and only then keeps genes_to_keep).
+        cell_totals = np.asarray(adata.layers["counts"].sum(axis=1), dtype=np.float32).ravel()
 
         # Gene panel already known (precomputed HVGs, or val split reusing train's table) — restrict
         # to just those columns before densifying anything, regardless of full panel size.
@@ -207,6 +212,7 @@ def load_data(
         index = [f"{b}_{sample}" for b in common]
 
         y_parts.append(pd.DataFrame(sample_counts, index=index, columns=adata.var_names))
+        totals_parts.append(cell_totals[adata_idx])
         X_parts.append(pd.DataFrame(embeddings[emb_idx], index=index))
         coords_parts.append(pd.DataFrame({
             "x_centroid": sample_obs["x_centroid"].to_numpy(),
@@ -235,7 +241,10 @@ def load_data(
 
     gene_names = y.columns
     if not raw_counts:
-        y = pd.DataFrame(log1p_normalization(y.values, factor=factor), index=y.index, columns=gene_names)
+        # DeepSpot's log1p_normalization, but with full-panel cell totals (summing y's columns
+        # would only count the selected genes).
+        totals = np.concatenate(totals_parts)
+        y = pd.DataFrame(np.log1p(y.values / (totals[:, None] + 1e-12) * factor), index=y.index, columns=gene_names)
 
     return {"y": y, "X": X, "coords": coords, "genes": genes}
 
