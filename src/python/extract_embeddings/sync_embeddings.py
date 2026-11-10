@@ -31,7 +31,8 @@ Per-cell modes only ('patch', 'resized'): in 'multicell' a cell's embedding depe
 it falls in. Not for providers that fit a PCA on the slide's cells (Dummy): the added cells
 would be projected on a different basis.
 
-Usage (repo root, .env sourced; a GPU unless --dry-run):
+Usage (repo root, .env sourced; a GPU unless --dry-run, which never imports torch so it also runs
+on a login node that can't load torch's CUDA libraries):
     python -m src.python.extract_embeddings.sync_embeddings configs/extract_embeddings/uni2_224.json --dry-run
     python -m src.python.extract_embeddings.sync_embeddings configs/extract_embeddings/uni2_224.json --samples GSM7990540
     sbatch scripts/sync_embeddings.sh configs/extract_embeddings/uni2_224.json
@@ -39,6 +40,7 @@ Usage (repo root, .env sourced; a GPU unless --dry-run):
 import argparse
 import contextlib
 import copy
+import csv
 import json
 import os
 import shutil
@@ -49,10 +51,8 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from .data.patch_dataset import PatchDataset
-from .data.resized_cell_dataset import ResizedCellDataset
-from .extract_embeddings import _input_paths, build_run_configs, extract_embeddings, is_extracted, load_run_config
-from .run_configs import _expand
+from src.python.code_configs import paths
+from .run_configs import _expand   # torch-free; extract_embeddings.py (torch) is imported only to extract
 
 TMP_DIR = '_sync_tmp'
 MERGED_SUFFIX = '.sync_tmp'
@@ -320,9 +320,48 @@ def _print_plan(plans: list[dict]) -> None:
           f"to relabel {sum(p['n_relabel'] for p in actionable):,}", flush=True)
 
 
+_CELLS_INFO_ROOTS = {'xenium_processed': paths.XENIUM_PROCESSED_OUTPUT_ROOT,
+                     'positions_converted': paths.POSITIONS_CONVERTED_ROOT}
+_DEFAULT_OUTPUT_SUFFIX = {'patch': '_h5', 'resized': '_resized_h5', 'multicell': '_multicell_h5'}
+
+
+def _light_runs(config_path: Path) -> tuple[dict, list[dict]]:
+    """(config, [{output_path, dataset_configs: {cells_info_path}}]) for --dry-run, without
+    importing extract_embeddings.py (torch). Mirrors its _resolve_samples + build_run_configs
+    path logic (as check_wsi_regions does) -- keep in sync; the real run uses build_run_configs."""
+    with open(config_path) as f:
+        cfg = {k: v for k, v in json.load(f).items() if not k.startswith('_')}
+    samples = cfg.get('samples')
+    if samples is None:
+        with open((Path(config_path).parent / cfg['samples_manifest']).resolve(), newline='') as f:
+            infos = {row['dataset']: {} for row in csv.DictReader(f) if row.get('status', 'ok') == 'ok'}
+    elif isinstance(samples, list):
+        infos = {name: {} for name in samples}
+    else:
+        infos = {name: dict(info or {}) for name, info in samples.items()}
+    for name in cfg.get('exclude_samples', []):
+        infos.pop(name, None)
+    out_root = (Path(paths.DATASETS_ROOT)
+                / (cfg.get('model_output_dir', cfg['model_name']) + cfg.get('output_suffix', _DEFAULT_OUTPUT_SUFFIX[cfg['mode']]))
+                / cfg.get('correction_name', 'raw'))
+    default_root = cfg.get('cells_info_root', 'xenium_processed')
+    by_prefix = cfg.get('cells_info_root_by_prefix', {})
+    runs = []
+    for name, info in infos.items():
+        root = info.get('cells_info_root') or next(
+            (r for prefix, r in by_prefix.items() if name.startswith(prefix)), default_root)
+        coords = Path(_CELLS_INFO_ROOTS.get(root, root)) / name / 'patch_coordinates.h5'
+        runs.append({'output_path': str(out_root / name), 'dataset_configs': {'cells_info_path': str(coords)}})
+    return cfg, runs
+
+
 def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, keep_old: bool) -> list[str]:
     """Sync every slide of one JSON run config. Returns '<sample>: <error>' for each failure."""
-    cfg = load_run_config(config_path)
+    if dry_run:
+        cfg, runs = _light_runs(config_path)
+    else:
+        from .extract_embeddings import build_run_configs, load_run_config
+        cfg = load_run_config(config_path)
     print(f"\n=== {config_path} ===", flush=True)
     if cfg['mode'] == 'multicell':
         print("[sync] mode 'multicell' is not supported (a cell's embedding depends on its tile); skipping")
@@ -330,8 +369,10 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
     if cfg['model_name'] == 'Dummy':
         print("[sync] the Dummy provider fits a PCA on the slide's cells; re-extract instead; skipping")
         return []
-    (model_name, model_cfg), = build_run_configs(cfg).items()
-    runs = [r for r in model_cfg['inference_runs'] if not samples or Path(r['output_path']).name in samples]
+    if not dry_run:
+        (model_name, model_cfg), = build_run_configs(cfg).items()
+        runs = model_cfg['inference_runs']
+    runs = [r for r in runs if not samples or Path(r['output_path']).name in samples]
 
     plans = []
     for run in runs:
@@ -342,6 +383,10 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
     _print_plan(plans)
     if dry_run:
         return []
+
+    from .data.patch_dataset import PatchDataset
+    from .data.resized_cell_dataset import ResizedCellDataset
+    from .extract_embeddings import _input_paths, extract_embeddings, is_extracted
 
     failures = []
     for p in (p for p in plans if p['action'] == 'relabel'):
