@@ -42,7 +42,7 @@ _CELLS_INFO_ROOTS = {'xenium_processed': paths.XENIUM_PROCESSED_OUTPUT_ROOT,
                      'positions_converted': paths.POSITIONS_CONVERTED_ROOT}
 _DEFAULT_OUTPUT_SUFFIX = {'patch': '_h5', 'resized': '_resized_h5', 'multicell': '_multicell_h5'}
 
-# kept / current cells below this -> ids were not conserved, re-extract the whole slide
+# kept / embedded cells below this -> ids were not conserved, re-extract the whole slide
 IDS_CHANGED_BELOW = 0.5
 
 
@@ -82,48 +82,64 @@ def resolve_slides(config_path: Path) -> list[dict]:
     return slides
 
 
-def _as_str(values: np.ndarray) -> np.ndarray:
-    if values.dtype.kind == 'U':
-        return values
-    if values.dtype.kind == 'S':
-        return np.char.decode(values, 'utf-8')
-    return np.array([v.decode('utf-8') if isinstance(v, bytes) else str(v) for v in values], dtype=str)
+def _key(v, strip_prefix: bool = False) -> bytes:
+    b = bytes(v) if isinstance(v, bytes) else str(v).encode('utf-8')
+    return b.rsplit(b'_', 1)[-1] if strip_prefix else b
+
+
+def _hash(values: np.ndarray, strip_prefix: bool = False) -> np.ndarray:
+    """int64 hash of every id/label. Set operations run on these instead of the strings: a
+    fixed-width unicode array of ~1M 73-char ids is ~300 MB and np.intersect1d copies it several
+    times (ran out of memory on a login node). 64-bit hashes of ~1M ids: collision odds ~1e-7."""
+    return np.fromiter((hash(_key(v, strip_prefix)) for v in values), dtype=np.int64, count=len(values))
+
+
+def _decode(v) -> str:
+    return bytes(v).decode('utf-8') if isinstance(v, bytes) else str(v)
 
 
 def _read(path: Path, id_key: str, label_key: str) -> tuple[np.ndarray, np.ndarray]:
+    """Raw ids and labels as h5py returns them (bytes objects / fixed-width bytes), not decoded."""
     with h5py.File(path, 'r', locking=False) as f:
-        return _as_str(f[id_key][()]), _as_str(f[label_key][()])
+        return f[id_key][()], f[label_key][()]
+
+
+def _unique_idx(h: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Indices where mask is set, one per distinct hash, in file order."""
+    idx = np.flatnonzero(mask)
+    _, first = np.unique(h[idx], return_index=True)
+    return idx[np.sort(first)]
 
 
 def compare(emb_ids, emb_labels, new_ids, new_labels) -> dict:
-    written = emb_ids != ''
+    written = np.fromiter((len(v) > 0 for v in emb_ids), dtype=bool, count=len(emb_ids))
     n_unwritten = int((~written).sum())
     emb_ids, emb_labels = emb_ids[written], emb_labels[written]
 
     stripped = False
-    common, i_emb, i_new = np.intersect1d(emb_ids, new_ids, return_indices=True)
-    if len(common) < IDS_CHANGED_BELOW * min(len(emb_ids), len(new_ids)):
+    eh, nh = _hash(emb_ids), _hash(new_ids)
+    common, i_emb, i_new = np.intersect1d(eh, nh, return_indices=True)
+    if len(common) < IDS_CHANGED_BELOW * min(len(eh), len(nh)):
         # maybe only the id formatting changed (e.g. a '{sample}_' prefix added/dropped)
-        e2 = np.array([c.rsplit('_', 1)[-1] for c in emb_ids], dtype=str)
-        n2 = np.array([c.rsplit('_', 1)[-1] for c in new_ids], dtype=str)
-        common2, i_emb2, i_new2 = np.intersect1d(e2, n2, return_indices=True)
+        eh2, nh2 = _hash(emb_ids, strip_prefix=True), _hash(new_ids, strip_prefix=True)
+        common2, i_emb2, i_new2 = np.intersect1d(eh2, nh2, return_indices=True)
         if len(common2) > len(common):
-            stripped = True
-            emb_ids, new_ids = e2, n2
+            stripped, eh, nh = True, eh2, nh2
             common, i_emb, i_new = common2, i_emb2, i_new2
 
-    removed = np.setdiff1d(emb_ids, new_ids)
-    added = np.setdiff1d(new_ids, emb_ids)
-    changed = emb_labels[i_emb] != new_labels[i_new]
-    order_kept = len(common) < 2 or bool(np.all(np.diff(i_new[np.argsort(i_emb)]) > 0))
+    changed = _hash(emb_labels[i_emb]) != _hash(new_labels[i_new])
+    old_l, new_l = emb_labels[i_emb[changed]], new_labels[i_new[changed]]
+    n_new_unique = len(np.unique(nh))
     return {
-        'n_emb': len(emb_ids) + n_unwritten, 'n_unwritten': n_unwritten, 'n_new': len(new_ids),
-        'n_new_unique': len(np.unique(new_ids)),
-        'dup_emb': len(emb_ids) - len(np.unique(emb_ids)), 'dup_new': len(new_ids) - len(np.unique(new_ids)),
-        'kept': len(common), 'removed': removed, 'added': added, 'stripped': stripped,
-        'label_changed': list(zip(common[changed], emb_labels[i_emb][changed], new_labels[i_new][changed])),
-        'transitions': Counter(zip(emb_labels[i_emb][changed], new_labels[i_new][changed])),
-        'order_kept': order_kept,
+        'n_emb': len(eh) + n_unwritten, 'n_written': len(eh), 'n_unwritten': n_unwritten,
+        'n_new': len(nh), 'n_new_unique': n_new_unique,
+        'dup_emb': len(eh) - len(np.unique(eh)), 'dup_new': len(nh) - n_new_unique,
+        'kept': len(common), 'stripped': stripped,
+        'removed': emb_ids[_unique_idx(eh, ~np.isin(eh, nh))],
+        'added': new_ids[_unique_idx(nh, ~np.isin(nh, eh))],
+        'changed_ids': new_ids[i_new[changed]], 'old_labels': old_l, 'new_labels': new_l,
+        'transitions': Counter(zip(map(_decode, old_l), map(_decode, new_l))),
+        'order_kept': len(common) < 2 or bool(np.all(np.diff(i_new[np.argsort(i_emb)]) > 0)),
     }
 
 
@@ -131,13 +147,13 @@ def verdict(r: dict) -> tuple[str, int]:
     """(status, cells to extract)."""
     if r['n_unwritten']:
         return 'INCOMPLETE', r['n_new_unique']      # skip_existing re-extracts the whole slide anyway
-    if r['kept'] < IDS_CHANGED_BELOW * r['n_new_unique']:
-        return 'IDS_CHANGED', r['n_new_unique']
+    if r['kept'] < IDS_CHANGED_BELOW * r['n_written']:
+        return 'IDS_CHANGED', r['n_new_unique']     # most embedded cells are gone: ids not conserved
     if len(r['added']) or len(r['removed']):
         return 'PATCH', len(r['added'])
     if r['stripped']:
         return 'ID_FORMAT', 0                        # same cells, but the id strings differ
-    if r['label_changed']:
+    if len(r['changed_ids']):
         return 'LABELS_ONLY', 0
     return 'unchanged', 0
 
@@ -160,44 +176,53 @@ def main(argv: list[str] | None = None) -> int:
     header = (f"{'status':13} {'sample':64} {'embedded':>9} {'current':>9} {'kept':>9} {'removed':>8} "
               f"{'added':>8} {'label Δ':>8} {'order':>5} {'to extract':>10}")
 
+    # written slide by slide: across all slides this can be millions of rows
+    ids_file = open(args.ids_csv, 'w', newline='') if args.ids_csv else None
+    writer = csv.writer(ids_file) if ids_file else None
+    if writer:
+        writer.writerow(['sample', 'cell_id', 'change', 'old_label', 'new_label'])
+    n_rows = 0
+
     statuses = Counter()
     to_extract = Counter()
     n_removed = n_relabel = 0
-    details, rows = [], []
+    details = []
     out_root = None
     for s in slides.values():
         name = s['sample']
         if s['out_root'] != out_root:
             out_root = s['out_root']
-            print(f"\n### {out_root}\n{header}")
+            print(f"\n### {out_root}\n{header}", flush=True)
         if not s['coords_path'].exists():
-            print(f"{'NO_COORDS':13} {name:64} {s['coords_path']}")
+            has_emb = 'embeddings exist' if s['emb_path'].exists() else 'no embeddings either'
+            print(f"{'NO_COORDS':13} {name:64} ({has_emb}) {s['coords_path']}", flush=True)
             statuses['NO_COORDS'] += 1
             continue
         new_ids, new_labels = _read(s['coords_path'], 'cell_id', 'cell_type')
         if not s['emb_path'].exists():
-            n = len(np.unique(new_ids))
+            n = len(np.unique(_hash(new_ids)))
             print(f"{'NOT_EXTRACTED':13} {name:64} {'-':>9} {len(new_ids):9,} {'':>9} {'':>8} {'':>8} {'':>8} "
-                  f"{'':>5} {n:10,}")
+                  f"{'':>5} {n:10,}", flush=True)
             statuses['NOT_EXTRACTED'] += 1
             to_extract['NOT_EXTRACTED'] += n
             continue
         try:
             emb_ids, emb_labels = _read(s['emb_path'], 'cell_ids', 'cell_labels')
         except (OSError, KeyError) as e:
-            print(f"{'UNREADABLE':13} {name:64} {type(e).__name__}: {e}")
+            print(f"{'UNREADABLE':13} {name:64} {type(e).__name__}: {e}", flush=True)
             statuses['UNREADABLE'] += 1
             continue
 
         r = compare(emb_ids, emb_labels, new_ids, new_labels)
+        del emb_ids, emb_labels, new_ids, new_labels
         status, n_extract = verdict(r)
         statuses[status] += 1
         to_extract[status] += n_extract
         n_removed += len(r['removed'])
-        n_relabel += len(r['label_changed'])
+        n_relabel += len(r['changed_ids'])
         order = '-' if r['kept'] < 2 else 'yes' if r['order_kept'] else 'NO'
         print(f"{status:13} {name:64} {r['n_emb']:9,} {r['n_new']:9,} {r['kept']:9,} {len(r['removed']):8,} "
-              f"{len(r['added']):8,} {len(r['label_changed']):8,} {order:>5} {n_extract:10,}")
+              f"{len(r['added']):8,} {len(r['changed_ids']):8,} {order:>5} {n_extract:10,}", flush=True)
 
         notes = []
         if r['n_unwritten']:
@@ -207,17 +232,21 @@ def main(argv: list[str] | None = None) -> int:
         if r['dup_emb'] or r['dup_new']:
             notes.append(f"duplicate ids: {r['dup_emb']:,} embedded, {r['dup_new']:,} current")
         if len(r['added']):
-            notes.append("added e.g. " + ", ".join(r['added'][:3]))
+            notes.append("added e.g. " + ", ".join(map(_decode, r['added'][:3])))
         if len(r['removed']):
-            notes.append("removed e.g. " + ", ".join(r['removed'][:3]))
+            notes.append("removed e.g. " + ", ".join(map(_decode, r['removed'][:3])))
         if r['transitions']:
-            notes.append("labels " + ", ".join(f"{a}->{b} ({n})" for (a, b), n in r['transitions'].most_common(3)))
+            notes.append("labels " + ", ".join(f"{a}->{b} ({n:,})" for (a, b), n in r['transitions'].most_common(5)))
         if notes:
             details.append((f"{name}  ({s['emb_path'].parent.parent.parent.name})", notes))
 
-        rows += [(name, c, 'added', '', '') for c in r['added']]
-        rows += [(name, c, 'removed', '', '') for c in r['removed']]
-        rows += [(name, c, 'label_changed', a, b) for c, a, b in r['label_changed']]
+        if writer:
+            writer.writerows((name, _decode(c), 'added', '', '') for c in r['added'])
+            writer.writerows((name, _decode(c), 'removed', '', '') for c in r['removed'])
+            writer.writerows((name, _decode(c), 'label_changed', _decode(a), _decode(b))
+                             for c, a, b in zip(r['changed_ids'], r['old_labels'], r['new_labels']))
+            n_rows += len(r['added']) + len(r['removed']) + len(r['changed_ids'])
+            ids_file.flush()
 
     if details:
         print("\n## details")
@@ -236,12 +265,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"kept cells with a stale cell_labels entry: {n_relabel:,}")
     print("(kept cells are assumed not to have moved: embeddings_dataset.h5 stores no coordinates)")
 
-    if args.ids_csv:
-        with open(args.ids_csv, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['sample', 'cell_id', 'change', 'old_label', 'new_label'])
-            writer.writerows(rows)
-        print(f"wrote {len(rows):,} row(s) to {args.ids_csv}")
+    if ids_file:
+        ids_file.close()
+        print(f"wrote {n_rows:,} row(s) to {args.ids_csv}")
     return 0
 
 
