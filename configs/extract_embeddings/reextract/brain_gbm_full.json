@@ -1,0 +1,14 @@
+{
+  "_comment": "UNI2 224 native patch, full re-extraction of the GBM slide against its regenerated patch_coordinates.h5 -> $DATASETS_ROOT/UNI2_h5/raw/{sample}. skip_existing false: the existing embeddings_dataset.h5 is overwritten as soon as the run starts. Same settings as uni2_224.json.",
+  "model_name": "UNI2",
+  "mode": "patch",
+  "size": 224,
+  "output_suffix": "_h5",
+  "batch_size": 256,
+  "save_cls": true,
+  "samples_manifest": "../../../notebooks/wsi_openslide_manifest.csv",
+  "samples": [
+    "Xenium_V1_Human_Brain_GBM_FFPE"
+  ],
+  "skip_existing": false
+}

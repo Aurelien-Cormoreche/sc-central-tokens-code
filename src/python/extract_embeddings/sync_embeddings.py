@@ -20,9 +20,11 @@ otherwise the new file is written next to the old one (embeddings_dataset.h5.syn
 read back one by one, against their source) and moved over embeddings_dataset.h5. With
 --keep-old the previous file is kept as embeddings_dataset.before_sync.h5.
 
-Left alone and reported: slides whose ids were not conserved (under half the embedded cells
-still present -- re-extract those from scratch), unfinished embeddings files, duplicate ids, and
-files holding other per-cell datasets the extraction does not write (e.g. 'matching').
+Other per-cell datasets that the extraction does not write and that were added to the file later
+(e.g. 'matching', 'x_centroid', 'y_centroid') can't be filled for the added cells: a merged file
+leaves them out (the plan and the merge log name them). Left alone and reported: slides whose ids
+were not conserved (under half the embedded cells still present -- re-extract those from
+scratch), unfinished embeddings files, and duplicate ids.
 
 Re-running is safe: a synced slide comes out unchanged, and a finished temporary extraction is
 reused (is_extracted), so a killed job picks up where it stopped.
@@ -137,14 +139,14 @@ def plan_slide(run: dict) -> dict:
     added_rows = np.flatnonzero(old_idx < 0)
     n_kept, n_removed = len(kept_rows), n_old - len(kept_rows)
     n_relabel = sum(_key(a) != _key(b) for a, b in zip(old_labels[old_idx[kept_rows]], new_labels[kept_rows]))
-    plan.update(n_kept=n_kept, n_removed=n_removed, n_added=len(added_rows), n_relabel=int(n_relabel))
+    plan.update(n_kept=n_kept, n_removed=n_removed, n_added=len(added_rows), n_relabel=int(n_relabel),
+                extra=extra)
 
     if n_kept < IDS_CHANGED_BELOW * n_old:
         return {**plan, 'action': 'skip', 'why': "ids not conserved -- delete the file and re-extract the slide"}
     if not len(added_rows) and not n_removed and np.array_equal(old_idx, np.arange(n_old)):
         return {**plan, 'action': 'relabel' if n_relabel else 'unchanged'}
-    if extra:
-        return {**plan, 'action': 'skip', 'why': f"per-cell datasets the extraction does not write: {extra}"}
+    # per-cell datasets the extraction does not write (`extra`) are left out of the merged file
     return {**plan, 'action': 'merge', 'old_idx': old_idx, 'added_rows': added_rows}
 
 
@@ -311,7 +313,9 @@ def _print_plan(plans: list[dict]) -> None:
                     f"{p['n_added']:8,} {p['n_relabel']:8,}")
         else:
             nums = ''
-        print(f"{p['action']:10} {p['name']:64} {nums}" + (f"  ({p['why']})" if p['action'] == 'skip' else ''))
+        note = (f"  ({p['why']})" if p['action'] == 'skip'
+                else f"  (drops {', '.join(p['extra'])})" if p['action'] == 'merge' and p['extra'] else '')
+        print(f"{p['action']:10} {p['name']:64} {nums}{note}")
     actionable = [p for p in plans if p['action'] in ('merge', 'relabel')]
     print(f"-> {sum(p['action'] == 'merge' for p in plans)} to merge, {sum(p['action'] == 'relabel' for p in plans)} "
           f"to relabel, {sum(p['action'] == 'unchanged' for p in plans)} unchanged, "
@@ -355,7 +359,8 @@ def _light_runs(config_path: Path) -> tuple[dict, list[dict]]:
     return cfg, runs
 
 
-def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, keep_old: bool) -> list[str]:
+def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, keep_old: bool,
+                exclude: list[str] | None = None) -> list[str]:
     """Sync every slide of one JSON run config. Returns '<sample>: <error>' for each failure."""
     if dry_run:
         cfg, runs = _light_runs(config_path)
@@ -372,7 +377,8 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
     if not dry_run:
         (model_name, model_cfg), = build_run_configs(cfg).items()
         runs = model_cfg['inference_runs']
-    runs = [r for r in runs if not samples or Path(r['output_path']).name in samples]
+    runs = [r for r in runs if (not samples or Path(r['output_path']).name in samples)
+            and Path(r['output_path']).name not in (exclude or [])]
 
     plans = []
     for run in runs:
@@ -422,7 +428,8 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
         try:
             merge_slide(p, keep_old)
             print(f"[sync] merged {p['name']}: {p['n_new']:,} cells ({p['n_added']:,} added, "
-                  f"{p['n_removed']:,} removed, {p['n_relabel']:,} relabelled)", flush=True)
+                  f"{p['n_removed']:,} removed, {p['n_relabel']:,} relabelled)"
+                  + (f", dropped {', '.join(p['extra'])}" if p['extra'] else ''), flush=True)
         except Exception as e:
             failures.append(f"{p['name']}: {type(e).__name__}: {e}")
     return failures
@@ -432,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('configs', nargs='+', help="extraction JSON configs and/or directories of them")
     parser.add_argument('--samples', nargs='*', help="only these samples (default: every sample in the configs)")
+    parser.add_argument('--exclude-samples', nargs='*', default=[],
+                        help="leave these samples alone (e.g. one being re-extracted in full at the same time)")
     parser.add_argument('--dry-run', action='store_true', help="only print what would be done (no model, no writes)")
     parser.add_argument('--keep-old', action='store_true',
                         help=f"keep each replaced file as {BACKUP_NAME} (default: overwritten)")
@@ -439,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
 
     failures = []
     for config in _expand(args.configs):
-        failures += sync_config(config, args.samples, args.dry_run, args.keep_old)
+        failures += sync_config(config, args.samples, args.dry_run, args.keep_old, args.exclude_samples)
     print(f"\n=== done: {len(failures)} failure(s) ===")
     for f in failures:
         print(f"  FAILED {f}")
