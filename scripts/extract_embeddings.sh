@@ -9,6 +9,10 @@
 #   sbatch scripts/extract_embeddings.sh configs/extract_embeddings/          # every *.json in the folder
 #   CONDA_ENV=myenv sbatch --time=24:00:00 scripts/extract_embeddings.sh ...  # other env / resources
 #
+# 8 CPUs / 32 GB: extraction is GPU-bound (8 loader workers read ~6k patches/s, far above what
+# the GPU consumes) and jobs peak at 2-4 GB RSS (scripts/profile_pipeline.py). For ~3x UNI2
+# throughput set "precision": "fp16" in the JSON config.
+#
 # Check what would run first (no GPU needed):
 #   python -m src.python.extract_embeddings.run_configs configs/extract_embeddings/uni2_224.json --dry-run
 #
@@ -16,9 +20,9 @@
 # WSI_RAW_ROOT, WSI_CONVERTED_ROOT, + the boundary/alignment roots if save_cell/save_nucleus).
 #SBATCH -p gpu
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --ntasks=1
-#SBATCH --mem=64G
+#SBATCH --mem=32G
 #SBATCH --time=72:00:00
 #SBATCH --job-name=extract_embeddings
 #SBATCH --output=./extract_embeddings_%j.out.txt

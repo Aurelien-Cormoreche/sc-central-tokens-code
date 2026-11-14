@@ -17,6 +17,10 @@ _NUM_PATCHES_PER_SIDE = 16
 
 class UNI2InferenceProvider(InferenceProvider):
 
+    # fp16 autocast: ~3x the fp32 throughput on RTX 4090/5090, ~4.5x on V100, at 0.1-0.6%
+    # relative L2 drift of the central-token embeddings (scripts/profile_pipeline.py, E4/E5).
+    supported_precisions = ('fp32', 'fp16', 'bf16')
+
     def __init__(self, patches_to_save: dict[str, tuple[int, int]] =
              {'top_left':(7,7), 'top_right':(7,8), 'bottom_left':(8,7), 'bottom_right':(8,8)}):
         super().__init__(patches_to_save)
@@ -98,7 +102,7 @@ class UNI2InferenceProvider(InferenceProvider):
         for subset_idx, (patches, labels, cell_ids) in enumerate(tqdm(dataloader, desc="Attention")):
             global_idx = vis_indices[subset_idx]
             patches = patches.to(self.device)
-            with torch.inference_mode():
+            with torch.inference_mode(), self.autocast():
                 self.model.forward_features(patches)
 
             attn_by_query = self._collect_attention_maps(capture, local_idx=0)
@@ -153,8 +157,8 @@ class UNI2InferenceProvider(InferenceProvider):
         try:
             for batch_idx, (patches, labels, cell_ids) in enumerate(tqdm(dataloader, desc="Inference", total=len(dataloader))):
                 patches = patches.to(self.device)
-                with torch.inference_mode():
-                    outputs = self.model.forward_features(patches)
+                with torch.inference_mode(), self.autocast():
+                    outputs = self.model.forward_features(patches).float()
 
                 patch_tokens = outputs[:, self.tokens_to_remove:]
                 tokens_to_save = []
@@ -229,8 +233,8 @@ class UNI2InferenceProvider(InferenceProvider):
 
         for batch_idx, (patches, batch_rel_xs, batch_rel_ys, batch_cell_ids, batch_cell_labels) in enumerate(tqdm(dataloader, desc="Multicell Inference")):
             patches = patches.to(self.device)
-            with torch.inference_mode():
-                outputs = self.model.forward_features(patches)
+            with torch.inference_mode(), self.autocast():
+                outputs = self.model.forward_features(patches).float()
 
             spatial_tokens = outputs[:, self.tokens_to_remove:]  # (B, N_spatial, D)
             spatial = spatial_tokens.reshape(spatial_tokens.shape[0], S, S, spatial_tokens.shape[-1])

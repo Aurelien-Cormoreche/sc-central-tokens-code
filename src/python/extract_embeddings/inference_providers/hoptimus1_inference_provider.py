@@ -19,6 +19,10 @@ _PATCH_SIZE = 14
 
 class HOptimus1InferenceProvider(InferenceProvider):
 
+    # forward passes run under fp16 autocast (see InferenceProvider.precision)
+    precision = 'fp16'
+    supported_precisions = ('fp16',)
+
     def __init__(self, patches_to_save: dict[str, tuple[int, int]] =
                  {'top_left': (7, 7), 'top_right': (7, 8), 'bottom_left': (8, 7), 'bottom_right': (8, 8)}):
         super().__init__(patches_to_save)

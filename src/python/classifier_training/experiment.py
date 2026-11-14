@@ -190,9 +190,12 @@ def _restrict_to_train_classes(
         dropped_wsi, dropped_counts = np.unique(wsi.numpy()[~keep_mask], return_counts=True)
         n_dropped_by_wsi = {int(w): int(c) for w, c in zip(dropped_wsi, dropped_counts)}
 
-        new_emb = emb[keep_mask]
-        new_wsi = wsi[keep_mask]
-        new_ids = ids[keep_mask]
+        # Boolean indexing copies; the embeddings are the job's largest arrays, so only
+        # copy when some cell is actually dropped.
+        if n_dropped:
+            new_emb, new_wsi, new_ids = emb[keep_mask], wsi[keep_mask], ids[keep_mask]
+        else:
+            new_emb, new_wsi, new_ids = emb, wsi, ids
         new_labels = torch.tensor(
             [remap[l] for l in np.asarray(labels_list)[keep_mask]], dtype=torch.long
         )

@@ -1,8 +1,14 @@
 import h5py
 import os
 import zlib
+from collections import Counter
+from contextlib import nullcontext
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
+
+from src.python.utils.embeddings_mean import (
+    MEAN_DATASET, MEAN_FILE, embedding_keys as _embedding_keys, mean_block, open_mean_file,
+)
 
 def load_data(embeddings_file_path, embeddings_datasets, wsi_to_process, mapping, consider_matching=True,
               max_cells_per_wsi=None, seed=0):
@@ -123,12 +129,6 @@ def _wsi_h5(embeddings_file_path, wsi_file):
     return os.path.join(embeddings_file_path, wsi_file, 'embeddings_dataset.h5')
 
 
-def _embedding_keys(f, embeddings_datasets):
-    if len(embeddings_datasets) == 0:
-        return [key.split('embeddings_')[1] for key in f.keys() if key.startswith('embeddings_')]
-    return embeddings_datasets
-
-
 def _labelled_rows(args):
     '''Pass 1 for one WSI, without touching its embeddings: the file rows load_unique_wsi keeps --
     matching filter (if consider_matching), labels mapping to 'Unknown' dropped, then the
@@ -164,28 +164,35 @@ def _read_mean_rows(args):
     (rows sorted), read one block of rows at a time -- a thread holds about two blocks, never
     a whole dataset. The mean is accumulated in place in dataset order and divided once, the
     same operations as load_unique_wsi's np.mean over axis 0, so the result is bit-identical.
-    Returns the cell_ids of rows (same order).'''
-    wsi_file, embeddings_file_path, embeddings_datasets, rows, dest, out, block_size = args
+
+    When the slide has a matching embeddings_mean.h5 (see utils/embeddings_mean.py) the rows are
+    read from it instead -- one dataset rather than one per key, the same values in float32.
+    args may end with use_mean_file=False to always average the datasets.
+    Returns (cell_ids of rows in the same order, where the mean came from).'''
+    wsi_file, embeddings_file_path, embeddings_datasets, rows, dest, out, block_size, *opt = args
+    use_mean_file = opt[0] if opt else True
     with h5py.File(_wsi_h5(embeddings_file_path, wsi_file), 'r') as f:
+        cell_ids = f['cell_ids'][()]
         if len(rows) == 0:
-            return f['cell_ids'][()][rows]
-        dsets = [f[f'embeddings_{key}'] for key in _embedding_keys(f, embeddings_datasets)]
-        # np.mean accumulates float32/float64 in their own dtype; others (e.g. float16) need np.mean itself.
-        in_place = dsets[0].dtype in (np.float32, np.float64)
-        for start in range(0, dsets[0].shape[0], block_size):
-            stop = min(start + block_size, dsets[0].shape[0])
-            lo, hi = np.searchsorted(rows, [start, stop])
-            if hi > lo:
-                local = rows[lo:hi] - start
-                if in_place:
-                    acc = dsets[0][start:stop][local]
-                    for d in dsets[1:]:
-                        acc += d[start:stop][local]
-                    acc /= len(dsets)
-                else:
-                    acc = np.mean([d[start:stop][local] for d in dsets], axis=0)
-                out[dest[lo:hi]] = acc
-        return f['cell_ids'][()][rows]
+            return cell_ids[rows], 'no rows'
+        keys = _embedding_keys(f, embeddings_datasets)
+        dsets = [f[f'embeddings_{key}'] for key in keys]
+        mean_f, source = None, 'single dataset'
+        if len(keys) > 1:
+            source = 'averaged (mean file not used)'
+            if use_mean_file:
+                mean_f, why = open_mean_file(os.path.join(embeddings_file_path, wsi_file), f, keys, cell_ids)
+                source = f'{MEAN_FILE} ({mean_f[MEAN_DATASET].dtype})' if mean_f else f'averaged ({MEAN_FILE} {why})'
+        with mean_f if mean_f is not None else nullcontext():
+            mean_ds = mean_f[MEAN_DATASET] if mean_f is not None else None
+            for start in range(0, dsets[0].shape[0], block_size):
+                stop = min(start + block_size, dsets[0].shape[0])
+                lo, hi = np.searchsorted(rows, [start, stop])
+                if hi > lo:
+                    local = rows[lo:hi] - start
+                    out[dest[lo:hi]] = (mean_ds[start:stop][local] if mean_ds is not None
+                                        else mean_block(dsets, start, stop, local))
+        return cell_ids[rows], source
 
 
 def load_embedding_rows(embeddings_file_path, embeddings_datasets, wsi_to_process, rows_per_wsi,
@@ -193,7 +200,8 @@ def load_embedding_rows(embeddings_file_path, embeddings_datasets, wsi_to_proces
     '''Embeddings (mean over embeddings_datasets) and cell_ids of the given file rows of each WSI,
     concatenated over WSIs in input order, each WSI's rows in the order given (any order, no
     repeats). Only those rows are read, straight into one preallocated array, so peak memory
-    is the result plus a block per dataset per reading thread.'''
+    is the result plus a block per dataset per reading thread. Slides with an up-to-date
+    embeddings_mean.h5 are read from it (see _read_mean_rows); prints which slides were.'''
     with h5py.File(_wsi_h5(embeddings_file_path, wsi_to_process[0]), 'r') as f:
         first = f[f'embeddings_{_embedding_keys(f, embeddings_datasets)[0]}']
         dim = first.shape[1]
@@ -206,12 +214,18 @@ def load_embedding_rows(embeddings_file_path, embeddings_datasets, wsi_to_proces
         orders.append(order)
         args.append((wsi_file, embeddings_file_path, embeddings_datasets, rows[order], offset + order, out, block_size))
     with ThreadPoolExecutor(max_workers=9) as executor:
-        sorted_ids = list(executor.map(_read_mean_rows, args))
+        results = list(executor.map(_read_mean_rows, args))
     cell_ids = []
-    for ids, order in zip(sorted_ids, orders):
+    for (ids, _), order in zip(results, orders):
         given = np.empty_like(ids)
         given[order] = ids
         cell_ids.append(given)
+    by_source = Counter(source for _, source in results)
+    averaged = [w for w, (_, source) in zip(wsi_to_process, results) if source.startswith('averaged')]
+    print(f"[load] {len(wsi_to_process)} slides, embeddings from: "
+          + "; ".join(f"{source} x{n}" for source, n in by_source.most_common())
+          + (f" -- averaged: {', '.join(averaged)}" if averaged and len(averaged) < len(wsi_to_process) else ""),
+          flush=True)
     return out, np.concatenate(cell_ids)
 
 

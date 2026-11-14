@@ -115,6 +115,7 @@ def extract_embeddings(
     dataset_cls: type[Dataset] = PatchDataset,
     skip_existing: bool = True,
     continue_on_error: bool = False,
+    precision: str | None = None,
 ) -> list[str]:
     """Extract per-cell embeddings using the centre-patch approach (one patch per cell).
 
@@ -138,6 +139,10 @@ def extract_embeddings(
         still go ahead (its half-written embeddings_dataset.h5 fails is_extracted, so
         the next skip_existing pass re-extracts it).
 
+    precision: forward-pass precision, 'fp32' | 'fp16' | 'bf16' (fp16/bf16 = CUDA autocast);
+        None = the provider's own (see InferenceProvider.set_precision -- providers with a
+        fixed precision raise on any other value).
+
     Returns:
         output_path of every run that raised (always empty unless continue_on_error).
     """
@@ -150,6 +155,8 @@ def extract_embeddings(
                 continue
         inference_provider = select_inference_provider(model_name)
         inference_provider.load_model()
+        inference_provider.set_precision(precision)
+        print(f"[{model_name}] forward pass precision: {inference_provider.precision}")
         if getattr(inference_provider, 'use_pca', False):
             pca_datasets = [dataset_cls(**run['dataset_configs']) for run in runs]
             inference_provider.fit_pca(pca_datasets)
@@ -188,6 +195,7 @@ def extract_embeddings_multicell(
     save_nucleus: bool = False,
     skip_existing: bool = True,
     continue_on_error: bool = False,
+    precision: str | None = None,
 ) -> list[str]:
     """Extract per-cell embeddings by tiling WSIs into patches and selecting each cell's token.
 
@@ -199,8 +207,8 @@ def extract_embeddings_multicell(
     skip_existing: skip every run whose output_path already holds a finished
         embeddings_dataset.h5 (see is_extracted).
 
-    continue_on_error: see extract_embeddings. Returns the output_path of every run
-        that raised.
+    continue_on_error, precision: see extract_embeddings. Returns the output_path of
+        every run that raised.
     """
     failed = []
     for model_name, model_cfg in configs.items():
@@ -211,6 +219,8 @@ def extract_embeddings_multicell(
                 continue
         inference_provider = select_inference_provider(model_name)
         inference_provider.load_model()
+        inference_provider.set_precision(precision)
+        print(f"[{model_name}] forward pass precision: {inference_provider.precision}")
         for inference_run in runs:
             try:
                 dataset = MultiCellPatchDataset(**inference_run['dataset_configs'])
@@ -544,6 +554,7 @@ def merge_configs(*configs: dict) -> dict:
 #                                           #   (resized / multicell only)
 #     "output_suffix": "_h5",
 #     "batch_size": 256,
+#     "precision": "fp16",                  # default: the provider's own (fp32 for UNI2)
 #     "save_cls": true,
 #     "samples_manifest": "../../notebooks/wsi_openslide_manifest.csv",
 #     "cells_info_root_by_prefix": {"GSM79905": "positions_converted"}
@@ -554,6 +565,7 @@ def merge_configs(*configs: dict) -> dict:
 # file's own directory. Keys starting with "_" are ignored (use them for comments).
 
 _MODES = ('patch', 'resized', 'multicell')
+_PRECISIONS = ('fp32', 'fp16', 'bf16')
 
 _DEFAULT_OUTPUT_SUFFIX = {'patch': '_h5', 'resized': '_resized_h5', 'multicell': '_multicell_h5'}
 
@@ -571,6 +583,9 @@ _RUN_CONFIG_KEYS = {
     'size',                       # default: 224
     'size_side',                  # default: null
     'batch_size',                 # default: 16 (4 for multicell)
+    'precision',                  # forward pass: 'fp32' | 'fp16' | 'bf16' (CUDA autocast); default:
+                                  #   the provider's own (fp32 for UNI2; others are fixed, see
+                                  #   InferenceProvider.precision). fp16 is ~3x faster for UNI2
     'save_cls',                   # default: true (not available for multicell)
     'save_cell',                  # default: false; true wires in the Xenium boundary files
     'save_nucleus',               # default: false; idem
@@ -618,6 +633,8 @@ def load_run_config(path: str | os.PathLike) -> dict:
             raise ValueError(f"{path}: missing required key {key!r}")
     if cfg['mode'] not in _MODES:
         raise ValueError(f"{path}: mode must be one of {_MODES}, got {cfg['mode']!r}")
+    if cfg.get('precision') not in (None, *_PRECISIONS):
+        raise ValueError(f"{path}: precision must be one of {_PRECISIONS}, got {cfg['precision']!r}")
     if 'samples' not in cfg and 'samples_manifest' not in cfg:
         raise ValueError(f"{path}: needs 'samples' and/or 'samples_manifest'")
     if 'samples_manifest' in cfg:
@@ -756,6 +773,7 @@ def run_from_config(cfg: dict, dry_run: bool = False) -> int:
         failed = extract_embeddings_multicell(
             configs, batch_size=batch_size, save_cell=save_cell, save_nucleus=save_nucleus,
             skip_existing=skip_existing, continue_on_error=continue_on_error,
+            precision=cfg.get('precision'),
         )
     else:
         failed = extract_embeddings(
@@ -763,6 +781,7 @@ def run_from_config(cfg: dict, dry_run: bool = False) -> int:
             save_cell=save_cell, save_nucleus=save_nucleus,
             dataset_cls=PatchDataset if mode == 'patch' else ResizedCellDataset,
             skip_existing=skip_existing, continue_on_error=continue_on_error,
+            precision=cfg.get('precision'),
         )
 
     print(f"=== finished {cfg['_config_path']}: {len(failed)} failed, {len(missing)} skipped for missing inputs ===")

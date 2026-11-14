@@ -310,6 +310,10 @@ slurm:
   partition: gpu
   gres: gpu:1
   mem: 256G
+  # auto_mem: true requests each job's --mem from the same cell counts (float32 embeddings
+  # of train + val + test, plus z_score/PCA copies -- see launcher.py's _estimate_mem_gb);
+  # `mem` is then only the fallback when the h5 headers can't be read.
+  auto_mem: true
   # Wall time. auto_time: true estimates each job's --time from the cells in its
   # split (embeddings h5 headers -- needs DATASETS_ROOT where the launcher runs):
   #   overhead + safety * (load + trials * (num_epochs * (train + val) + test) * s_per_cell_epoch)
@@ -317,15 +321,16 @@ slurm:
   auto_time: true
   time: "24:00:00"
   time_estimate:
-    # Per (train + val) cell per epoch, incl. the val pass. Default derived from the old
-    # 2 min/epoch on ~0.8M-cell splits; replace with the median `timing.seconds_per_cell_epoch`
-    # of finished runs' results_summary.yaml (the launcher prints it when available).
-    seconds_per_cell_epoch: 1.5e-4
+    # Per (train + val) cell per epoch, incl. the val pass: ~5e-6 expected on an RTX 4090
+    # (scripts/profile_pipeline.py), 2x margin here; replace with the median
+    # `timing.seconds_per_cell_epoch` of finished runs' results_summary.yaml (the launcher
+    # prints it when available).
+    seconds_per_cell_epoch: 1.0e-5
     load_seconds_per_cell_dataset: 3.0e-5   # reading one embeddings_* dataset, per cell
     overhead_minutes: 15
     safety_factor: 1.5
     max_time: "120:00:00"                   # your partition's wall-time limit
-  cpus_per_task: 32
+  cpus_per_task: 8    # loading is IO-bound and training runs on the GPU
   conda_env: cellViT
   output_dir: slurm_logs
   # If true, run all splits sequentially in a single SLURM job on one GPU

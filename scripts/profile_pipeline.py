@@ -1311,7 +1311,7 @@ def _proc_read(a):
     from src.python.utils import loading_functions as lf
     wsi, base, keys, nrows, dim = a
     out = np.empty((nrows, dim), np.float32)
-    lf._read_mean_rows((wsi, base, keys, np.arange(nrows), np.arange(nrows), out, 8192))
+    lf._read_mean_rows((wsi, base, keys, np.arange(nrows), np.arange(nrows), out, 8192, False))
     return 0
 
 
@@ -1395,18 +1395,20 @@ def sec_classify(args, ctx):
         Rr = args.read_rows
         rows = []
 
-        def go(label, slides, keys, workers, mode):
+        def go(label, slides, keys, workers, mode, mean_file=False):
             t = _now()
             if mode == "thread":
                 outs = [np.empty((Rr, dim), np.float32) for _ in slides]
                 with ThreadPoolExecutor(workers) as ex:
-                    list(ex.map(lf._read_mean_rows, [(w, str(base), keys, np.arange(Rr), np.arange(Rr), o, 8192)
-                                                     for w, o in zip(slides, outs)]))
+                    res = list(ex.map(lf._read_mean_rows, [(w, str(base), keys, np.arange(Rr), np.arange(Rr), o, 8192,
+                                                            mean_file) for w, o in zip(slides, outs)]))
+                if mean_file and not all(src.startswith("embeddings_mean") for _, src in res):
+                    return   # no up-to-date embeddings_mean.h5 for these slides: nothing to measure
             else:
                 with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork")) as ex:
                     list(ex.map(_proc_read, [(w, str(base), keys, Rr, dim) for w in slides]))
             dt = _now() - t
-            mb = len(slides) * Rr * len(keys) * dim * 4 / 1e6
+            mb = len(slides) * Rr * (1 if mean_file else len(keys)) * dim * 4 / 1e6
             rows.append({"variant": label, "slides": len(slides), "cells_s": len(slides) * Rr / dt, "MB_s": mb / dt})
 
         keys = list(args.clf_datasets)
@@ -1415,6 +1417,7 @@ def sec_classify(args, ctx):
         go(f"{k} processes (cold)", groups[2], keys, k, "process")
         go(f"{k} threads, 1 dataset instead of {len(keys)} (cold)", groups[3], keys[:1], k, "thread")
         go(f"{k} threads, warm re-read", groups[0], keys, k, "thread")
+        go(f"{k} threads, precomputed embeddings_mean.h5 (if present, cold)", groups[1], keys, k, "thread", True)
         table(rows, ["variant", "slides", "cells_s", "MB_s"])
         cl["read"] = rows
 
@@ -1447,7 +1450,7 @@ def _train_variants(args, ctx, tr, dev, cbs):
     y = torch.randint(0, C, (N,))
     w = torch.ones(N)
     crit = torch.nn.CrossEntropyLoss(reduction="none")
-    R.p(f"torch.tensor(numpy) copy (what trainer.py does): {copy_s:.1f}s and +{N * D * 4 / 1e9:.1f} GB; "
+    R.p(f"torch.tensor(numpy) copy (what the former trainer did): {copy_s:.1f}s and +{N * D * 4 / 1e9:.1f} GB; "
         f"torch.from_numpy shares the memory")
 
     def models(k=1):
@@ -1504,13 +1507,22 @@ def _train_variants(args, ctx, tr, dev, cbs):
             for i in range(0, len(j), b):
                 yield xc[i:i + b], yc[i:i + b], wc[i:i + b]
 
+    def trainer_batches(b):
+        # what trainer.train_and_evaluate does (chunked index_select into pinned memory)
+        order = tr._epoch_order(N, None)
+        for _, (xc, yc, wc) in tr._device_chunks((Xt, y, w), str(dev), b * tr._CHUNK_BATCHES, order):
+            for i in range(0, len(yc), b):
+                yield xc[i:i + b], yc[i:i + b], wc[i:i + b]
+
     rows = []
     cl = ctx.setdefault("classify", {})
-    cl["train_current"] = run(f"current: TensorDataset + DataLoader(num_workers=16), batch {cbs}",
-                              tr._make_loader(Xt, y, w, cbs, shuffle=True))
+    cl["train_dataloader"] = run(f"former trainer: TensorDataset + DataLoader(num_workers=16), batch {cbs}",
+                                 DataLoader(TensorDataset(Xt, y, w), batch_size=cbs, shuffle=True, num_workers=16))
     run("same, num_workers=0", DataLoader(TensorDataset(Xt, y, w), batch_size=cbs, shuffle=True, num_workers=0))
     cl["train_cpu_chunks"] = run(f"CPU tensor, batched index_select in chunks of 64 batches, batch {cbs}",
                                  cpu_chunk_batches(cbs), sync_each=False)
+    cl["train_current"] = run(f"current trainer (chunks into pinned memory), batch {cbs}",
+                              trainer_batches(cbs), sync_each=False)
     fits = dev.type == "cuda" and N * D * 4 < 0.6 * torch.cuda.mem_get_info()[0]
     if fits:
         Xg, yg, wg = Xt.to(dev), y.to(dev), w.to(dev)
@@ -1525,9 +1537,18 @@ def _train_variants(args, ctx, tr, dev, cbs):
     m = models()[0][0].eval()
     t = _now()
     with torch.no_grad():
-        tr._run_forward_pass(m, tr._make_loader(Xt[:M], y[:M], w[:M], cbs, shuffle=False), crit, str(dev))
-    cl["eval_current"] = M / (_now() - t)
-    msg = f"eval pass: current loader {cl['eval_current']:,.0f} cells/s"
+        for xb, yb, wb in DataLoader(TensorDataset(Xt[:M], y[:M], w[:M]), batch_size=cbs, num_workers=16):
+            lo = m(xb.to(dev))
+            (crit(lo, yb.to(dev)) * wb.to(dev)).sum().item()
+            lo.argmax(1).cpu()
+            torch.softmax(lo, 1).cpu()
+    cl["eval_dataloader"] = M / (_now() - t)
+    t = _now()
+    with torch.no_grad():
+        tr._run_forward_pass(m, Xt, y, w, crit, str(dev), cbs, return_probs=False)
+    cl["eval_current"] = N / (_now() - t)
+    msg = (f"eval pass: former DataLoader {cl['eval_dataloader']:,.0f} cells/s, "
+           f"current trainer (batch {cbs}) {cl['eval_current']:,.0f} cells/s")
     if fits:
         t = _now()
         with torch.no_grad():

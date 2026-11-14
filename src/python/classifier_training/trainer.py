@@ -15,7 +15,6 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
 )
-from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
 
 @dataclass
@@ -154,47 +153,102 @@ def _compute_sample_weights(
     return weights
 
 
-def _make_loader(
-    emb_t: torch.Tensor,
-    labels: torch.Tensor,
-    weights: torch.Tensor,
-    batch_size: int,
-    shuffle: bool = False,
-    sampler: Optional[WeightedRandomSampler] = None,
-) -> DataLoader:
-    dataset = TensorDataset(emb_t, labels, weights)
-    # DataLoader forbids passing both shuffle=True and an explicit sampler.
-    return DataLoader(
-        dataset, batch_size=batch_size, shuffle=shuffle if sampler is None else False,
-        sampler=sampler, drop_last=False, num_workers=16,
-    )
+# Batches gathered and copied to the device together: one index_select and one transfer
+# per 64 batches instead of a DataLoader collate per batch.
+_CHUNK_BATCHES = 64
+
+
+def _draw_loader_seed() -> None:
+    """Take the int64 base seed that creating a DataLoader iterator draws from torch's
+    global RNG.
+
+    The trainer used to iterate DataLoaders, which consumed one such draw per pass (train
+    and eval alike) plus RandomSampler's permutation seed. Making the same draws keeps the
+    global RNG stream unchanged, so for a given seed the shuffles, oversampling draws and
+    CPU dropout masks -- hence every result -- match runs of the DataLoader trainer.
+    """
+    torch.empty((), dtype=torch.int64).random_()
+
+
+def _epoch_order(n: int, sampling_weights: Optional[torch.Tensor]) -> torch.Tensor:
+    """Train row order for one epoch, drawn exactly as DataLoader(shuffle=True) or
+    DataLoader(sampler=WeightedRandomSampler(sampling_weights, n, replacement=True)) did."""
+    _draw_loader_seed()
+    if sampling_weights is not None:
+        return torch.multinomial(sampling_weights, n, replacement=True)
+    seed = int(torch.empty((), dtype=torch.int64).random_().item())
+    return torch.randperm(n, generator=torch.Generator().manual_seed(seed))
+
+
+def _device_chunks(
+    tensors: tuple[torch.Tensor, ...],
+    device: str,
+    chunk_rows: int,
+    order: Optional[torch.Tensor] = None,
+):
+    """Yield (offset, tensors on `device`) for consecutive chunks of chunk_rows rows of
+    tensors[order] (order=None: rows in order). On CUDA each chunk is gathered on the CPU
+    into pinned memory and copied without blocking, so the copy overlaps the previous
+    chunk's compute; torch's pinned-memory cache doesn't reuse a buffer before its copy ends."""
+    cuda = torch.device(device).type == "cuda"
+    n = len(tensors[0]) if order is None else len(order)
+    for lo in range(0, n, chunk_rows):
+        hi = min(lo + chunk_rows, n)
+        chunk = []
+        for t in tensors:
+            if order is None and not cuda:
+                chunk.append(t[lo:hi])
+                continue
+            buf = torch.empty((hi - lo,) + t.shape[1:], dtype=t.dtype, pin_memory=cuda)
+            if order is None:
+                buf.copy_(t[lo:hi])
+            else:
+                torch.index_select(t, 0, order[lo:hi], out=buf)
+            chunk.append(buf.to(device, non_blocking=True))
+        yield lo, chunk
 
 
 def _run_forward_pass(
     model: nn.Module,
-    loader: DataLoader,
+    emb_t: torch.Tensor,
+    labels: torch.Tensor,
+    weights: torch.Tensor,
     criterion: nn.Module,
     device: str,
-) -> tuple[float, np.ndarray, np.ndarray]:
-    """One full pass over `loader`. Returns (weighted mean loss, predictions,
-    per-class softmax probabilities) -- predictions/probabilities are in the
-    same order as `loader`'s dataset (shuffle=False for every eval loader), so
-    callers can zip them back against the original labels/ids/wsi arrays."""
-    total_loss = 0.0
-    n = 0
-    all_preds: list[np.ndarray] = []
-    all_probs: list[np.ndarray] = []
-    for emb_b, label_b, weight_b in loader:
-        emb_b = emb_b.to(device)
-        label_b = label_b.to(device)
-        weight_b = weight_b.to(device)
-        logits = model(emb_b)
-        losses = criterion(logits, label_b)              # shape: [batch_size]
-        total_loss += (losses * weight_b).sum().item()   # weighted sum
-        n += len(label_b)
-        all_preds.append(logits.argmax(dim=1).cpu().numpy())
-        all_probs.append(torch.softmax(logits, dim=1).detach().cpu().numpy())
-    return total_loss / n, np.concatenate(all_preds), np.concatenate(all_probs)
+    batch_size: int,
+    return_probs: bool = True,
+) -> tuple[float, np.ndarray, Optional[np.ndarray]]:
+    """One pass over every row, in order. Returns (weighted mean loss, predictions,
+    per-class softmax probabilities or None if not return_probs), in row order, so callers
+    can zip them back against the original labels/ids/wsi arrays.
+
+    The model still sees batch_size-row batches, so logits, predictions and the loss are
+    bit-identical to the former DataLoader pass; only the transfer is done in large chunks,
+    and per-batch loss sums are added on the device in float64 (as the former Python float
+    sum did) instead of syncing on every batch."""
+    _draw_loader_seed()
+    n = len(labels)
+    total_loss = torch.zeros((), dtype=torch.float64, device=device)
+    preds = torch.empty(n, dtype=torch.long, device=device)
+    probs: Optional[torch.Tensor] = None
+    for lo, (emb_c, label_c, weight_c) in _device_chunks(
+        (emb_t, labels, weights), device, batch_size * _CHUNK_BATCHES
+    ):
+        for i in range(0, len(label_c), batch_size):
+            logits = model(emb_c[i:i + batch_size])
+            losses = criterion(logits, label_c[i:i + batch_size])           # shape: [batch_size]
+            total_loss += (losses * weight_c[i:i + batch_size]).sum()        # weighted sum
+            rows = slice(lo + i, lo + i + len(logits))
+            preds[rows] = logits.argmax(dim=1)
+            if return_probs:
+                if probs is None:
+                    probs = torch.empty((n, logits.shape[1]), dtype=logits.dtype, device=device)
+                probs[rows] = torch.softmax(logits, dim=1)
+    return (
+        total_loss.item() / n,
+        preds.cpu().numpy(),
+        probs.cpu().numpy() if probs is not None else None,
+    )
 
 
 def classification_metrics(
@@ -235,27 +289,35 @@ def classification_metrics(
 
 def _evaluate(
     model: nn.Module,
-    loader: DataLoader,
+    emb_t: torch.Tensor,
     labels: torch.Tensor,
+    weights: torch.Tensor,
     criterion: nn.Module,
     device: str,
+    batch_size: int,
     num_classes: int,
     class_names: list[str],
 ) -> dict:
-    """Run one forward pass over `loader` and compute the full metric set."""
+    """Run one forward pass over every row and compute the full metric set."""
     model.eval()
     with torch.no_grad():
-        loss, preds, probs = _run_forward_pass(model, loader, criterion, device)
+        loss, preds, probs = _run_forward_pass(model, emb_t, labels, weights, criterion, device, batch_size)
 
     return {
         "loss": loss,
         **classification_metrics(labels.numpy(), preds, num_classes, class_names),
-        # Raw per-cell outputs (same order as `loader`'s dataset), for callers that
+        # Raw per-cell outputs (same order as `emb_t`), for callers that
         # want to save individual predictions rather than just aggregate metrics
         # (see classifier_training/experiment.py's save_test_predictions).
         "predictions": preds,
         "probabilities": probs,
     }
+
+
+def _as_float_tensor(x: np.ndarray) -> torch.Tensor:
+    """float32 CPU tensor sharing x's memory when x already is contiguous float32 --
+    the embeddings are the job's largest allocation, so they are not copied."""
+    return torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))
 
 
 def _prefix_metrics(metrics: dict, prefix: str) -> dict:
@@ -322,9 +384,10 @@ def train_and_evaluate(
     if has_val:
         val_emb = preprocessor.transform(val_embeddings)
 
-    train_t = torch.tensor(train_emb, dtype=torch.float32)
-    test_t = torch.tensor(test_emb, dtype=torch.float32)
+    train_t = _as_float_tensor(train_emb)
+    test_t = _as_float_tensor(test_emb)
     input_dim = train_t.shape[1]
+    batch_size = config.batch_size
 
     model = MLP(input_dim, config.hidden_dim, config.num_classes, config.dropout).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
@@ -333,7 +396,7 @@ def train_and_evaluate(
     oversample = _is_oversampling(config.loss_weights)
 
     def _weights_for(labels: torch.Tensor, wsi_origins: torch.Tensor) -> torch.Tensor:
-        # Under oversampling, balance is enforced by the sampler (below), so the
+        # Under oversampling, balance is enforced by the sampled order (below), so the
         # CE loss itself stays unweighted -- same as "none" -- for train and eval alike.
         if config.loss_weights == "none" or oversample:
             return torch.ones(len(labels), dtype=torch.float32)
@@ -342,31 +405,26 @@ def train_and_evaluate(
     sample_weights = _weights_for(train_labels, train_wsi_origins)
     test_weights = _weights_for(test_labels, test_wsi_origins)
 
-    if oversample:
-        sampling_weights = _compute_sample_weights(
+    # Oversampling draws each epoch's rows with replacement, proportionally to these
+    # weights (in float64, as WeightedRandomSampler stored them); otherwise a permutation.
+    sampling_weights = (
+        _compute_sample_weights(
             train_labels, train_wsi_origins, config.num_classes, config.loss_weights
-        )
-        train_sampler = WeightedRandomSampler(
-            sampling_weights, num_samples=len(train_labels), replacement=True
-        )
-        loader = _make_loader(train_t, train_labels, sample_weights, config.batch_size, sampler=train_sampler)
-    else:
-        loader = _make_loader(train_t, train_labels, sample_weights, config.batch_size, shuffle=True)
-    test_loader = _make_loader(test_t, test_labels, test_weights, config.batch_size, shuffle=False)
+        ).double()
+        if oversample else None
+    )
 
     if has_val:
-        val_t = torch.tensor(val_emb, dtype=torch.float32)
+        val_t = _as_float_tensor(val_emb)
         val_weights = _weights_for(val_labels, val_wsi_origins)
-        val_loader = _make_loader(val_t, val_labels, val_weights, config.batch_size, shuffle=False)
-        curve_loader, curve_labels = val_loader, val_labels
+        curve_set = (val_t, val_labels, val_weights)
         if val_score_fn is None:
-            # A copy: the DataLoader may move val_labels' storage to shared memory.
-            val_labels_np = val_labels.numpy().copy()
+            val_labels_np = val_labels.numpy()
             val_score_fn = lambda preds: classification_metrics(  # noqa: E731
                 val_labels_np, preds, config.num_classes, config.class_names
             )["macro_f1"]
     else:
-        curve_loader, curve_labels = test_loader, test_labels
+        curve_set = (test_t, test_labels, test_weights)
 
     # Early stopping only ever monitors val -- without one (grid_experiment.py) the
     # per-epoch curve is on test, which must not drive any choice.
@@ -380,24 +438,29 @@ def train_and_evaluate(
 
     model.train()
     for epoch in range(1, config.num_epochs + 1):
-        epoch_loss = 0.0
+        order = _epoch_order(len(train_labels), sampling_weights)
+        # Summed on the device in float64 -- the same additions as the former per-step
+        # `epoch_loss += loss.item()`, without a GPU sync on every step.
+        epoch_loss = torch.zeros((), dtype=torch.float64, device=device)
         n_batches = 0
-        for emb_b, label_b, w_b in loader:
-            emb_b = emb_b.to(device)
-            label_b = label_b.to(device)
-            w_b = w_b.to(device)
-            logits = model(emb_b)
-            loss = (criterion(logits, label_b) * w_b).mean()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-            n_batches += 1
-        train_loss_curve.append(epoch_loss / n_batches)
+        for _, (emb_c, label_c, w_c) in _device_chunks(
+            (train_t, train_labels, sample_weights), device, batch_size * _CHUNK_BATCHES, order
+        ):
+            for i in range(0, len(label_c), batch_size):
+                logits = model(emb_c[i:i + batch_size])
+                loss = (criterion(logits, label_c[i:i + batch_size]) * w_c[i:i + batch_size]).mean()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.detach()
+                n_batches += 1
+        train_loss_curve.append(epoch_loss.item() / n_batches)
 
         model.eval()
         with torch.no_grad():
-            epoch_curve_loss, epoch_preds, _ = _run_forward_pass(model, curve_loader, criterion, device)
+            epoch_curve_loss, epoch_preds, _ = _run_forward_pass(
+                model, *curve_set, criterion, device, batch_size, return_probs=False
+            )
             curve_loss_curve.append(epoch_curve_loss)
         model.train()
 
@@ -427,13 +490,15 @@ def train_and_evaluate(
         if return_model else {}
     )
 
+    def _final(emb_t: torch.Tensor, labels: torch.Tensor, weights: torch.Tensor) -> dict:
+        return _evaluate(
+            model, emb_t, labels, weights, criterion, device, batch_size,
+            config.num_classes, config.class_names,
+        )
+
     if has_val:
-        val_metrics = _evaluate(
-            model, val_loader, val_labels, criterion, device, config.num_classes, config.class_names
-        )
-        test_metrics = _evaluate(
-            model, test_loader, test_labels, criterion, device, config.num_classes, config.class_names
-        )
+        val_metrics = _final(val_t, val_labels, val_weights)
+        test_metrics = _final(test_t, test_labels, test_weights)
         return {
             **_prefix_metrics(val_metrics, "val"),
             **_prefix_metrics(test_metrics, "test"),
@@ -446,9 +511,7 @@ def train_and_evaluate(
             **model_outputs,
         }
 
-    test_metrics = _evaluate(
-        model, test_loader, test_labels, criterion, device, config.num_classes, config.class_names
-    )
+    test_metrics = _final(test_t, test_labels, test_weights)
     return {
         **test_metrics,
         "train_loss_curve": train_loss_curve,

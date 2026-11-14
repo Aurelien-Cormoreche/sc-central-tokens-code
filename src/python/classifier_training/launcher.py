@@ -37,9 +37,10 @@ from omegaconf import DictConfig, OmegaConf
 # epochs is training.num_epochs (an upper bound under early stopping). Values below are
 # defaults for any key missing from the config's slurm.time_estimate.
 _TIME_ESTIMATE_DEFAULTS = {
-    # Derived from the old fixed 2 min/epoch, set for ~0.8M-cell train+val sets.
-    # experiment.py records the measured value in results_summary.yaml's `timing`.
-    "seconds_per_cell_epoch": 1.5e-4,
+    # Chunked-gather trainer on an RTX 4090 (scripts/profile_pipeline.py: ~167k train
+    # cells/s at batch 256, the val pass several times faster) is ~5e-6; 1e-5 leaves room
+    # for slower nodes. experiment.py records the measured value in results_summary.yaml's `timing`.
+    "seconds_per_cell_epoch": 1.0e-5,
     "load_seconds_per_cell_dataset": 3.0e-5,
     "overhead_minutes": 15,
     "safety_factor": 1.5,
@@ -47,6 +48,20 @@ _TIME_ESTIMATE_DEFAULTS = {
 }
 # Used only when the h5 files can't be read (DATASETS_ROOT unset / not mounted).
 FALLBACK_EPOCH_MINUTES = 2
+
+# ── SLURM memory estimate (slurm.auto_mem: true) ───────────────────────────────
+# The job holds the used cells' embeddings once, in float32 (train + val + test, from the
+# same header counts as the time estimate), plus copies made along the way:
+#   GB = overhead_gb + safety_factor * float32 GB * (1 + copies)
+#   copies: +1.5 if a trial uses z_score or PCA (transformed arrays, and the fit's centred copy
+#           of train), +1 for same_wsi_split (permuted train/val/test), +train share if
+#           data.drop_classes_absent_from_test (train[keep]).
+# A sequential job runs its splits one process after another, so it gets the largest split's.
+_MEM_ESTIMATE_DEFAULTS = {
+    "overhead_gb": 16,      # python + torch/CUDA + labels and ids
+    "safety_factor": 1.2,
+    "max_mem_gb": 900,      # the largest gpu-partition node has 991 GB
+}
 
 
 def _n_trials(cfg: DictConfig) -> int:
@@ -156,6 +171,44 @@ def _estimate_minutes(cfg: DictConfig, counts: dict[str, float], n_grid_repeats:
     cell_epochs = cfg.training.num_epochs * (counts["train"] + counts["val"]) + counts["test"]
     train_s = n_grid_repeats * _n_trials(cfg) * cell_epochs * p["seconds_per_cell_epoch"]
     return p["overhead_minutes"] + p["safety_factor"] * (load_s + train_s) / 60
+
+
+def _mem_estimate_params(cfg: DictConfig) -> dict:
+    configured = OmegaConf.select(cfg, "slurm.mem_estimate", default=None)
+    return {**_MEM_ESTIMATE_DEFAULTS, **(OmegaConf.to_container(configured, resolve=True) if configured else {})}
+
+
+def _embedding_dim(cfg: DictConfig, wsi: str) -> int:
+    """Width of the embeddings the classifier reads (header only)."""
+    base = Path(str(cfg.data.base_dir)) / f"{cfg.data.model_name}_h5" / cfg.data.correction_name
+    with h5py.File(base / wsi / "embeddings_dataset.h5", "r") as f:
+        keys = list(cfg.data.embeddings_datasets or [])
+        name = f"embeddings_{keys[0]}" if keys else next(k for k in f if k.startswith("embeddings_"))
+        return int(f[name].shape[1])
+
+
+def _grid_transforms(cfg: DictConfig) -> bool:
+    """Whether any trial (experiment.py's _build_grid: every value if tuned, else the first)
+    uses z_score normalization or PCA."""
+    def used(name):
+        spec = OmegaConf.select(cfg, f"hparams.{name}", default=None)
+        if spec is None:
+            return []
+        values = OmegaConf.to_container(spec["values"], resolve=True)
+        values = values if isinstance(values, list) else [values]
+        return values if spec["tune"] else values[:1]
+    return "z_score" in used("normalization") or any(v is not None for v in used("pca_components"))
+
+
+def _estimate_mem_gb(cfg: DictConfig, counts: dict[str, float], dim: int, split_idx: Optional[int]) -> float:
+    p = _mem_estimate_params(cfg)
+    cells = counts["train"] + counts["val"] + counts["test"]
+    copies = 1.5 if _grid_transforms(cfg) else 0.0
+    if split_idx == -1:
+        copies += 1.0
+    if cells and OmegaConf.select(cfg, "data.drop_classes_absent_from_test", default=False):
+        copies += counts["train"] / cells
+    return p["overhead_gb"] + p["safety_factor"] * cells * dim * 4 / 1e9 * (1 + copies)
 
 
 def _clip_minutes(cfg: DictConfig, minutes: float, label: str) -> float:
@@ -481,13 +534,18 @@ def main(cfg: DictConfig) -> None:
     # from cell counts (see _estimate_minutes); minutes_for() returns None when the
     # h5 headers can't be read, in which case the old size-blind estimate is used.
     auto_time: bool = bool(OmegaConf.select(cfg, "slurm.auto_time", default=True))
+    # ── memory: slurm.mem as given, else (slurm.auto_mem: true) estimated per job
+    # from the same cell counts (see _estimate_mem_gb), falling back to slurm.mem.
+    auto_mem: bool = bool(OmegaConf.select(cfg, "slurm.auto_mem", default=False))
+    fixed_mem = str(cfg.slurm.mem)
     count: Optional[Callable[[str], int]] = None
-    if auto_time:
+    if auto_time or auto_mem:
         try:
             count = _cell_counter(cfg)
         except Exception as e:  # DATASETS_ROOT unset -> interpolation error
             print(f"[launcher] WARNING: can't resolve the embeddings root ({e}); "
-                  f"falling back to {FALLBACK_EPOCH_MINUTES} min/epoch/trial for --time")
+                  f"falling back to {FALLBACK_EPOCH_MINUTES} min/epoch/trial for --time"
+                  + (f" and slurm.mem ({fixed_mem}) for --mem" if auto_mem else ""))
 
     def _job_time(
         label: str,
@@ -515,6 +573,24 @@ def main(cfg: DictConfig) -> None:
         if minutes is None:
             minutes = n_grid_repeats * n_fallback_units * _fallback_minutes(cfg)
         return _minutes_to_hhmmss(_clip_minutes(cfg, minutes, label))
+
+    def _job_mem(label: str, units: list[int]) -> str:
+        """--mem for one job running the given splits (-1 = same_wsi_split) one after another."""
+        if not auto_mem or count is None:
+            return fixed_mem
+        try:
+            dim = _embedding_dim(cfg, sorted(_split_wsis(cfg, units[0]))[0])
+            gb = max(_estimate_mem_gb(cfg, _split_cell_counts(i, cfg, count), dim, i) for i in units)
+        except OSError as e:
+            print(f"[launcher] WARNING {label}: can't read cell counts ({e}); requesting slurm.mem ({fixed_mem})")
+            return fixed_mem
+        max_gb = _mem_estimate_params(cfg)["max_mem_gb"]
+        if gb > max_gb:
+            print(f"[launcher] WARNING {label}: estimated {gb:.0f} GB exceeds slurm.mem_estimate.max_mem_gb "
+                  f"({max_gb} GB) -- requesting the max")
+        mem = f"{int(np.ceil(min(gb, max_gb)))}G"
+        print(f"[launcher] {label}: --mem {mem} (slurm.auto_mem, {dim}-d float32 embeddings)")
+        return mem
 
     if not auto_time:
         print(f"[launcher] Requesting {cfg.slurm.time} per job (slurm.auto_time: false)")
@@ -600,6 +676,7 @@ def main(cfg: DictConfig) -> None:
         cfg.slurm.time = _job_time(
             "sequential", lambda c: [_split_cell_counts(i, cfg, c) for i in pending_indices], len(pending_indices)
         )
+        cfg.slurm.mem = _job_mem("sequential", pending_indices)
         script = _generate_slurm_script_sequential(pending_indices, cfg, repo_root, log_dir, config_name)
         script_path = log_dir / "job_sequential.sh"
         script_path.write_text(script)
@@ -620,6 +697,7 @@ def main(cfg: DictConfig) -> None:
     for split_idx in pending_indices:
         split_label = "same_wsi_split" if split_idx == -1 else f"split_{split_idx}"
         cfg.slurm.time = _job_time(split_label, lambda c: [_split_cell_counts(split_idx, cfg, c)], 1)
+        cfg.slurm.mem = _job_mem(split_label, [split_idx])
         script = _generate_slurm_script(split_idx, cfg, repo_root, log_dir, config_name)
         script_path = log_dir / f"job_{split_label}.sh"
         script_path.write_text(script)

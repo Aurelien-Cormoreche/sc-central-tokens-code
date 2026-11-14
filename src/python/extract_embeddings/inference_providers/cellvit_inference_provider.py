@@ -59,6 +59,9 @@ class CellViTInferenceProvider(InferenceProvider):
         self.run_conf["model"]["token_patch_size"] = self.model.patch_size
         self.model_arch = model_checkpoint["arch"]
         self.mixed_precision = self.run_conf["training"].get("mixed_precision", False)
+        # fixed by the checkpoint (see InferenceProvider.precision)
+        self.precision = 'fp16' if self.mixed_precision else 'fp32'
+        self.supported_precisions = (self.precision,)
         self.patch_size = self.model.patch_size
         self._load_inference_transforms()
 

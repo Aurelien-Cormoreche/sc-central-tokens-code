@@ -283,7 +283,9 @@ expects on top of this). Datasets:
 - `embeddings_cell` / `embeddings_nucleus` — `(N, D)` float32, only if
   `save_cell=True` / `save_nucleus=True` (both extraction modes)
 - `cell_ids`, `cell_labels` — `(N,)` UTF-8 strings
-- `dataset_stats.json` alongside it — patch size, class distribution, etc.
+- `precision` file attribute — the forward pass's precision (`fp32`, or `fp16`/`bf16`
+  autocast; JSON configs choose it with `"precision"` for UNI2, other models are fixed)
+- `dataset_stats.json` alongside it — patch size, class distribution, precision, etc.
 
 ## Stage 2 — Training classifiers
 

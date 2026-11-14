@@ -54,6 +54,7 @@ import h5py
 import numpy as np
 
 from src.python.code_configs import paths
+from src.python.utils.embeddings_mean import remove_mean_file
 from .run_configs import _expand   # torch-free; extract_embeddings.py (torch) is imported only to extract
 
 TMP_DIR = '_sync_tmp'
@@ -256,6 +257,11 @@ def merge_slide(plan: dict, keep_old: bool) -> None:
                     if (old[k].shape[1:], old[k].dtype) != (tmp[k].shape[1:], tmp[k].dtype):
                         raise SyncError(f"{k}: existing {old[k].shape[1:]} {old[k].dtype}, "
                                         f"new extraction {tmp[k].shape[1:]} {tmp[k].dtype}")
+                # files written before the attribute existed have none: those can't be checked
+                old_prec, tmp_prec = old.attrs.get('precision'), tmp.attrs.get('precision')
+                if old_prec is not None and old_prec != tmp_prec:
+                    raise SyncError(f"existing embeddings were extracted at precision {old_prec}, the added "
+                                    f"cells at {tmp_prec}: set \"precision\": \"{old_prec}\" in the config")
 
             new.attrs.update(old.attrs)
             for k in emb_keys:
@@ -298,6 +304,7 @@ def merge_slide(plan: dict, keep_old: bool) -> None:
     if keep_old:
         os.replace(emb_path, out / BACKUP_NAME)
     os.replace(merged, emb_path)
+    remove_mean_file(out)   # its rows were the old cells (re-run utils/embeddings_mean.py)
     _update_stats(out, labels)
     shutil.rmtree(out / TMP_DIR, ignore_errors=True)
 
@@ -418,7 +425,7 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
             batch_size=cfg.get('batch_size', 16), save_cls=cfg.get('save_cls', True),
             save_cell=cfg.get('save_cell', False), save_nucleus=cfg.get('save_nucleus', False),
             dataset_cls=PatchDataset if mode == 'patch' else ResizedCellDataset,
-            skip_existing=True, continue_on_error=True,
+            skip_existing=True, continue_on_error=True, precision=cfg.get('precision'),
         )
         failures += [f"{Path(f).parent.name}: extraction of the added cells failed" for f in failed]
 

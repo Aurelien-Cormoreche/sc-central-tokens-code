@@ -4,10 +4,22 @@ import numpy as np
 from torch.utils.data import Dataset
 from ..data.patch_dataset import PatchDataset, MultiCellPatchDataset
 from ..data.xenium_boundaries import token_overlap_mask, nearest_token
+from src.python.utils.embeddings_mean import remove_mean_file
 from abc import ABC, abstractmethod
+import contextlib
 import json
 import os
+_AUTOCAST_DTYPES = {'fp16': torch.float16, 'bf16': torch.bfloat16}
+
+
 class InferenceProvider(ABC):
+
+    # Precision of the model's forward pass. Providers that let the run config choose list the
+    # choices in supported_precisions (UNI2); the others run at their own fixed precision
+    # (fp16 autocast for VirchowV2 / H-optimus-1, the checkpoint's setting for CellViT, fp32
+    # otherwise). Recorded in dataset_stats.json and as the h5 file's 'precision' attribute.
+    precision: str = 'fp32'
+    supported_precisions: tuple[str, ...] = ('fp32',)
 
     def __init__(self, patches_to_save: dict):
         self.patches_to_save = patches_to_save
@@ -19,6 +31,30 @@ class InferenceProvider(ABC):
     @abstractmethod
     def load_model(self)-> torch.nn.Module:
         pass
+
+    def set_precision(self, precision: str | None) -> None:
+        """Run the forward pass at `precision` ('fp32' | 'fp16' | 'bf16'; None keeps the
+        provider's own). Call after load_model. Raises if the provider can't."""
+        if precision is None or precision == self.precision:
+            return
+        if precision not in self.supported_precisions:
+            raise ValueError(f"{type(self).__name__} runs at {self.precision} and can't be set to "
+                             f"precision={precision!r} (supported: {list(self.supported_precisions)})")
+        if not torch.cuda.is_available():
+            print(f"WARNING: no CUDA device -- precision={precision!r} needs CUDA autocast; running in fp32")
+            return
+        if precision == 'bf16' and torch.cuda.get_device_capability()[0] < 8:
+            print(f"WARNING: bf16 is emulated on {torch.cuda.get_device_name()} (slower than fp32); "
+                  f"use precision 'fp16' on pre-Ampere GPUs")
+        self.precision = precision
+
+    def autocast(self):
+        """Context for the model's forward pass at self.precision: CUDA autocast for fp16/bf16,
+        nothing for fp32 (or on CPU). Callers cast the outputs back with .float()."""
+        dtype = _AUTOCAST_DTYPES.get(self.precision)
+        if dtype is None or not torch.cuda.is_available():
+            return contextlib.nullcontext()
+        return torch.autocast(device_type='cuda', dtype=dtype)
 
     @abstractmethod
     def inference(self, dataset: Dataset, output_path: str) -> None:
@@ -71,12 +107,15 @@ class InferenceProvider(ABC):
     def create_output_file(self, output_path: str, num_samples: int, embedding_dim: int, dataset_stats: dict = None,
                             save_cls: bool = False, save_cell: bool = False, save_nucleus: bool = False):
         os.makedirs(output_path, exist_ok=True)
+        # a precomputed mean of the previous embeddings no longer matches (utils/embeddings_mean.py)
+        remove_mean_file(output_path)
 
         if dataset_stats is not None:
             with open(f'{output_path}/dataset_stats.json', 'w+') as f:
-                json.dump(dataset_stats, f)
+                json.dump({**dataset_stats, 'precision': self.precision}, f)
 
         with h5py.File(f'{output_path}/embeddings_dataset.h5', 'w') as f:
+            f.attrs['precision'] = self.precision
             for key in self.patches_to_save:
                 f.create_dataset(f'embeddings_{key}', shape=(num_samples, embedding_dim), dtype='float32')
             if save_cls:
@@ -313,8 +352,9 @@ class InferenceProvider(ABC):
         os.makedirs(output_path, exist_ok=True)
         if dataset_stats is not None:
             with open(f'{output_path}/dataset_stats.json', 'w+') as f:
-                json.dump(dataset_stats, f)
+                json.dump({**dataset_stats, 'precision': self.precision}, f)
         with h5py.File(f'{output_path}/embeddings_dataset.h5', 'w') as f:
+            f.attrs['precision'] = self.precision
             f.create_dataset('embeddings_cell_token', shape=(num_cells, embedding_dim), dtype='float32')
             if save_cell:
                 f.create_dataset('embeddings_cell', shape=(num_cells, embedding_dim), dtype='float32')

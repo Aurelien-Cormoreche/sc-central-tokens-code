@@ -70,6 +70,34 @@ python -m src.python.classifier_training.launcher \
     debug_split=0
 ```
 
+## Faster loading: precomputed mean embeddings
+
+Loading reads every dataset in `data.embeddings_datasets` and averages them, so with the 4
+central tokens it reads 4x the bytes it keeps, and on ceph that dominates the job. Precompute
+the mean once per slide (`embeddings_mean.h5` next to `embeddings_dataset.h5`, CPU only):
+
+```bash
+python -m src.python.utils.embeddings_mean --config configs/train_cross_cohort.yaml \
+    --model UNI2 --correction Base --dry-run          # what is missing / stale
+sbatch --array=0-3 scripts/precompute_embeddings_mean.sh --shard-from-array \
+    --config configs/train_cross_cohort.yaml --model UNI2 --correction Base
+```
+
+The loader then reads that file instead (it prints, per set, which slides came from where).
+In float32 (default) the result is bit-identical to averaging while loading; `--dtype float16`
+halves the bytes again but rounds the values. A file is ignored -- and the datasets averaged as
+before -- unless it holds the same datasets in the same order for the same cells, and a few rows
+recomputed from `embeddings_dataset.h5` match it; re-extraction and `sync_embeddings` delete it.
+
+## SLURM resources
+
+Training gathers 64 batches at a time from CPU memory and runs validation from the arrays
+directly (no DataLoader workers), so jobs need few CPUs: the configs request
+`cpus_per_task: 8`. With `slurm.auto_mem: true` each job's `--mem` is estimated from the cells
+of its split (the float32 embeddings held once, plus copies for z_score/PCA trials, see
+`launcher.py`'s `_estimate_mem_gb`); `slurm.mem` is the fallback when the h5 headers can't
+be read.
+
 ## Output structure
 
 ```
