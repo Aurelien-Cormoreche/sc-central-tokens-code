@@ -54,7 +54,6 @@ import h5py
 import numpy as np
 
 from src.python.code_configs import paths
-from src.python.utils.embeddings_mean import remove_mean_file
 from .run_configs import _expand   # torch-free; extract_embeddings.py (torch) is imported only to extract
 
 TMP_DIR = '_sync_tmp'
@@ -304,7 +303,6 @@ def merge_slide(plan: dict, keep_old: bool) -> None:
     if keep_old:
         os.replace(emb_path, out / BACKUP_NAME)
     os.replace(merged, emb_path)
-    remove_mean_file(out)   # its rows were the old cells (re-run utils/embeddings_mean.py)
     _update_stats(out, labels)
     shutil.rmtree(out / TMP_DIR, ignore_errors=True)
 

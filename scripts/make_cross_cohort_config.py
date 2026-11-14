@@ -166,8 +166,8 @@ def main() -> None:
     # Every cell of every slide is used: ~15M cells loaded per fold, ~95 GB of 1536-d float32
     # embeddings. slurm.auto_mem sizes each job from that; this is only its fallback.
     text = _replace_once(text, "  mem: 32G\n", "  mem: 256G   # fallback only (auto_mem): a fold holds ~95 GB of float32 embeddings\n")
-    # Fixed wall time for every fold instead of the per-split estimate.
-    text = _replace_once(text, "  auto_time: true\n", "  auto_time: false\n")
+    # Wall time is estimated per job from the cell counts (auto_time, from configs/train.yaml);
+    # `time` only applies with auto_time: false.
     text = _replace_once(text, '  time: "05:00:00"\n', '  time: "24:00:00"\n')
 
     if args.drop_classes_absent_from_test:

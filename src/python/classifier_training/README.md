@@ -7,6 +7,7 @@ Designed to quantify how well batch-correction methods remove batch effects.
 
 ```
 launcher.py      — reads configs/train.yaml, submits one SLURM job per split
+                   (or one joint job for all splits, see "Joint folds")
   └─ experiment.py — loads data once, runs full grid search, logs to MLflow
        └─ trainer.py   — pure training logic, returns metrics dict
 ```
@@ -63,31 +64,39 @@ python -m src.python.classifier_training.experiment \
 ### 5. Debug a failed SLURM job
 
 ```bash
-# Print stdout + stderr captured by SLURM for split 0
+# Print stdout + stderr captured by SLURM for split 0 (debug_split=joint: the joint job)
 python -m src.python.classifier_training.launcher \
     data.model_name=virchow_v2 \
     data.correction_name=scanorama \
     debug_split=0
 ```
 
-## Faster loading: precomputed mean embeddings
+## Joint folds (linear grids)
 
-Loading reads every dataset in `data.embeddings_datasets` and averages them, so with the 4
-central tokens it reads 4x the bytes it keeps, and on ceph that dominates the job. Precompute
-the mean once per slide (`embeddings_mean.h5` next to `embeddings_dataset.h5`, CPU only):
+With `training.joint_folds: true` (set in every `configs/train*.yaml`) and a grid whose
+trials are all linear on the raw embeddings (`hidden_dim` 0, no PCA, no z-score), the
+launcher submits the pending LOSO splits as **one** job, `split_idx=[0,1,...]`
+(`same_wsi_split` keeps its own job). Other grids get one job per split, as before.
 
-```bash
-python -m src.python.utils.embeddings_mean --config configs/train_cross_cohort.yaml \
-    --model UNI2 --correction Base --dry-run          # what is missing / stale
-sbatch --array=0-3 scripts/precompute_embeddings_mean.sh --shard-from-array \
-    --config configs/train_cross_cohort.yaml --model UNI2 --correction Base
-```
+The joint job (`experiment.py`'s `run_joint_experiment`):
 
-The loader then reads that file instead (it prints, per set, which slides came from where).
-In float32 (default) the result is bit-identical to averaging while loading; `--dtype float16`
-halves the bytes again but rounds the values. A file is ignored -- and the datasets averaged as
-before -- unless it holds the same datasets in the same order for the same cells, and a few rows
-recomputed from `embeddings_dataset.h5` match it; re-extraction and `sync_embeddings` delete it.
+- selects each split's cells with the same seeded draws as a job of its own, then reads
+  each slide once (`_EmbeddingStore`). Cross-cohort folds re-partition the same slides, so
+  the job holds about one fold's embeddings rather than one per fold;
+- trains every split x trial model at the same time (`trainer.py`'s `train_linear_jointly`).
+  Trials of a split that draw the same batches (all of them, unless the grid oversamples)
+  share each gathered batch, and the splits step in lockstep as one batched matmul;
+- writes each split's usual outputs to its usual folder.
+
+Each model keeps its own initialisation, batch order, AdamW state and early stopping, so
+the results equal per-split jobs up to float rounding (about 1e-7 on the test fixture: the
+same selected trials, epochs and predictions). `results_summary.yaml`'s
+`timing.joint.seconds_per_cell_epoch` records the job's throughput, which the launcher's
+`slurm.time_estimate.joint_seconds_per_cell_epoch` models.
+
+To run a few splits jointly by hand: `python -m src.python.classifier_training.experiment
+'split_idx=[0,1,2]' ...`. With a grid that can't train jointly, a list of splits runs them
+one after another.
 
 ## SLURM resources
 
@@ -95,8 +104,10 @@ Training gathers 64 batches at a time from CPU memory and runs validation from t
 directly (no DataLoader workers), so jobs need few CPUs: the configs request
 `cpus_per_task: 8`. With `slurm.auto_mem: true` each job's `--mem` is estimated from the cells
 of its split (the float32 embeddings held once, plus copies for z_score/PCA trials, see
-`launcher.py`'s `_estimate_mem_gb`); `slurm.mem` is the fallback when the h5 headers can't
-be read.
+`launcher.py`'s `_estimate_mem_gb`); a joint job's memory comes from the union of its splits'
+cells (`_estimate_mem_gb_joint`). `slurm.mem` is the fallback when the h5 headers can't
+be read. With `slurm.auto_time: true` (every config) `--time` is estimated from the same
+counts (`_estimate_minutes`, `_estimate_minutes_joint`).
 
 ## Output structure
 
@@ -116,6 +127,7 @@ slurm_logs/
   {model_name}/{correction_name}/
     split_{i}.out / split_{i}.err
     job_split_{i}.sh
+    joint_folds.out / .err, job_joint_folds.sh   # training.joint_folds
 
 mlruns/                        # MLflow tracking directory
 ```

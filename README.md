@@ -306,7 +306,9 @@ train_colon.yaml` (colon cancer, 5 WSIs — 4 cancer + 1 non-diseased always kep
 train) does the same over the 4 cancer slides — $4\times2=8$ folds.
 
 ```bash
-# Submit one SLURM job per Leave-One-Slide-Out split (+ same-WSI upper bound)
+# Submit the Leave-One-Slide-Out splits (+ same-WSI upper bound). With the configs'
+# training.joint_folds: true and a linear grid, all LOSO splits share one job (each slide
+# read once, every split x trial model trained together); otherwise one job per split.
 python -m src.python.classifier_training.launcher \
     data.model_name=UNI2 data.correction_name=Base
 

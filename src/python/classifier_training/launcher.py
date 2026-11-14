@@ -1,6 +1,10 @@
 """
 Layer 1 — Launcher: generates and submits one SLURM job per WSI split.
 
+With training.joint_folds: true and a linear-only grid (hidden_dim 0, no PCA/z-score), the
+LOSO splits go to one job instead (split_idx=[0,1,...], experiment.py's run_joint_experiment):
+each slide read once and every split x trial model trained together.
+
 Usage:
     # Submit all jobs
     python -m src.python.classifier_training.launcher \
@@ -45,6 +49,11 @@ _TIME_ESTIMATE_DEFAULTS = {
     "overhead_minutes": 15,
     "safety_factor": 1.5,
     "max_time": "120:00:00",
+    # Joint job (training.joint_folds): per train row of each stream (a split's trials sharing
+    # batches -- one per split unless the grid oversamples) and per val row, per epoch; all
+    # trials of a stream train on the same gathered rows. Conservative until measured:
+    # results_summary.yaml's timing.joint.seconds_per_cell_epoch records it.
+    "joint_seconds_per_cell_epoch": 1.0e-5,
 }
 # Used only when the h5 files can't be read (DATASETS_ROOT unset / not mounted).
 FALLBACK_EPOCH_MINUTES = 2
@@ -57,11 +66,28 @@ FALLBACK_EPOCH_MINUTES = 2
 #           of train), +1 for same_wsi_split (permuted train/val/test), +train share if
 #           data.drop_classes_absent_from_test (train[keep]).
 # A sequential job runs its splits one process after another, so it gets the largest split's.
+# A joint job holds the union of its splits' cells once (no copies: splits index into it),
+# plus joint_bytes_per_split_cell for each split's own row indices, labels, ids and weights.
 _MEM_ESTIMATE_DEFAULTS = {
     "overhead_gb": 16,      # python + torch/CUDA + labels and ids
     "safety_factor": 1.2,
     "max_mem_gb": 900,      # the largest gpu-partition node has 991 GB
+    "joint_bytes_per_split_cell": 128,
 }
+
+
+def _job_label(split_idx) -> str:
+    """Log / script name of a job: split_<i>, same_wsi_split, or joint_folds (a list of splits)."""
+    if isinstance(split_idx, (list, tuple)):
+        return "joint_folds"
+    return "same_wsi_split" if split_idx == -1 else f"split_{split_idx}"
+
+
+def _split_arg(split_idx) -> str:
+    """experiment.py's split_idx override; quoted so bash doesn't glob a list's brackets."""
+    if isinstance(split_idx, (list, tuple)):
+        return "'split_idx=[" + ",".join(str(i) for i in split_idx) + "]'"
+    return f"split_idx={split_idx}"
 
 
 def _n_trials(cfg: DictConfig) -> int:
@@ -187,17 +213,77 @@ def _embedding_dim(cfg: DictConfig, wsi: str) -> int:
         return int(f[name].shape[1])
 
 
+def _grid_values(cfg: DictConfig, name: str) -> list:
+    """Values of one hparam the trials use (experiment.py's _build_grid: every value if
+    tuned, else the first)."""
+    spec = OmegaConf.select(cfg, f"hparams.{name}", default=None)
+    if spec is None:
+        return []
+    values = OmegaConf.to_container(spec["values"], resolve=True)
+    values = values if isinstance(values, list) else [values]
+    return values if spec["tune"] else values[:1]
+
+
 def _grid_transforms(cfg: DictConfig) -> bool:
-    """Whether any trial (experiment.py's _build_grid: every value if tuned, else the first)
-    uses z_score normalization or PCA."""
-    def used(name):
-        spec = OmegaConf.select(cfg, f"hparams.{name}", default=None)
-        if spec is None:
-            return []
-        values = OmegaConf.to_container(spec["values"], resolve=True)
-        values = values if isinstance(values, list) else [values]
-        return values if spec["tune"] else values[:1]
-    return "z_score" in used("normalization") or any(v is not None for v in used("pca_components"))
+    """Whether any trial uses z_score normalization or PCA."""
+    return "z_score" in _grid_values(cfg, "normalization") or any(
+        v is not None for v in _grid_values(cfg, "pca_components")
+    )
+
+
+def _grid_linear_only(cfg: DictConfig) -> bool:
+    """Whether every trial can train jointly (experiment.py's joint_compatible): linear,
+    no PCA, no z-score."""
+    return all(int(h) == 0 for h in _grid_values(cfg, "hidden_dim")) and not _grid_transforms(cfg)
+
+
+def _n_streams(cfg: DictConfig) -> int:
+    """Batch streams per split in a joint job (trainer.py's _Stream): one shared by the
+    trials that shuffle, one per oversampling scheme."""
+    weights = [str(w) for w in _grid_values(cfg, "loss_weights")] or ["none"]
+    oversampling = {w for w in weights if w.startswith("oversampling")}
+    return len(oversampling) + any(not w.startswith("oversampling") for w in weights)
+
+
+def _union_cell_counts(cfg: DictConfig, count: Callable[[str], int], split_indices: list[int]) -> dict[str, float]:
+    """Cells a joint job reads ('read', whole files, each slide once) and holds ('cells': per
+    slide, its used cells times the summed proportions of its appearances, capped at 1 -- an
+    upper bound on the union of the cells its splits draw)."""
+    share: dict[str, float] = {}
+    for i in split_indices:
+        sp = cfg.splits[i]
+        for side in ("train", "val", "test"):
+            for wsi, prop in _side_props(OmegaConf.select(sp, side)).items():
+                share[wsi] = min(1.0, share.get(wsi, 0.0) + prop)
+    return {
+        "read": sum(count(w) for w in share),
+        "cells": sum(_used_cells(cfg, count, w) * p for w, p in share.items()),
+    }
+
+
+def _estimate_minutes_joint(cfg: DictConfig, split_counts: list[dict[str, float]], union: dict[str, float]) -> float:
+    """Wall time of a joint job: its slides read once, then per epoch every stream's train rows
+    and every split's val rows; the final passes add each split's test and val rows (twice)."""
+    p = _time_estimate_params(cfg)
+    n_datasets = max(1, len(cfg.data.embeddings_datasets or []))
+    load_s = p["load_seconds_per_cell_dataset"] * n_datasets * union["read"]
+    n_streams = _n_streams(cfg)
+    cell_epochs = sum(
+        cfg.training.num_epochs * (n_streams * c["train"] + c["val"]) + c["test"] + 2 * c["val"]
+        for c in split_counts
+    )
+    train_s = cell_epochs * p["joint_seconds_per_cell_epoch"]
+    return p["overhead_minutes"] + p["safety_factor"] * (load_s + train_s) / 60
+
+
+def _estimate_mem_gb_joint(
+    cfg: DictConfig, split_counts: list[dict[str, float]], union: dict[str, float], dim: int,
+) -> float:
+    p = _mem_estimate_params(cfg)
+    split_cells = sum(c["train"] + c["val"] + c["test"] for c in split_counts)
+    return p["overhead_gb"] + p["safety_factor"] * (
+        union["cells"] * dim * 4 + split_cells * p["joint_bytes_per_split_cell"]
+    ) / 1e9
 
 
 def _estimate_mem_gb(cfg: DictConfig, counts: dict[str, float], dim: int, split_idx: Optional[int]) -> float:
@@ -222,9 +308,10 @@ def _clip_minutes(cfg: DictConfig, minutes: float, label: str) -> float:
     return min(minutes, max_minutes)
 
 
-def _recorded_seconds_per_cell_epoch(results_root: Path) -> list[float]:
+def _recorded_seconds_per_cell_epoch(results_root: Path, joint: bool = False) -> list[float]:
     """seconds_per_cell_epoch that finished runs under results_root measured
-    (results_summary.yaml's `timing`, see experiment.py) -- for calibrating the estimate."""
+    (results_summary.yaml's `timing`, or `timing.joint` for joint jobs, see experiment.py)
+    -- for calibrating the estimate."""
     values = []
     for path in results_root.glob("**/results_summary.yaml"):
         try:
@@ -232,6 +319,8 @@ def _recorded_seconds_per_cell_epoch(results_root: Path) -> list[float]:
                 timing = (yaml.safe_load(f) or {}).get("timing") or {}
         except yaml.YAMLError:  # e.g. an older file with python-specific tags
             continue
+        if joint:
+            timing = timing.get("joint") or {}
         if timing.get("seconds_per_cell_epoch"):
             values.append(float(timing["seconds_per_cell_epoch"]))
     return values
@@ -308,19 +397,20 @@ def _split_results_summary_path(split_idx: int, cfg: DictConfig, repo_root: Path
 
 
 def _generate_slurm_script(
-    split_idx: int,
+    split_idx,
     cfg: DictConfig,
     repo_root: Path,
     log_dir: Path,
     config_name: str,
 ) -> str:
-    split_label = "same_wsi_split" if split_idx == -1 else f"split_{split_idx}"
+    """SLURM script of one job: one split, or a list of splits run jointly."""
+    split_label = _job_label(split_idx)
     log_out = log_dir / f"{split_label}.out"
     log_err = log_dir / f"{split_label}.err"
 
     overrides = " ".join([
         f"--config-name={config_name}",
-        f"split_idx={split_idx}",
+        _split_arg(split_idx),
         f"data.model_name={cfg.data.model_name}",
         f"data.correction_name={cfg.data.correction_name}",
         *_path_relevant_overrides(cfg),
@@ -526,7 +616,7 @@ def main(cfg: DictConfig) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
 
     dry_run: bool = bool(OmegaConf.select(cfg, "dry_run", default=False))
-    debug_split: Optional[int] = OmegaConf.select(cfg, "debug_split", default=None)
+    debug_split = OmegaConf.select(cfg, "debug_split", default=None)
     grid_mode: bool = bool(OmegaConf.select(cfg, "patch_split.enabled", default=False))
     sequential: bool = bool(OmegaConf.select(cfg, "slurm.sequential", default=False))
 
@@ -552,35 +642,53 @@ def main(cfg: DictConfig) -> None:
         counts_of: Callable[[Callable[[str], int]], list[dict[str, float]]],
         n_fallback_units: int,
         n_grid_repeats: int = 1,
+        joint_splits: Optional[list[int]] = None,
     ) -> str:
         """--time for one job; counts_of(count) gives the cell counts of each unit
-        (split) the job runs, summed here."""
+        (split) the job runs, summed here -- or, for a joint job (joint_splits), trained
+        together (see _estimate_minutes_joint)."""
         if not auto_time:
             return str(cfg.slurm.time)
         minutes = None
         if count is not None:
             try:
+                units = counts_of(count)
                 total = {"read": 0.0, "train": 0.0, "val": 0.0, "test": 0.0}
-                for unit in counts_of(count):
+                for unit in units:
                     for k, v in unit.items():
                         total[k] += v
-                minutes = _estimate_minutes(cfg, total, n_grid_repeats)
-                print(f"[launcher] {label}: train={total['train']:,.0f} val={total['val']:,.0f} "
-                      f"test={total['test']:,.0f} cells, {_n_trials(cfg)} trial(s) x "
-                      f"<={cfg.training.num_epochs} epochs -> {minutes / 60:.1f}h")
+                if joint_splits:
+                    union = _union_cell_counts(cfg, count, joint_splits)
+                    minutes = _estimate_minutes_joint(cfg, units, union)
+                    print(f"[launcher] {label}: {len(units)} splits, train={total['train']:,.0f} "
+                          f"val={total['val']:,.0f} test={total['test']:,.0f} cells over <={union['cells']:,.0f} "
+                          f"distinct, {_n_trials(cfg)} trial(s) in {_n_streams(cfg)} stream(s) per split x "
+                          f"<={cfg.training.num_epochs} epochs -> {minutes / 60:.1f}h")
+                else:
+                    minutes = _estimate_minutes(cfg, total, n_grid_repeats)
+                    print(f"[launcher] {label}: train={total['train']:,.0f} val={total['val']:,.0f} "
+                          f"test={total['test']:,.0f} cells, {_n_trials(cfg)} trial(s) x "
+                          f"<={cfg.training.num_epochs} epochs -> {minutes / 60:.1f}h")
             except OSError as e:
                 print(f"[launcher] WARNING {label}: can't read cell counts ({e}); using the fallback estimate")
         if minutes is None:
             minutes = n_grid_repeats * n_fallback_units * _fallback_minutes(cfg)
         return _minutes_to_hhmmss(_clip_minutes(cfg, minutes, label))
 
-    def _job_mem(label: str, units: list[int]) -> str:
-        """--mem for one job running the given splits (-1 = same_wsi_split) one after another."""
+    def _job_mem(label: str, units: list[int], joint: bool = False) -> str:
+        """--mem for one job running the given splits (-1 = same_wsi_split) one after
+        another, or (joint) together."""
         if not auto_mem or count is None:
             return fixed_mem
         try:
             dim = _embedding_dim(cfg, sorted(_split_wsis(cfg, units[0]))[0])
-            gb = max(_estimate_mem_gb(cfg, _split_cell_counts(i, cfg, count), dim, i) for i in units)
+            if joint:
+                gb = _estimate_mem_gb_joint(
+                    cfg, [_split_cell_counts(i, cfg, count) for i in units],
+                    _union_cell_counts(cfg, count, units), dim,
+                )
+            else:
+                gb = max(_estimate_mem_gb(cfg, _split_cell_counts(i, cfg, count), dim, i) for i in units)
         except OSError as e:
             print(f"[launcher] WARNING {label}: can't read cell counts ({e}); requesting slurm.mem ({fixed_mem})")
             return fixed_mem
@@ -597,15 +705,17 @@ def main(cfg: DictConfig) -> None:
     elif not grid_mode and len(cfg.splits):
         # .../{model}/{correction}/{mapping}/{matching}/{embeddings}/split_0/results_summary.yaml
         results_root = _split_results_summary_path(0, cfg, repo_root).parents[4]
-        recorded = _recorded_seconds_per_cell_epoch(results_root) if results_root.exists() else []
-        if recorded:
-            print(f"[launcher] {len(recorded)} finished run(s) here measured a median of "
-                  f"{np.median(recorded):.2e} s/cell-epoch (slurm.time_estimate uses "
-                  f"{_time_estimate_params(cfg)['seconds_per_cell_epoch']:.2e})")
+        for joint, key in ((False, "seconds_per_cell_epoch"), (True, "joint_seconds_per_cell_epoch")):
+            recorded = _recorded_seconds_per_cell_epoch(results_root, joint) if results_root.exists() else []
+            if recorded:
+                print(f"[launcher] {len(recorded)} finished{' joint' if joint else ''} run(s) here measured a "
+                      f"median of {np.median(recorded):.2e} s/cell-epoch (slurm.time_estimate.{key} is "
+                      f"{_time_estimate_params(cfg)[key]:.2e})")
 
     # ── debug mode: print captured output of an existing SLURM job ───────────
     if debug_split is not None:
-        split_label = "same_wsi_split" if debug_split == -1 else f"split_{debug_split}"
+        # debug_split=joint prints the joint job's logs (training.joint_folds).
+        split_label = _job_label([] if str(debug_split) == "joint" else int(debug_split))
         for suffix in (".out", ".err"):
             log_path = log_dir / f"{split_label}{suffix}"
             label = "STDOUT" if suffix == ".out" else "STDERR"
@@ -667,6 +777,37 @@ def main(cfg: DictConfig) -> None:
         if not dry_run:
             sys.exit(1)
 
+    # ── training.joint_folds: the pending LOSO splits as one job (same_wsi_split, which
+    # pools every slide differently, keeps its own) when every trial can train jointly ──
+    pending_joint: list[int] = []
+    if OmegaConf.select(cfg, "training.joint_folds", default=False):
+        if not _grid_linear_only(cfg):
+            print("[launcher] training.joint_folds: the grid has MLP / PCA / z-score trials, which "
+                  "can't train jointly -- one job per split instead")
+        elif len([i for i in pending_indices if i != -1]) > 1:
+            pending_joint = [i for i in pending_indices if i != -1]
+            pending_indices = [i for i in pending_indices if i == -1]
+            print(f"[launcher] {mode}Preparing 1 joint job for splits {pending_joint} of "
+                  f"{cfg.data.model_name}/{cfg.data.correction_name} (training.joint_folds)")
+            cfg.slurm.time = _job_time(
+                "joint_folds", lambda c: [_split_cell_counts(i, cfg, c) for i in pending_joint],
+                len(pending_joint), joint_splits=pending_joint,
+            )
+            cfg.slurm.mem = _job_mem("joint_folds", pending_joint, joint=True)
+            script = _generate_slurm_script(pending_joint, cfg, repo_root, log_dir, config_name)
+            script_path = log_dir / "job_joint_folds.sh"
+            script_path.write_text(script)
+            if dry_run:
+                print(f"\n{'─'*60}\n[launcher] Script for joint_folds → {script_path}\n{script}")
+            else:
+                result = subprocess.run(["sbatch", str(script_path)], capture_output=True, text=True)
+                if result.returncode == 0:
+                    print(f"[launcher] Submitted joint_folds: {result.stdout.strip()}")
+                else:
+                    print(f"[launcher] ERROR submitting joint_folds: {result.stderr.strip()}", file=sys.stderr)
+            if not pending_indices:
+                return
+
     if sequential:
         if not pending_indices:
             print(f"[launcher] All {len(split_indices)} split(s) already have results — nothing to submit")
@@ -691,11 +832,12 @@ def main(cfg: DictConfig) -> None:
                 print(f"[launcher] ERROR: {result.stderr.strip()}", file=sys.stderr)
         return
 
-    print(f"[launcher] {mode}Preparing {len(pending_indices)} of {len(split_indices)} job(s) for "
-          f"{cfg.data.model_name}/{cfg.data.correction_name}")
+    print(f"[launcher] {mode}Preparing {len(pending_indices)} "
+          + ("more job(s)" if pending_joint else f"of {len(split_indices)} job(s)")
+          + f" for {cfg.data.model_name}/{cfg.data.correction_name}")
 
     for split_idx in pending_indices:
-        split_label = "same_wsi_split" if split_idx == -1 else f"split_{split_idx}"
+        split_label = _job_label(split_idx)
         cfg.slurm.time = _job_time(split_label, lambda c: [_split_cell_counts(split_idx, cfg, c)], 1)
         cfg.slurm.mem = _job_mem(split_label, [split_idx])
         script = _generate_slurm_script(split_idx, cfg, repo_root, log_dir, config_name)

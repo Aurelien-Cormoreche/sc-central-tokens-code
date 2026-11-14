@@ -4,7 +4,6 @@ import numpy as np
 from torch.utils.data import Dataset
 from ..data.patch_dataset import PatchDataset, MultiCellPatchDataset
 from ..data.xenium_boundaries import token_overlap_mask, nearest_token
-from src.python.utils.embeddings_mean import remove_mean_file
 from abc import ABC, abstractmethod
 import contextlib
 import json
@@ -107,8 +106,6 @@ class InferenceProvider(ABC):
     def create_output_file(self, output_path: str, num_samples: int, embedding_dim: int, dataset_stats: dict = None,
                             save_cls: bool = False, save_cell: bool = False, save_nucleus: bool = False):
         os.makedirs(output_path, exist_ok=True)
-        # a precomputed mean of the previous embeddings no longer matches (utils/embeddings_mean.py)
-        remove_mean_file(output_path)
 
         if dataset_stats is not None:
             with open(f'{output_path}/dataset_stats.json', 'w+') as f:

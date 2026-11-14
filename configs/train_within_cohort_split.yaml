@@ -848,6 +848,11 @@ training:
   # cell_id, wsi, true_label, predicted_label, per-class prob_<class> and
   # correct. No effect on grid_experiment.py (it doesn't track cell_id).
   save_test_predictions: false
+  # Several LOSO splits in one job (launcher.py): each slide is read once and every
+  # split x trial model trains together (trainer.py's train_linear_jointly) -- only when every
+  # trial is linear on the raw embeddings (hidden_dim 0, no PCA / z-score), else one job per
+  # split. same_wsi_split keeps its own job. Results match per-split jobs up to float rounding.
+  joint_folds: true
 
 # ── Hyperparameter search space ────────────────────────────────────────────
 # Set tune: false and provide a single-element values list to fix a hparam.

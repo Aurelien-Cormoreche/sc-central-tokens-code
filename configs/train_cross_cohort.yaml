@@ -689,6 +689,11 @@ training:
   # cell_id, wsi, true_label, predicted_label, per-class prob_<class> and
   # correct. No effect on grid_experiment.py (it doesn't track cell_id).
   save_test_predictions: false
+  # Several LOSO splits in one job (launcher.py): each slide is read once and every
+  # split x trial model trains together (trainer.py's train_linear_jointly) -- only when every
+  # trial is linear on the raw embeddings (hidden_dim 0, no PCA / z-score), else one job per
+  # split. same_wsi_split keeps its own job. Results match per-split jobs up to float rounding.
+  joint_folds: true
 
 # ── Hyperparameter search space ────────────────────────────────────────────
 # Set tune: false and provide a single-element values list to fix a hparam.
@@ -727,7 +732,7 @@ slurm:
   # split (embeddings h5 headers -- needs DATASETS_ROOT where the launcher runs):
   #   overhead + safety * (load + trials * (num_epochs * (train + val) + test) * s_per_cell_epoch)
   # see launcher.py's _estimate_minutes. auto_time: false requests `time` as given.
-  auto_time: false
+  auto_time: true
   time: "24:00:00"
   time_estimate:
     # Per (train + val) cell per epoch, incl. the val pass: ~5e-6 expected on an RTX 4090

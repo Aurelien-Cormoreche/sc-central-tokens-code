@@ -124,9 +124,6 @@ def main() -> None:
         text = cc._replace_once(
             text, "  selection_metric: cohort_balanced_slide_macro_f1\n", "  selection_metric: slide_macro_f1\n"
         )
-        # Folds are one cohort, far smaller than cross-cohort's ~100 slides: estimate wall
-        # time from the cell counts again (configs/train.yaml's default).
-        text = cc._replace_once(text, "  auto_time: false\n", "  auto_time: true\n")
         text = re.sub(r"  mem: 256G[^\n]*\n", "  mem: 256G\n", text, count=1)
 
         out = args.out_dir / f"train_within_cohort_{cohort.lower()}.yaml"

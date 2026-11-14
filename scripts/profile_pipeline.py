@@ -1311,7 +1311,7 @@ def _proc_read(a):
     from src.python.utils import loading_functions as lf
     wsi, base, keys, nrows, dim = a
     out = np.empty((nrows, dim), np.float32)
-    lf._read_mean_rows((wsi, base, keys, np.arange(nrows), np.arange(nrows), out, 8192, False))
+    lf._read_mean_rows((wsi, base, keys, np.arange(nrows), np.arange(nrows), out, 8192))
     return 0
 
 
@@ -1395,20 +1395,18 @@ def sec_classify(args, ctx):
         Rr = args.read_rows
         rows = []
 
-        def go(label, slides, keys, workers, mode, mean_file=False):
+        def go(label, slides, keys, workers, mode):
             t = _now()
             if mode == "thread":
                 outs = [np.empty((Rr, dim), np.float32) for _ in slides]
                 with ThreadPoolExecutor(workers) as ex:
-                    res = list(ex.map(lf._read_mean_rows, [(w, str(base), keys, np.arange(Rr), np.arange(Rr), o, 8192,
-                                                            mean_file) for w, o in zip(slides, outs)]))
-                if mean_file and not all(src.startswith("embeddings_mean") for _, src in res):
-                    return   # no up-to-date embeddings_mean.h5 for these slides: nothing to measure
+                    list(ex.map(lf._read_mean_rows, [(w, str(base), keys, np.arange(Rr), np.arange(Rr), o, 8192)
+                                                     for w, o in zip(slides, outs)]))
             else:
                 with ProcessPoolExecutor(workers, mp_context=mp.get_context("fork")) as ex:
                     list(ex.map(_proc_read, [(w, str(base), keys, Rr, dim) for w in slides]))
             dt = _now() - t
-            mb = len(slides) * Rr * (1 if mean_file else len(keys)) * dim * 4 / 1e6
+            mb = len(slides) * Rr * len(keys) * dim * 4 / 1e6
             rows.append({"variant": label, "slides": len(slides), "cells_s": len(slides) * Rr / dt, "MB_s": mb / dt})
 
         keys = list(args.clf_datasets)
@@ -1417,7 +1415,6 @@ def sec_classify(args, ctx):
         go(f"{k} processes (cold)", groups[2], keys, k, "process")
         go(f"{k} threads, 1 dataset instead of {len(keys)} (cold)", groups[3], keys[:1], k, "thread")
         go(f"{k} threads, warm re-read", groups[0], keys, k, "thread")
-        go(f"{k} threads, precomputed embeddings_mean.h5 (if present, cold)", groups[1], keys, k, "thread", True)
         table(rows, ["variant", "slides", "cells_s", "MB_s"])
         cl["read"] = rows
 
