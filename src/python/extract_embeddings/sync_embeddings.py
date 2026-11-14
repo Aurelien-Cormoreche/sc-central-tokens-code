@@ -10,7 +10,10 @@ order, labelled with its cell_type:
                  (embeddings_dataset.h5 stores no x_start/y_start to check against)
   added cells    extracted now with the config's own settings (model, mode, size, save_cls /
                  save_cell / save_nucleus, builder_kwargs), from a temporary patch_coordinates.h5
-                 holding only those cells, in {output_path}/_sync_tmp/
+                 holding only those cells, in {output_path}/_sync_tmp/. The merged file has the
+                 existing file's embeddings_* datasets: one the config adds but the slide was
+                 extracted without (embeddings_cls of a slide extracted before save_cls) is left
+                 out; one the config no longer writes is an error
   removed cells  dropped
   labels         cell_labels rewritten from the current cell_type
 
@@ -249,9 +252,17 @@ def merge_slide(plan: dict, keep_old: bool) -> None:
                 if not _same_ids(tmp['cell_ids'][()], new_ids[added]):
                     raise SyncError(f"{tmp_emb} does not hold the added cells -- delete {out / TMP_DIR} and re-run")
                 tmp_keys = sorted(k for k in tmp if k.startswith('embeddings_'))
-                if tmp_keys != emb_keys:
-                    raise SyncError(f"existing file has {emb_keys} but the new extraction wrote {tmp_keys}: the "
-                                    f"config's settings differ from the ones the slide was extracted with")
+                missing = [k for k in emb_keys if k not in tmp_keys]
+                if missing:
+                    raise SyncError(f"existing file has {emb_keys} but the new extraction wrote {tmp_keys} (no "
+                                    f"{missing}): the config's settings differ from the ones the slide was "
+                                    f"extracted with")
+                # e.g. a slide extracted before save_cls: the merged file keeps the existing file's keys
+                unused = [k for k in tmp_keys if k not in emb_keys]
+                if unused:
+                    print(f"[sync] {plan['name']}: the existing file has no {unused}; the merged file leaves "
+                          f"{'it' if len(unused) == 1 else 'them'} out (re-extract the slide to get "
+                          f"{'it' if len(unused) == 1 else 'them'})", flush=True)
                 for k in emb_keys:
                     if (old[k].shape[1:], old[k].dtype) != (tmp[k].shape[1:], tmp[k].dtype):
                         raise SyncError(f"{k}: existing {old[k].shape[1:]} {old[k].dtype}, "
