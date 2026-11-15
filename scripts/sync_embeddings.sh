@@ -5,6 +5,8 @@
 # Usage (submit from the repo root, next to .env):
 #   sbatch scripts/sync_embeddings.sh configs/extract_embeddings/uni2_224.json
 #   sbatch scripts/sync_embeddings.sh configs/extract_embeddings/uni2_224.json --samples GSM7990540 --keep-old
+#   sbatch scripts/sync_embeddings.sh configs/extract_embeddings/reextract/brain_gbm_full.json --resume-unfinished
+#                                    # finish an extraction job that was stopped part way
 #   CONDA_ENV=myenv sbatch --time=48:00:00 scripts/sync_embeddings.sh ...      # other env / resources
 #
 # Check what would run first (no GPU needed):

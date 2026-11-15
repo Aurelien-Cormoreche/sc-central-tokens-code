@@ -29,6 +29,11 @@ leaves them out (the plan and the merge log name them). Left alone and reported:
 were not conserved (under half the embedded cells still present -- re-extract those from
 scratch), unfinished embeddings files, and duplicate ids.
 
+--resume-unfinished finishes an extraction that was stopped part way (embeddings_dataset.h5 with
+rows never written, which the plan otherwise skips): its written rows are kept, the rest extracted
+and merged as added cells -- the same file a run to the end would have written. Only once no job is
+writing the slide: a file written in the last RECENT_WRITE_SECONDS is left alone.
+
 Re-running is safe: a synced slide comes out unchanged, and a finished temporary extraction is
 reused (is_extracted), so a killed job picks up where it stopped.
 
@@ -41,6 +46,7 @@ on a login node that can't load torch's CUDA libraries):
     python -m src.python.extract_embeddings.sync_embeddings configs/extract_embeddings/uni2_224.json --dry-run
     python -m src.python.extract_embeddings.sync_embeddings configs/extract_embeddings/uni2_224.json --samples GSM7990540
     sbatch scripts/sync_embeddings.sh configs/extract_embeddings/uni2_224.json
+    sbatch scripts/sync_embeddings.sh configs/extract_embeddings/reextract/brain_gbm_full.json --resume-unfinished
 """
 import argparse
 import contextlib
@@ -50,6 +56,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -66,6 +73,7 @@ IDS_CHANGED_BELOW = 0.5    # kept / embedded cells below this -> ids not conserv
 CHUNK_ROWS = 16384         # rows per read/write when merging (16384 x 1536 float32 = 100 MB)
 N_SPOT_CHECK = 512         # kept rows and added rows whose embeddings are re-read and compared
 _TAKE_SLACK = 4096         # _take reads one slice if it spans at most 2 x len(idx) + this many rows
+RECENT_WRITE_SECONDS = 300  # --resume-unfinished leaves a file written this recently alone (a job may be on it)
 
 
 class SyncError(Exception):
@@ -98,11 +106,13 @@ def _read_coords(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 # ── planning ─────────────────────────────────────────────────────────────────────
 
-def plan_slide(run: dict) -> dict:
+def plan_slide(run: dict, resume_unfinished: bool = False) -> dict:
     """What to do for one inference run: action in unchanged / relabel / merge / skip.
 
     For a merge, old_idx[j] is the row of the existing file holding current row j's cell
-    (-1: added cell) and added_rows the current rows to extract."""
+    (-1: added cell) and added_rows the current rows to extract. With resume_unfinished, the
+    rows an interrupted extraction never wrote (empty cell_id) count as absent cells, so the
+    merge extracts only those."""
     out = Path(run['output_path'])
     emb_path = out / 'embeddings_dataset.h5'
     coords_path = Path(run['dataset_configs']['cells_info_path'])
@@ -122,11 +132,22 @@ def plan_slide(run: dict) -> dict:
         extra = sorted(k for k, d in f.items()
                        if isinstance(d, h5py.Dataset) and d.shape[:1] == (len(old_ids),)
                        and not k.startswith('embeddings_') and k not in ('cell_ids', 'cell_labels'))
-    n_old, n_new = len(old_ids), len(new_ids)
-    plan.update(n_old=n_old, n_new=n_new)
-    if any(len(v) == 0 for v in old_ids):
-        return {**plan, 'action': 'skip', 'why': "unfinished extraction -- the normal extraction re-runs it"}
-    oh, nh = _hash(old_ids), _hash(new_ids)
+    n_new = len(new_ids)
+    written = np.fromiter((len(v) > 0 for v in old_ids), dtype=bool, count=len(old_ids))
+    old_rows = np.flatnonzero(written)      # rows of the file holding a cell: all of them once finished
+    n_old, n_unwritten = len(old_rows), len(old_ids) - len(old_rows)
+    plan.update(n_old=n_old, n_new=n_new, n_unwritten=n_unwritten)
+    if n_unwritten:
+        if not resume_unfinished:
+            return {**plan, 'action': 'skip', 'why': "unfinished extraction -- the normal extraction re-runs it; "
+                                                     "--resume-unfinished extracts only its unwritten rows"}
+        age = time.time() - emb_path.stat().st_mtime
+        if age < RECENT_WRITE_SECONDS:
+            return {**plan, 'action': 'skip', 'why': f"unfinished and written {age:.0f} s ago -- is a job still "
+                                                     f"extracting it? re-run once none is"}
+        if not n_old:
+            return {**plan, 'action': 'skip', 'why': "no row written yet -- run the normal extraction"}
+    oh, nh = _hash(old_ids[old_rows]), _hash(new_ids)
     if len(np.unique(oh)) != n_old or len(np.unique(nh)) != n_new:
         return {**plan, 'action': 'skip', 'why': "duplicate cell ids"}
 
@@ -135,7 +156,7 @@ def plan_slide(run: dict) -> dict:
         sorter = np.argsort(oh)
         pos = np.minimum(np.searchsorted(oh, nh, sorter=sorter), n_old - 1)
         hit = oh[sorter[pos]] == nh
-        old_idx[hit] = sorter[pos][hit]
+        old_idx[hit] = old_rows[sorter[pos][hit]]
     kept_rows = np.flatnonzero(old_idx >= 0)
     if not _same_ids(old_ids[old_idx[kept_rows]], new_ids[kept_rows]):
         return {**plan, 'action': 'skip', 'why': "id hash collision -- compare the ids by hand"}
@@ -147,7 +168,7 @@ def plan_slide(run: dict) -> dict:
 
     if n_kept < IDS_CHANGED_BELOW * n_old:
         return {**plan, 'action': 'skip', 'why': "ids not conserved -- delete the file and re-extract the slide"}
-    if not len(added_rows) and not n_removed and np.array_equal(old_idx, np.arange(n_old)):
+    if not len(added_rows) and not n_removed and not n_unwritten and np.array_equal(old_idx, np.arange(n_old)):
         return {**plan, 'action': 'relabel' if n_relabel else 'unchanged'}
     # per-cell datasets the extraction does not write (`extra`) are left out of the merged file
     return {**plan, 'action': 'merge', 'old_idx': old_idx, 'added_rows': added_rows}
@@ -329,8 +350,15 @@ def _print_plan(plans: list[dict]) -> None:
                     f"{p['n_added']:8,} {p['n_relabel']:8,}")
         else:
             nums = ''
-        note = (f"  ({p['why']})" if p['action'] == 'skip'
-                else f"  (drops {', '.join(p['extra'])})" if p['action'] == 'merge' and p['extra'] else '')
+        notes = []
+        if p['action'] == 'skip':
+            notes.append(p['why'])
+        elif p['action'] == 'merge':
+            if p['n_unwritten']:
+                notes.append(f"resumes: {p['n_unwritten']:,} rows never written")
+            if p['extra']:
+                notes.append(f"drops {', '.join(p['extra'])}")
+        note = f"  ({'; '.join(notes)})" if notes else ''
         print(f"{p['action']:10} {p['name']:64} {nums}{note}")
     actionable = [p for p in plans if p['action'] in ('merge', 'relabel')]
     print(f"-> {sum(p['action'] == 'merge' for p in plans)} to merge, {sum(p['action'] == 'relabel' for p in plans)} "
@@ -376,7 +404,7 @@ def _light_runs(config_path: Path) -> tuple[dict, list[dict]]:
 
 
 def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, keep_old: bool,
-                exclude: list[str] | None = None) -> list[str]:
+                exclude: list[str] | None = None, resume_unfinished: bool = False) -> list[str]:
     """Sync every slide of one JSON run config. Returns '<sample>: <error>' for each failure."""
     if dry_run:
         cfg, runs = _light_runs(config_path)
@@ -398,7 +426,7 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
 
     plans = []
     for run in runs:
-        plan = plan_slide(run)
+        plan = plan_slide(run, resume_unfinished)
         if plan['action'] == 'unchanged':
             shutil.rmtree(plan['out'] / TMP_DIR, ignore_errors=True)   # leftover of a killed run
         plans.append(plan)
@@ -445,6 +473,7 @@ def sync_config(config_path: Path, samples: list[str] | None, dry_run: bool, kee
             merge_slide(p, keep_old)
             print(f"[sync] merged {p['name']}: {p['n_new']:,} cells ({p['n_added']:,} added, "
                   f"{p['n_removed']:,} removed, {p['n_relabel']:,} relabelled)"
+                  + (f", resumed ({p['n_unwritten']:,} rows had never been written)" if p['n_unwritten'] else '')
                   + (f", dropped {', '.join(p['extra'])}" if p['extra'] else ''), flush=True)
         except Exception as e:
             failures.append(f"{p['name']}: {type(e).__name__}: {e}")
@@ -460,11 +489,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--dry-run', action='store_true', help="only print what would be done (no model, no writes)")
     parser.add_argument('--keep-old', action='store_true',
                         help=f"keep each replaced file as {BACKUP_NAME} (default: overwritten)")
+    parser.add_argument('--resume-unfinished', action='store_true',
+                        help="finish interrupted extractions: extract only the rows they never wrote and merge "
+                             "(only once no job is writing the slide)")
     args = parser.parse_args(argv)
 
     failures = []
     for config in _expand(args.configs):
-        failures += sync_config(config, args.samples, args.dry_run, args.keep_old, args.exclude_samples)
+        failures += sync_config(config, args.samples, args.dry_run, args.keep_old, args.exclude_samples,
+                                args.resume_unfinished)
     print(f"\n=== done: {len(failures)} failure(s) ===")
     for f in failures:
         print(f"  FAILED {f}")
