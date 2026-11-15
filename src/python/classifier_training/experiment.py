@@ -785,9 +785,9 @@ def _resolve_rows(split: _SplitData, store: _EmbeddingStore) -> None:
 
 def joint_compatible(grid: list[dict[str, Any]]) -> bool:
     """Whether trainer.train_linear_jointly can train every trial of the grid: all linear
-    (hidden_dim 0) on the raw embeddings (no PCA, no z-score)."""
+    (hidden_dim 0) without PCA (z-score or not)."""
     return all(
-        int(h["hidden_dim"]) == 0 and h["pca_components"] is None and str(h["normalization"]) == "none"
+        int(h["hidden_dim"]) == 0 and h["pca_components"] is None and str(h["normalization"]) in ("none", "z_score")
         for h in grid
     )
 
@@ -1145,8 +1145,8 @@ def run_joint_experiment(
     device: str,
     dirs: list[tuple[Path, Optional[Path], Optional[dict[str, Any]]]],
 ) -> None:
-    """Run several splits' grid searches in one go -- every trial linear on the raw
-    embeddings (joint_compatible) -- writing each split's results exactly where and as
+    """Run several splits' grid searches in one go -- every trial linear without PCA
+    (joint_compatible) -- writing each split's results exactly where and as
     run_split_experiment would (dirs[i] = its output_dir, model_dir, model_identity).
 
     Each split selects its cells with the same seeded draws as a job of its own, but each
@@ -1295,7 +1295,7 @@ def main(cfg: DictConfig) -> None:
     elif joint_compatible(_build_grid(cfg.hparams)):
         run_joint_experiment(split_indices, cfg, device, dirs)
     else:
-        print("[experiment] the grid has MLP / PCA / z-score trials, which can't train jointly -- "
+        print("[experiment] the grid has MLP / PCA trials, which can't train jointly -- "
               "running the splits one after another")
         for i, d in zip(split_indices, dirs):
             run_split_experiment(i, cfg, device, *d)

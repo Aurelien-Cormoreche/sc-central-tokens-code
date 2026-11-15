@@ -282,7 +282,7 @@ training:
   save_test_predictions: false
   # Several LOSO splits in one job (launcher.py): each slide is read once and every
   # split x trial model trains together (trainer.py's train_linear_jointly) -- only when every
-  # trial is linear on the raw embeddings (hidden_dim 0, no PCA / z-score), else one job per
+  # trial is linear without PCA (hidden_dim 0; z-score is fine), else one job per
   # split. same_wsi_split keeps its own job. Results match per-split jobs up to float rounding.
   joint_folds: true
 

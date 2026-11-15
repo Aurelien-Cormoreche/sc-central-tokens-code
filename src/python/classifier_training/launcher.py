@@ -1,7 +1,7 @@
 """
 Layer 1 — Launcher: generates and submits one SLURM job per WSI split.
 
-With training.joint_folds: true and a linear-only grid (hidden_dim 0, no PCA/z-score), the
+With training.joint_folds: true and a linear grid without PCA (hidden_dim 0; z-score is fine), the
 LOSO splits go to one job instead (split_idx=[0,1,...], experiment.py's run_joint_experiment):
 each slide read once and every split x trial model trained together.
 
@@ -54,6 +54,9 @@ _TIME_ESTIMATE_DEFAULTS = {
     # trials of a stream train on the same gathered rows. Conservative until measured:
     # results_summary.yaml's timing.joint.seconds_per_cell_epoch records it.
     "joint_seconds_per_cell_epoch": 1.0e-5,
+    # z-score trials in a joint job: one fit per split over its train rows (gather, mean,
+    # std; ~20 s per 2.5M cells), per train cell.
+    "joint_zscore_seconds_per_cell": 2.0e-5,
 }
 # Used only when the h5 files can't be read (DATASETS_ROOT unset / not mounted).
 FALLBACK_EPOCH_MINUTES = 2
@@ -233,8 +236,14 @@ def _grid_transforms(cfg: DictConfig) -> bool:
 
 def _grid_linear_only(cfg: DictConfig) -> bool:
     """Whether every trial can train jointly (experiment.py's joint_compatible): linear,
-    no PCA, no z-score."""
-    return all(int(h) == 0 for h in _grid_values(cfg, "hidden_dim")) and not _grid_transforms(cfg)
+    no PCA (z-score is applied on the device)."""
+    return all(int(h) == 0 for h in _grid_values(cfg, "hidden_dim")) and all(
+        v is None for v in _grid_values(cfg, "pca_components")
+    )
+
+
+def _grid_z_score(cfg: DictConfig) -> bool:
+    return "z_score" in _grid_values(cfg, "normalization")
 
 
 def _n_streams(cfg: DictConfig) -> int:
@@ -273,6 +282,8 @@ def _estimate_minutes_joint(cfg: DictConfig, split_counts: list[dict[str, float]
         for c in split_counts
     )
     train_s = cell_epochs * p["joint_seconds_per_cell_epoch"]
+    if _grid_z_score(cfg):
+        train_s += sum(c["train"] for c in split_counts) * p["joint_zscore_seconds_per_cell"]
     return p["overhead_minutes"] + p["safety_factor"] * (load_s + train_s) / 60
 
 
@@ -281,8 +292,10 @@ def _estimate_mem_gb_joint(
 ) -> float:
     p = _mem_estimate_params(cfg)
     split_cells = sum(c["train"] + c["val"] + c["test"] for c in split_counts)
+    # z-score fit, one split at a time: its train rows gathered, plus numpy std's centred copy
+    z_fit = 2 * max((c["train"] for c in split_counts), default=0) if _grid_z_score(cfg) else 0
     return p["overhead_gb"] + p["safety_factor"] * (
-        union["cells"] * dim * 4 + split_cells * p["joint_bytes_per_split_cell"]
+        (union["cells"] + z_fit) * dim * 4 + split_cells * p["joint_bytes_per_split_cell"]
     ) / 1e9
 
 
@@ -782,7 +795,7 @@ def main(cfg: DictConfig) -> None:
     pending_joint: list[int] = []
     if OmegaConf.select(cfg, "training.joint_folds", default=False):
         if not _grid_linear_only(cfg):
-            print("[launcher] training.joint_folds: the grid has MLP / PCA / z-score trials, which "
+            print("[launcher] training.joint_folds: the grid has MLP / PCA trials, which "
                   "can't train jointly -- one job per split instead")
         elif len([i for i in pending_indices if i != -1]) > 1:
             pending_joint = [i for i in pending_indices if i != -1]

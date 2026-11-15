@@ -116,10 +116,15 @@ def _fit_preprocessing(
         train_emb = pca.fit_transform(train_emb)
         pre.pca_mean, pre.pca_components = pca.mean_, pca.components_
     if normalization == "z_score":
-        pre.z_mean = train_emb.mean(axis=0)
-        pre.z_std = train_emb.std(axis=0) + 1e-8
+        pre.z_mean, pre.z_std = _z_score_stats(train_emb)
         train_emb = (train_emb - pre.z_mean) / pre.z_std
     return train_emb, pre
+
+
+def _z_score_stats(train_emb: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """z-score fit: per-feature mean and std (+1e-8) of the train rows. Shared by
+    train_and_evaluate and train_linear_jointly, so both standardise with the same numbers."""
+    return train_emb.mean(axis=0), train_emb.std(axis=0) + 1e-8
 
 
 def _compute_sample_weights(
@@ -544,9 +549,10 @@ _JOINT_CHUNK_ROWS = 65536
 
 
 def supports_joint_training(config: TrainConfig) -> bool:
-    """Trials train_linear_jointly can train: linear (no hidden layer, hence no dropout) on
-    the raw embeddings (no PCA / z-score, whose fits would make each split's inputs differ)."""
-    return config.hidden_dim == 0 and config.pca_components is None and config.normalization == "none"
+    """Trials train_linear_jointly can train: linear (no hidden layer, hence no dropout),
+    without PCA (whose fit would give each split its own input space); z-score is applied on
+    the device to the shared batches."""
+    return config.hidden_dim == 0 and config.pca_components is None and config.normalization in ("none", "z_score")
 
 
 @dataclass
@@ -573,13 +579,22 @@ class _Stream:
     """Trials of one split that see the same batches. train_and_evaluate seeds torch's RNG,
     initialises the model and only then draws each epoch's batch order (plus one draw per val
     pass), so its trials with the same seed and sampling -- a shuffle, or oversampling with the
-    same weights -- draw identical orders. `generator` carries that RNG stream on for them."""
+    same weights -- draw identical orders (z-score draws nothing and leaves the model's shape
+    alone). `generator` carries that RNG stream on for them; each batch is gathered once."""
     fold: int
-    trials: list[int]                     # indices into the fold's configs
     generator: torch.Generator
     sampling_weights: Optional[torch.Tensor]
-    loss_weights: torch.Tensor            # (len(trials), N_train) per-row CE weights
     n_batches: int
+
+
+@dataclass
+class _Unit:
+    """Trials of one stream with the same input transform: a block of the stacked parameters,
+    fed the stream's batches either raw or z-scored with the split's train statistics."""
+    stream: int
+    trials: list[int]                     # indices into the fold's configs
+    z_stats: Optional[tuple[np.ndarray, np.ndarray]]   # (mean, std) of _z_score_stats; None = raw
+    loss_weights: torch.Tensor            # (len(trials), N_train) per-row CE weights
 
 
 @dataclass
@@ -658,15 +673,28 @@ def _joint_eval(
     params: torch.Tensor,
     device: str,
     want_probs: tuple[int, ...] = (),
+    z: Optional[tuple[list[int], torch.Tensor, torch.Tensor]] = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[int, np.ndarray]]:
     """One in-order pass of M linear models -- params (M, C, D+1), bias last -- over
     embeddings[rows]: each model's weighted mean CE loss (weights (M, N)), its predictions
-    (M, N), and the softmax probabilities (N, C) of the models listed in want_probs."""
+    (M, N), and the softmax probabilities (N, C) of the models listed in want_probs.
+    z = (models, mean, std): those models see the rows z-scored, (x - mean) / std on the
+    device in the embeddings' dtype -- the arithmetic of Preprocessor.transform."""
     cuda = torch.device(device).type == "cuda"
     n_models, n_classes, d1 = params.shape
     dim = d1 - 1
-    weight = params[..., :dim].reshape(n_models * n_classes, dim)
-    bias = params[..., dim].reshape(n_models * n_classes)
+    z_models = list(z[0]) if z is not None else []
+    raw_models = [m for m in range(n_models) if m not in set(z_models)]
+    groups = []   # (model indices, their weight (M_g*C, D) and bias, z stats or None)
+    for models, stats in ((raw_models, None), (z_models, z[1:] if z is not None else None)):
+        if models:
+            p = params[torch.tensor(models, device=params.device)]
+            groups.append((
+                torch.tensor(models, device=device),
+                p[..., :dim].reshape(len(models) * n_classes, dim),
+                p[..., dim].reshape(len(models) * n_classes),
+                stats,
+            ))
     n = len(rows)
     total = torch.zeros(n_models, dtype=torch.float64, device=device)
     preds = torch.empty((n_models, n), dtype=torch.long, device=device)
@@ -680,10 +708,13 @@ def _joint_eval(
 
     with torch.no_grad():
         for lo, x, y, w in _prefetched(make_chunk, range(0, n, _JOINT_CHUNK_ROWS)):
-            x = x.to(device, non_blocking=True).float()
+            x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             w = w.to(device, non_blocking=True)
-            logits = torch.addmm(bias, x, weight.T).view(len(x), n_models, n_classes)
+            logits = torch.empty((len(x), n_models, n_classes), device=device)
+            for models, weight, bias, stats in groups:
+                xg = x if stats is None else (x - stats[0]) / stats[1]
+                logits[:, models] = torch.addmm(bias, xg.float(), weight.T).view(len(x), len(models), n_classes)
             nll = -torch.log_softmax(logits, -1).gather(-1, y[:, None, None].expand(-1, n_models, 1)).squeeze(-1)
             total += (nll * w).double().sum(0)
             hi = lo + len(x)
@@ -702,15 +733,17 @@ def train_linear_jointly(
     """Train every trial of every fold, all at once, as train_and_evaluate would one by one.
 
     embeddings: (N, D) CPU tensor holding the cells of every fold once (float32, or float16
-    converted on the device). All trials must be linear without preprocessing
-    (supports_joint_training) and share batch_size and num_epochs.
+    converted on the device). All trials must be linear without PCA (supports_joint_training)
+    and share batch_size and num_epochs.
 
     Each trial gets the initial weights, batch order, early stopping and selected epoch of
     its own train_and_evaluate call: trials of a fold drawing the same batches are grouped in
     a _Stream whose generator continues their RNG stream, and the streams of all folds step
-    together, one round = one batch of each, as a batched matmul with AdamW's update applied
-    per trial (_masked_adamw_). Only the float rounding of the batched matmuls and sums
-    differs, so metrics agree closely rather than bit for bit.
+    together, one round = one batch of each. A stream's trials are split by input transform
+    into _Units (raw, or z-scored on the device with the fold's train statistics -- the same
+    numbers and arithmetic as train_and_evaluate's); the units' models run as one batched
+    matmul with AdamW's update applied per trial (_masked_adamw_). Only the float rounding of
+    the batched matmuls and sums differs, so metrics agree closely rather than bit for bit.
 
     Returns (results, n_cell_epochs): results[f][i] is train_and_evaluate's dict (with val)
     for folds[f].configs[i]. To bound memory, per-cell outputs (val_/test_predictions and
@@ -722,20 +755,26 @@ def train_linear_jointly(
     configs = [c for fold in folds for c in fold.configs]
     unsupported = [c for c in configs if not supports_joint_training(c)]
     if unsupported:
-        raise ValueError(f"train_linear_jointly needs linear trials without PCA/z-score, got {unsupported[0]}")
+        raise ValueError(f"train_linear_jointly needs linear trials without PCA, got {unsupported[0]}")
     batch_size, num_epochs = configs[0].batch_size, configs[0].num_epochs
     if any(c.batch_size != batch_size or c.num_epochs != num_epochs for c in configs):
         raise ValueError("train_linear_jointly needs every trial to share batch_size and num_epochs")
     cuda = torch.device(device).type == "cuda"
     dim = embeddings.shape[1]
 
-    # ── streams: per fold, its trials grouped by (seed, sampling) ──
+    # ── streams (per fold, its trials grouped by seed and sampling) and their units ──
     streams: list[_Stream] = []
+    units: list[_Unit] = []
     inits: list[torch.Tensor] = []
+    z_stats: dict[int, tuple[np.ndarray, np.ndarray]] = {}    # per fold with z-score trials
     for f, fold in enumerate(folds):
         num_classes = fold.configs[0].num_classes
         if any(c.num_classes != num_classes for c in fold.configs):
             raise ValueError("train_linear_jointly needs the trials of a fold to share num_classes")
+        if any(c.normalization == "z_score" for c in fold.configs):
+            # train_and_evaluate's fit, on the same rows in the same order (embeddings[train_rows]
+            # is its train_embeddings); one fit serves every z-score trial of the fold.
+            z_stats[f] = _z_score_stats(embeddings[fold.train_rows].numpy())
         groups: dict[tuple[int, Optional[str]], list[int]] = {}
         for i, c in enumerate(fold.configs):
             sampling = c.loss_weights if _is_oversampling(c.loss_weights) else None
@@ -747,103 +786,140 @@ def train_linear_jointly(
             linear = MLP(dim, 0, num_classes, first.dropout).net
             generator = torch.Generator()
             generator.set_state(torch.get_rng_state())
-            inits.append(torch.cat([linear.weight.detach(), linear.bias.detach()[:, None]], dim=1))
+            init = torch.cat([linear.weight.detach(), linear.bias.detach()[:, None]], dim=1)
             sampling_weights = (
                 _compute_sample_weights(fold.train_labels, fold.train_wsi_origins, num_classes, sampling).double()
                 if sampling else None
             )
-            loss_weights = torch.stack([
-                _loss_weights(fold.configs[i], fold.train_labels, fold.train_wsi_origins) for i in trials
-            ])
-            streams.append(_Stream(
-                f, trials, generator, sampling_weights, loss_weights,
-                math.ceil(len(fold.train_labels) / batch_size),
-            ))
+            streams.append(_Stream(f, generator, sampling_weights, math.ceil(len(fold.train_labels) / batch_size)))
+            by_transform: dict[str, list[int]] = {}
+            for i in trials:
+                by_transform.setdefault(fold.configs[i].normalization, []).append(i)
+            for normalization, unit_trials in by_transform.items():
+                units.append(_Unit(
+                    len(streams) - 1, unit_trials, z_stats[f] if normalization == "z_score" else None,
+                    torch.stack([
+                        _loss_weights(fold.configs[i], fold.train_labels, fold.train_wsi_origins) for i in unit_trials
+                    ]),
+                ))
+                inits.append(init)
 
-    # ── parameters stacked as (stream, slot, class, D + bias), padded to the largest ──
-    n_streams = len(streams)
-    n_slots = max(len(st.trials) for st in streams)
+    # ── parameters stacked as (unit, slot, class, D + bias), padded to the largest ──
+    n_units = len(units)
+    n_slots = max(len(un.trials) for un in units)
     n_classes = max(init.shape[0] for init in inits)
-    params = torch.zeros((n_streams, n_slots, n_classes, dim + 1))
-    class_pad = torch.ones((n_streams, n_classes), dtype=torch.bool)
-    lr = torch.zeros((n_streams, n_slots), dtype=torch.float64)
-    for s, st in enumerate(streams):
-        k, c = len(st.trials), inits[s].shape[0]
-        params[s, :k, :c] = inits[s]
-        class_pad[s, :c] = False
-        lr[s, :k] = torch.tensor([folds[st.fold].configs[i].learning_rate for i in st.trials], dtype=torch.float64)
+    params = torch.zeros((n_units, n_slots, n_classes, dim + 1))
+    class_pad = torch.ones((n_units, n_classes), dtype=torch.bool)
+    lr = torch.zeros((n_units, n_slots), dtype=torch.float64)
+    # Per unit, the z-score applied to its rows on the device (0 / 1 for raw units: exact no-ops).
+    z_mean = torch.zeros((n_units, dim), dtype=embeddings.dtype)
+    z_std = torch.ones((n_units, dim), dtype=embeddings.dtype)
+    for u, un in enumerate(units):
+        k, c = len(un.trials), inits[u].shape[0]
+        params[u, :k, :c] = inits[u]
+        class_pad[u, :c] = False
+        lr[u, :k] = torch.tensor(
+            [folds[streams[un.stream].fold].configs[i].learning_rate for i in un.trials], dtype=torch.float64
+        )
+        if un.z_stats is not None:
+            z_mean[u], z_std[u] = (torch.from_numpy(np.asarray(a)) for a in un.z_stats)
+    any_z = any(un.z_stats is not None for un in units)
     params = params.to(device).requires_grad_()
     exp_avg, exp_avg_sq = torch.zeros_like(params), torch.zeros_like(params)
     lr = lr.to(device)
     class_pad = class_pad.to(device)
-    steps = torch.zeros((n_streams, n_slots), dtype=torch.float64, device=device)
+    z_mean, z_std = z_mean.to(device), z_std.to(device)
+    steps = torch.zeros((n_units, n_slots), dtype=torch.float64, device=device)
 
-    states = {(s, t): _MemberState([], [], []) for s, st in enumerate(streams) for t in range(len(st.trials))}
-    # Per fold, its members (stream, slot) in trial order, and their val CE weights.
+    states = {(u, t): _MemberState([], [], []) for u, un in enumerate(units) for t in range(len(un.trials))}
+    # Per fold, its members (unit, slot) in trial order, their val CE weights, and which of
+    # them (positions in that order) are z-score trials.
     fold_members: list[list[tuple[int, int]]] = []
     val_weights: list[torch.Tensor] = []
+    fold_z: list[Optional[tuple[list[int], torch.Tensor, torch.Tensor]]] = []
     for f, fold in enumerate(folds):
         members = sorted(
-            ((st.trials[t], s, t) for s, st in enumerate(streams) if st.fold == f for t in range(len(st.trials)))
+            (un.trials[t], u, t) for u, un in enumerate(units) if streams[un.stream].fold == f
+            for t in range(len(un.trials))
         )
-        fold_members.append([(s, t) for _, s, t in members])
+        fold_members.append([(u, t) for _, u, t in members])
         val_weights.append(torch.stack([
             _loss_weights(fold.configs[i], fold.val_labels, fold.val_wsi_origins) for i, _, _ in members
         ]))
+        z_positions = [m for m, (_, u, _) in enumerate(members) if units[u].z_stats is not None]
+        fold_z.append(
+            (z_positions, *(torch.from_numpy(np.asarray(a)).to(device) for a in z_stats[f])) if z_positions else None
+        )
 
-    def config_of(s: int, t: int) -> TrainConfig:
-        return folds[streams[s].fold].configs[streams[s].trials[t]]
+    def config_of(u: int, t: int) -> TrainConfig:
+        return folds[streams[units[u].stream].fold].configs[units[u].trials[t]]
 
     def fold_params(f: int, source: Callable[[int, int], torch.Tensor]) -> torch.Tensor:
         c = folds[f].configs[0].num_classes
-        return torch.stack([source(s, t)[:c] for s, t in fold_members[f]])
+        return torch.stack([source(u, t)[:c] for u, t in fold_members[f]])
 
     n_cell_epochs = 0
     for epoch in range(1, num_epochs + 1):
-        live = [s for s, st in enumerate(streams) if any(not states[(s, t)].stopped for t in range(len(st.trials)))]
+        live = [u for u, un in enumerate(units) if any(not states[(u, t)].stopped for t in range(len(un.trials)))]
         if not live:
             break
-        active = torch.zeros((n_streams, n_slots), dtype=torch.bool)
-        for (s, t), state in states.items():
-            active[s, t] = not state.stopped
+        # Streams still feeding a live unit: their order is drawn and their rows gathered.
+        live_streams = sorted({units[u].stream for u in live})
+        stream_pos = {s: j for j, s in enumerate(live_streams)}
+        active = torch.zeros((n_units, n_slots), dtype=torch.bool)
+        for (u, t), state in states.items():
+            active[u, t] = not state.stopped
         active = active.to(device)
         orders = {
             s: _epoch_order(len(folds[streams[s].fold].train_labels), streams[s].sampling_weights, streams[s].generator)
-            for s in live
+            for s in live_streams
         }
-        n_live = len(live)
+        n_live, n_live_streams = len(live), len(live_streams)
         live_idx = torch.tensor(live, device=device)
+        unit_src = torch.tensor([stream_pos[units[u].stream] for u in live], device=device)
         pad_live = class_pad[live_idx].view(n_live, 1, 1, n_classes)
-        n_rounds = max(streams[s].n_batches for s in live)
-        rounds_per_chunk = max(1, _JOINT_CHUNK_ROWS // (n_live * batch_size))
+        z_live = (z_mean[live_idx].view(n_live, 1, dim), z_std[live_idx].view(n_live, 1, dim)) if any_z else None
+        n_rounds = max(streams[s].n_batches for s in live_streams)
+        rounds_per_chunk = max(1, _JOINT_CHUNK_ROWS // (n_live_streams * batch_size))
 
         def make_chunk(r0: int):
             r1 = min(r0 + rounds_per_chunk, n_rounds)
             n_rows = (r1 - r0) * batch_size
-            x = torch.empty((n_live, n_rows, dim), dtype=embeddings.dtype, pin_memory=cuda)
-            y = torch.zeros((n_live, n_rows), dtype=torch.long, pin_memory=cuda)
+            # rows and labels once per stream; loss weights per unit (its own trials)
+            x = torch.empty((n_live_streams, n_rows, dim), dtype=embeddings.dtype, pin_memory=cuda)
+            y = torch.zeros((n_live_streams, n_rows), dtype=torch.long, pin_memory=cuda)
             w = torch.zeros((n_live, n_slots, n_rows), pin_memory=cuda)
-            counts = torch.zeros((n_live, r1 - r0), pin_memory=cuda)        # real rows per round
-            has_rows = torch.zeros((r1 - r0, n_streams), dtype=torch.bool, pin_memory=cuda)
+            counts = torch.zeros((n_live_streams, r1 - r0), pin_memory=cuda)   # real rows per round
+            has_rows = torch.zeros((r1 - r0, n_units), dtype=torch.bool, pin_memory=cuda)
             round_starts = torch.arange(r1 - r0) * batch_size
-            for j, s in enumerate(live):
-                st, fold = streams[s], folds[streams[s].fold]
+            for j, s in enumerate(live_streams):
+                fold = folds[streams[s].fold]
                 order = orders[s][r0 * batch_size:r1 * batch_size]
                 n = len(order)
                 if n:
                     torch.index_select(embeddings, 0, fold.train_rows[order], out=x[j, :n])
                     torch.index_select(fold.train_labels, 0, order, out=y[j, :n])
-                    w[j, :len(st.trials), :n] = st.loss_weights[:, order]
                 if n < n_rows:
                     x[j, n:].zero_()  # padding: zero rows with zero weight
                 counts[j] = (n - round_starts).clamp(0, batch_size)
-                has_rows[:, s] = counts[j] > 0
+            for k, u in enumerate(live):
+                un = units[u]
+                order = orders[un.stream][r0 * batch_size:r1 * batch_size]
+                if len(order):
+                    w[k, :len(un.trials), :len(order)] = un.loss_weights[:, order]
+                has_rows[:, u] = counts[stream_pos[un.stream]] > 0
             return x, y, w, counts, has_rows
 
-        epoch_loss = torch.zeros((n_streams, n_slots), dtype=torch.float64, device=device)
+        epoch_loss = torch.zeros((n_units, n_slots), dtype=torch.float64, device=device)
         for chunk in _prefetched(make_chunk, range(0, n_rounds, rounds_per_chunk)):
             x, y, w, counts, has_rows = (t.to(device, non_blocking=True) for t in chunk)
+            # Each live unit's rows: its stream's batch, z-scored for z-score units (the
+            # arithmetic of train_and_evaluate's (x - mean) / std, in the embeddings' dtype).
+            x = x.index_select(0, unit_src)
+            if z_live is not None:
+                x = (x - z_live[0]) / z_live[1]
             x = x.float()
+            y, counts = y.index_select(0, unit_src), counts.index_select(0, unit_src)
             for i in range(counts.shape[1]):
                 rows = slice(i * batch_size, (i + 1) * batch_size)
                 p = params[live_idx]                                         # (L, T, C, D+1)
@@ -858,14 +934,14 @@ def train_linear_jointly(
                 loss = (nll * w[:, :, rows].transpose(1, 2)).sum(1) / counts[:, i:i + 1].clamp(min=1)
                 grad, = torch.autograd.grad(loss.sum(), params)
                 with torch.no_grad():
-                    step_mask = active & has_rows[i].view(n_streams, 1)
+                    step_mask = active & has_rows[i].view(n_units, 1)
                     steps += step_mask
                     _masked_adamw_(params, grad, exp_avg, exp_avg_sq, step_mask, lr, steps)
                     epoch_loss.index_add_(0, live_idx, torch.where(step_mask[live_idx], loss.detach().double(), 0.0))
-        n_cell_epochs += sum(len(folds[streams[s].fold].train_labels) for s in live)
+        n_cell_epochs += sum(len(folds[streams[s].fold].train_labels) for s in live_streams)
 
         # ── per-epoch val pass and early stopping, per fold ──
-        for s in live:
+        for s in live_streams:
             _draw_loader_seed(streams[s].generator)   # the draw of train_and_evaluate's val pass
         epoch_loss = epoch_loss.cpu()
         for f, fold in enumerate(folds):
@@ -874,15 +950,15 @@ def train_linear_jointly(
                 continue
             val_loss, val_preds, _ = _joint_eval(
                 embeddings, fold.val_rows, fold.val_labels, val_weights[f],
-                fold_params(f, lambda s, t: params[s, t].detach()), device,
+                fold_params(f, lambda u, t: params[u, t].detach()), device, z=fold_z[f],
             )
             n_cell_epochs += len(fold.val_labels)
-            for m, (s, t) in enumerate(members):
-                state = states[(s, t)]
+            for m, (u, t) in enumerate(members):
+                state = states[(u, t)]
                 if state.stopped:
                     continue
-                config = config_of(s, t)
-                state.train_loss_curve.append(epoch_loss[s, t].item() / streams[s].n_batches)
+                config = config_of(u, t)
+                state.train_loss_curve.append(epoch_loss[u, t].item() / streams[units[u].stream].n_batches)
                 state.val_loss_curve.append(float(val_loss[m]))
                 score = float(fold.val_score_fn(val_preds[m]))
                 state.val_score_curve.append(score)
@@ -890,14 +966,21 @@ def train_linear_jointly(
                 if score > state.best_score + config.early_stopping_min_delta:
                     state.best_score, state.best_epoch = score, epoch
                     if early_stopping:
-                        state.best_params = params[s, t].detach().clone()
+                        state.best_params = params[u, t].detach().clone()
                 elif early_stopping and epoch - state.best_epoch >= config.early_stopping_patience:
                     state.stopped = True
 
     # ── final evaluation of each trial's selected weights ──
-    def final_params(s: int, t: int) -> torch.Tensor:
-        state = states[(s, t)]
-        return state.best_params if config_of(s, t).early_stopping_patience is not None else params[s, t].detach()
+    def final_params(u: int, t: int) -> torch.Tensor:
+        state = states[(u, t)]
+        return state.best_params if config_of(u, t).early_stopping_patience is not None else params[u, t].detach()
+
+    def subset_z(z, models: list[int]):
+        """fold_z restricted to `models` (positions in the fold's order), renumbered."""
+        if z is None:
+            return None
+        picked = [j for j, m in enumerate(models) if m in set(z[0])]
+        return (picked, z[1], z[2]) if picked else None
 
     results: list[list[dict]] = []
     for f, fold in enumerate(folds):
@@ -905,7 +988,7 @@ def train_linear_jointly(
         num_classes, class_names = fold.configs[0].num_classes, fold.configs[0].class_names
         final = fold_params(f, final_params)
         val_loss, val_preds, _ = _joint_eval(
-            embeddings, fold.val_rows, fold.val_labels, val_weights[f], final, device,
+            embeddings, fold.val_rows, fold.val_labels, val_weights[f], final, device, z=fold_z[f],
         )
         scores = [float(fold.val_score_fn(val_preds[m])) for m in range(len(members))]
         best = 0
@@ -914,18 +997,19 @@ def train_linear_jointly(
                 best = m
         _, _, best_val_probs = _joint_eval(
             embeddings, fold.val_rows, fold.val_labels, val_weights[f][best:best + 1],
-            final[best:best + 1], device, want_probs=(0,),
+            final[best:best + 1], device, want_probs=(0,), z=subset_z(fold_z[f], [best]),
         )
         test_weights = torch.stack([
-            _loss_weights(config_of(s, t), fold.test_labels, fold.test_wsi_origins) for s, t in members
+            _loss_weights(config_of(u, t), fold.test_labels, fold.test_wsi_origins) for u, t in members
         ])
         test_loss, test_preds, test_probs = _joint_eval(
-            embeddings, fold.test_rows, fold.test_labels, test_weights, final, device, want_probs=(best,),
+            embeddings, fold.test_rows, fold.test_labels, test_weights, final, device,
+            want_probs=(best,), z=fold_z[f],
         )
         val_labels_np, test_labels_np = fold.val_labels.numpy(), fold.test_labels.numpy()
         fold_results = []
-        for m, (s, t) in enumerate(members):
-            state, config = states[(s, t)], config_of(s, t)
+        for m, (u, t) in enumerate(members):
+            state, config = states[(u, t)], config_of(u, t)
             is_best = m == best
             val_metrics = {
                 "loss": float(val_loss[m]),
@@ -956,7 +1040,10 @@ def train_linear_jointly(
                     "net.weight": final[m, :, :dim].cpu().clone(),
                     "net.bias": final[m, :, dim].cpu().clone(),
                 }
-                result["preprocessor"] = Preprocessor()
+                z_fit = units[u].z_stats
+                result["preprocessor"] = (
+                    Preprocessor(z_mean=z_fit[0], z_std=z_fit[1]) if z_fit is not None else Preprocessor()
+                )
             fold_results.append(result)
         results.append(fold_results)
     return results, n_cell_epochs

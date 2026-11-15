@@ -74,7 +74,7 @@ python -m src.python.classifier_training.launcher \
 ## Joint folds (linear grids)
 
 With `training.joint_folds: true` (set in every `configs/train*.yaml`) and a grid whose
-trials are all linear on the raw embeddings (`hidden_dim` 0, no PCA, no z-score), the
+trials are all linear without PCA (`hidden_dim` 0; `normalization` none or z_score), the
 launcher submits the pending LOSO splits as **one** job, `split_idx=[0,1,...]`
 (`same_wsi_split` keeps its own job). Other grids get one job per split, as before.
 
@@ -85,7 +85,9 @@ The joint job (`experiment.py`'s `run_joint_experiment`):
   the job holds about one fold's embeddings rather than one per fold;
 - trains every split x trial model at the same time (`trainer.py`'s `train_linear_jointly`).
   Trials of a split that draw the same batches (all of them, unless the grid oversamples)
-  share each gathered batch, and the splits step in lockstep as one batched matmul;
+  share each gathered batch, and the splits step in lockstep as one batched matmul. z-score
+  trials get that batch standardised on the GPU with their split's train mean and std
+  (computed once per split, with the same numbers as a per-split job);
 - writes each split's usual outputs to its usual folder.
 
 Each model keeps its own initialisation, batch order, AdamW state and early stopping, so
