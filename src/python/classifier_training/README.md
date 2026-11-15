@@ -185,6 +185,10 @@ hparams:
 A full grid search is run — all combinations of active hyperparameters.
 The total trial count is the product of the lengths of all `tune: true` value lists.
 
+`weight_decay` (AdamW's decoupled decay, weights shrink by `lr * weight_decay` per step) is
+optional: configs without it use torch's default 1e-2, as every run did before it was a
+hyperparameter. `configs/train_within_cohort_split_sweep.yaml` tunes it.
+
 ## WSI split configuration
 
 Each split entry uses fractional cell sampling per WSI:

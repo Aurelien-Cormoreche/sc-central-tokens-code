@@ -213,6 +213,7 @@ def _run_one_offset(
                 num_epochs=int(cfg.training.num_epochs),
                 batch_size=int(cfg.training.batch_size),
                 seed=seed,
+                weight_decay=float(hparams.get("weight_decay", 1e-2)),
             )
 
             with mlflow.start_run(run_name=f"trial_{trial_idx}", nested=True):

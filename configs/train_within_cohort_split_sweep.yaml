@@ -858,12 +858,18 @@ training:
 # ── Hyperparameter search space ────────────────────────────────────────────
 # Set tune: false and provide a single-element values list to fix a hparam.
 hparams:
-  # Linear head on UNI2's central tokens; 4 learning rates x 2 normalizations x 3 loss
-  # weightings = 24 trials per split. No PCA: its fit gives each split its own input space,
-  # so PCA trials can't train jointly (one job per split, PCA refitted for every trial).
+  # Linear head on UNI2's central tokens; 4 learning rates x 4 weight decays x 2
+  # normalizations x 4 loss weightings = 128 trials per split, all in the joint job (they
+  # share each split's batches). No PCA: its fit gives each split its own input space, so
+  # PCA trials can't train jointly (one job per split, PCA refitted for every trial).
   learning_rate:
     tune: true
     values: [1.0e-2, 1.0e-3, 1.0e-4, 1.0e-5]
+  weight_decay:
+    tune: true
+    # AdamW's decoupled decay: weights shrink by lr * weight_decay per step, so its effect
+    # grows with the learning rate. 1e-2 = torch's default, used by every run before.
+    values: [0.0, 1.0e-3, 1.0e-2, 1.0e-1]
   dropout:
     tune: false
     values: [0.2]          # no effect on linear trials (hidden_dim 0 has no dropout layer)
@@ -880,7 +886,7 @@ hparams:
     tune: true
     # "by_*" reweight the CE loss; "oversampling_*" instead draw train batches with a
     # WeightedRandomSampler using the same balanced weights, leaving the loss unweighted.
-    values: ["none", "by_wsi", "by_cell_type"]
+    values: ["none", "by_wsi", "by_cell_type", "by_wsi_and_cell_type"]
 
 # ── SLURM ──────────────────────────────────────────────────────────────────
 slurm:

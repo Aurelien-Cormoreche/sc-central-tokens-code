@@ -808,6 +808,8 @@ def _trial_configs(cfg: DictConfig, s: _Settings, grid: list[dict[str, Any]], in
             num_epochs=int(cfg.training.num_epochs),
             batch_size=int(cfg.training.batch_size),
             seed=s.seed,
+            # optional hparam; configs without it keep AdamW's default
+            weight_decay=float(hparams.get("weight_decay", 1e-2)),
             early_stopping_patience=int(s.es_patience) if s.es_patience is not None else None,
             early_stopping_min_delta=s.es_min_delta,
         )

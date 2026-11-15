@@ -36,6 +36,9 @@ class TrainConfig:
     num_epochs: int          # maximum number of epochs when early stopping is on
     batch_size: int
     seed: int = 42
+    # AdamW's decoupled weight decay: each step multiplies the weights by (1 - lr * weight_decay).
+    # 1e-2 is torch's default, which every trial used before this was a hyperparameter.
+    weight_decay: float = 1e-2
     # Early stopping on the val selection score (train_and_evaluate's val_score_fn):
     # stop once it hasn't improved by more than min_delta for `patience` epochs, then
     # restore the best epoch's weights. None = train all num_epochs, keep the last epoch.
@@ -408,7 +411,7 @@ def train_and_evaluate(
     batch_size = config.batch_size
 
     model = MLP(input_dim, config.hidden_dim, config.num_classes, config.dropout).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     criterion = nn.CrossEntropyLoss(reduction="none")
 
     oversample = _is_oversampling(config.loss_weights)
@@ -641,13 +644,14 @@ def _masked_adamw_(
     mask: torch.Tensor,
     lr: torch.Tensor,
     step: torch.Tensor,
+    weight_decay: torch.Tensor,
     betas: tuple[float, float] = (0.9, 0.999),
     eps: float = 1e-8,
-    weight_decay: float = 1e-2,
 ) -> None:
-    """torch.optim.AdamW's update (its defaults, as train_and_evaluate uses it) of parameters
-    stacked over slots: p, grad and the moments are (S, T, ...), mask / lr / step (S, T), step
-    counting each slot's updates including this one. Slots outside mask are left untouched."""
+    """torch.optim.AdamW's update (betas and eps at its defaults, as train_and_evaluate uses
+    it) of parameters stacked over slots: p, grad and the moments are (S, T, ...), mask / lr /
+    weight_decay / step (S, T), step counting each slot's updates including this one. Slots
+    outside mask are left untouched."""
     shape = mask.shape + (1,) * (p.dim() - mask.dim())
     beta1, beta2 = betas
     step = step.clamp(min=1)  # slots that haven't stepped yet are masked out anyway
@@ -811,6 +815,7 @@ def train_linear_jointly(
     params = torch.zeros((n_units, n_slots, n_classes, dim + 1))
     class_pad = torch.ones((n_units, n_classes), dtype=torch.bool)
     lr = torch.zeros((n_units, n_slots), dtype=torch.float64)
+    weight_decay = torch.zeros((n_units, n_slots), dtype=torch.float64)
     # Per unit, the z-score applied to its rows on the device (0 / 1 for raw units: exact no-ops).
     z_mean = torch.zeros((n_units, dim), dtype=embeddings.dtype)
     z_std = torch.ones((n_units, dim), dtype=embeddings.dtype)
@@ -818,15 +823,15 @@ def train_linear_jointly(
         k, c = len(un.trials), inits[u].shape[0]
         params[u, :k, :c] = inits[u]
         class_pad[u, :c] = False
-        lr[u, :k] = torch.tensor(
-            [folds[streams[un.stream].fold].configs[i].learning_rate for i in un.trials], dtype=torch.float64
-        )
+        unit_configs = [folds[streams[un.stream].fold].configs[i] for i in un.trials]
+        lr[u, :k] = torch.tensor([c.learning_rate for c in unit_configs], dtype=torch.float64)
+        weight_decay[u, :k] = torch.tensor([c.weight_decay for c in unit_configs], dtype=torch.float64)
         if un.z_stats is not None:
             z_mean[u], z_std[u] = (torch.from_numpy(np.asarray(a)) for a in un.z_stats)
     any_z = any(un.z_stats is not None for un in units)
     params = params.to(device).requires_grad_()
     exp_avg, exp_avg_sq = torch.zeros_like(params), torch.zeros_like(params)
-    lr = lr.to(device)
+    lr, weight_decay = lr.to(device), weight_decay.to(device)
     class_pad = class_pad.to(device)
     z_mean, z_std = z_mean.to(device), z_std.to(device)
     steps = torch.zeros((n_units, n_slots), dtype=torch.float64, device=device)
@@ -936,7 +941,7 @@ def train_linear_jointly(
                 with torch.no_grad():
                     step_mask = active & has_rows[i].view(n_units, 1)
                     steps += step_mask
-                    _masked_adamw_(params, grad, exp_avg, exp_avg_sq, step_mask, lr, steps)
+                    _masked_adamw_(params, grad, exp_avg, exp_avg_sq, step_mask, lr, steps, weight_decay)
                     epoch_loss.index_add_(0, live_idx, torch.where(step_mask[live_idx], loss.detach().double(), 0.0))
         n_cell_epochs += sum(len(folds[streams[s].fold].train_labels) for s in live_streams)
 

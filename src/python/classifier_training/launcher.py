@@ -19,6 +19,7 @@ Usage:
         data.model_name=virchow_v2 data.correction_name=scanorama \
         debug_split=0
 """
+import math
 import subprocess
 import sys
 import textwrap
@@ -57,6 +58,9 @@ _TIME_ESTIMATE_DEFAULTS = {
     # z-score trials in a joint job: one fit per split over its train rows (gather, mean,
     # std; ~20 s per 2.5M cells), per train cell.
     "joint_zscore_seconds_per_cell": 2.0e-5,
+    # GPU work per model per batch in a joint job (forward, backward, AdamW of one linear head),
+    # on top of the gather: rough, from a 4090's throughput; matters for grids of 100+ trials.
+    "joint_seconds_per_model_step": 2.0e-6,
 }
 # Used only when the h5 files can't be read (DATASETS_ROOT unset / not mounted).
 FALLBACK_EPOCH_MINUTES = 2
@@ -282,6 +286,10 @@ def _estimate_minutes_joint(cfg: DictConfig, split_counts: list[dict[str, float]
         for c in split_counts
     )
     train_s = cell_epochs * p["joint_seconds_per_cell_epoch"]
+    batch_size = int(cfg.training.batch_size)
+    train_s += sum(
+        _n_trials(cfg) * math.ceil(c["train"] / batch_size) * cfg.training.num_epochs for c in split_counts
+    ) * p["joint_seconds_per_model_step"]
     if _grid_z_score(cfg):
         train_s += sum(c["train"] for c in split_counts) * p["joint_zscore_seconds_per_cell"]
     return p["overhead_minutes"] + p["safety_factor"] * (load_s + train_s) / 60
