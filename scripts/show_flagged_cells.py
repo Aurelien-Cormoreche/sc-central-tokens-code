@@ -12,11 +12,13 @@ JSON config, like check_wsi_regions) and, for every slide of the configs:
 then a table of all slides. The overview reads each slide once in full (minutes for a large
 one), so use a compute node and --workers. CPU-only (openslide, h5py, numpy, Pillow).
 
-Usage (repo root, .env sourced; CSV from check_black_patches.py --csv):
-    python scripts/show_flagged_cells.py split_black_cells.csv \
-        configs/extract_embeddings/paper_uni2_fov/uni2_fov224_split.json --out flagged_cells --workers 8
+Usage (repo root, .env sourced; --csv from check_black_patches.py --csv, optional):
+    python scripts/show_flagged_cells.py configs/extract_embeddings/paper_uni2_fov/uni2_fov224_split.json \
+        --csv split_black_cells.csv --out flagged_cells --workers 8
+    python scripts/show_flagged_cells.py configs/extract_embeddings/uni2_224.json --out overviews --workers 8
     ... --slides GSM9509144_NSCLC_chuvio_L4_L4      # only these slides
     ... --flagged-only                              # only slides with flagged cells
+Without --csv nothing is flagged: every slide still gets its crop summary and overview.
 """
 import argparse
 import csv
@@ -97,15 +99,21 @@ def mark(img: np.ndarray, x, y, f: int, colour, r: int = 1) -> None:
 def process(name: str, dc: dict, flagged_ids: set, out: str, n: int, sample: int, do_overview: bool):
     """One slide: (lines to print, summary row)."""
     wsi = openslide.OpenSlide(dc['wsi_path'])
-    ids, x, y, sx, sy = cell_crops(dc, wsi.dimensions)
-    ids = np.array([i.decode() if isinstance(i, bytes) else str(i) for i in ids])
+    has_cells = os.path.exists(dc['cells_info_path'])
+    if has_cells:
+        ids, x, y, sx, sy = cell_crops(dc, wsi.dimensions)
+        ids = np.array([i.decode() if isinstance(i, bytes) else str(i) for i in ids])
+    else:   # overview only
+        ids, x, y = np.array([], dtype=str), np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+        sx, sy = dc.get('x_size', 224), dc.get('y_size', 224)
     is_flagged = np.isin(ids, list(flagged_ids))
     fl, other = np.flatnonzero(is_flagged), np.flatnonzero(~is_flagged)
     rng = np.random.default_rng(0)
     not_found = len(flagged_ids) - len(fl)
     lines = [f"{name}: {len(fl):,} flagged / {len(ids):,} cells"
              + (f" ({not_found:,} flagged ids not in the slide's cells)" if not_found else "")
-             + f" | {dc['wsi_path']}"]
+             + f" | {dc['wsi_path']}"
+             + ("" if has_cells else f" | no cell coordinates at {dc['cells_info_path']}")]
     kinds = {}
     if len(fl):
         text, kinds = describe(wsi, rng.choice(fl, min(sample, len(fl)), replace=False), x, y, sx, sy)
@@ -145,8 +153,8 @@ def process(name: str, dc: dict, flagged_ids: set, out: str, n: int, sample: int
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    p.add_argument('csv', help="check_black_patches.py --csv output (wsi, row, cell_id)")
     p.add_argument('configs', nargs='+', help="extraction JSON config(s) / dirs that list the slides")
+    p.add_argument('--csv', help="check_black_patches.py --csv output (wsi, row, cell_id); default: none flagged")
     p.add_argument('--out', default='flagged_cells')
     p.add_argument('--slides', nargs='*', help="only these slides (default: every slide in the configs)")
     p.add_argument('--flagged-only', action='store_true', help="only slides with flagged cells")
@@ -157,9 +165,10 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     flagged = defaultdict(set)
-    with open(args.csv, newline='') as f:
-        for row in csv.DictReader(f):
-            flagged[row['wsi']].add(row['cell_id'])
+    if args.csv:
+        with open(args.csv, newline='') as f:
+            for row in csv.DictReader(f):
+                flagged[row['wsi']].add(row['cell_id'])
     slides = {Path(dc['cells_info_path']).parent.name: dc
               for config in _expand(args.configs) for dc in resolve_slides(config)}
     names = args.slides or sorted(slides)
