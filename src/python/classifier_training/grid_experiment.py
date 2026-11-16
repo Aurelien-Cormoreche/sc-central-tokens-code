@@ -264,9 +264,10 @@ def _run_one_offset(
     summary = {
         "offset": {"row": row_off, "col": col_off},
         "best_config": {
-            k: best_trial[k]
-            for k in ("learning_rate", "dropout", "hidden_dim",
-                       "pca_components", "normalization", "loss_weights")
+            **{k: best_trial[k] for k in ("learning_rate", "dropout", "hidden_dim",
+                                          "pca_components", "normalization", "loss_weights")},
+            # The value used: grids without a weight_decay hparam train with 1e-2.
+            "weight_decay": float(best_trial.get("weight_decay", 1e-2)),
         },
         "best_metrics": {
             k: best_trial[k]

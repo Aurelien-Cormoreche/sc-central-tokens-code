@@ -999,9 +999,10 @@ def _write_split_results(
         "selection": selection,
         "timing": timing,
         "best_config": {
-            k: best_trial[k]
-            for k in ("learning_rate", "dropout", "hidden_dim", "pca_components",
-                       "normalization", "loss_weights")
+            **{k: best_trial[k] for k in ("learning_rate", "dropout", "hidden_dim", "pca_components",
+                                          "normalization", "loss_weights")},
+            # The value used: grids without a weight_decay hparam train with 1e-2.
+            "weight_decay": float(best_trial.get("weight_decay", 1e-2)),
         },
         "best_val_metrics": {k: best_trial[f"val_{k}"] for k in metric_keys},
         "best_test_metrics": {k: best_trial[f"test_{k}"] for k in metric_keys},
