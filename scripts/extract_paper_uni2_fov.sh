@@ -7,7 +7,7 @@
 # scripts/launch_paper_uni2_fov.sh.
 #
 # Usage (repo root, login node, conda env active):
-#   bash scripts/extract_paper_uni2_fov.sh --dry-run        # inputs + progress per slide, no GPU
+#   bash scripts/extract_paper_uni2_fov.sh --dry-run        # inputs + progress per slide; no GPU or torch
 #   bash scripts/extract_paper_uni2_fov.sh                  # submit the 6 jobs
 #   FOVS="32 56" bash scripts/extract_paper_uni2_fov.sh     # only these sizes
 #   bash scripts/extract_paper_uni2_fov.sh --time=24:00:00  # other args go to sbatch

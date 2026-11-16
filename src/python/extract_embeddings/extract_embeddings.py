@@ -1,7 +1,5 @@
-from .inference_providers.inference_provider import InferenceProvider
-from .data.patch_dataset import PatchDataset, MultiCellPatchDataset
-from .data.resized_cell_dataset import ResizedCellDataset
-from torch.utils.data import Dataset
+from __future__ import annotations
+
 import argparse
 import csv
 import h5py
@@ -9,8 +7,15 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from src.python.code_configs import paths
+
+# torch (and the datasets/providers built on it) is imported only where a model runs, so
+# --dry-run and the config builders work on a CPU-only node where torch can't load.
+if TYPE_CHECKING:
+    from torch.utils.data import Dataset
+    from .inference_providers.inference_provider import InferenceProvider
 
 # ── data roots (see src/python/code_configs/paths.py and .env.example) ─────────
 
@@ -74,12 +79,12 @@ def run_attention_only(
     configs: dict,
     output_path: str,
     n_samples: int = 10,
-    dataset_cls: type[Dataset] = PatchDataset,
+    dataset_cls: type[Dataset] | None = None,
 ):
     """Run attention-only forward passes and save per-head attention maps.
 
     dataset_cls: dataset class to instantiate per inference run, e.g. PatchDataset
-        (default, fixed-size centre patch) or ResizedCellDataset (a size_side ×
+        (None = PatchDataset, fixed-size centre patch) or ResizedCellDataset (a size_side ×
         size_side crop around the cell centroid, resized up to `size`). Must
         expose the same interface PatchDataset uses (x_size/y_size, labels_dataset,
         get_raw_patch) and yield (patch, label, cell_id) triples.
@@ -90,6 +95,8 @@ def run_attention_only(
             cls/weights.npy  cls/head_00.png  ...
             top_left/weights.npy  top_left/head_00.png  ...
     """
+    if dataset_cls is None:
+        from .data.patch_dataset import PatchDataset as dataset_cls
     for model_name, model_cfg in configs.items():
         provider = select_inference_provider(model_name)
         provider.load_model()
@@ -112,7 +119,7 @@ def extract_embeddings(
     save_cls: bool = True,
     save_cell: bool = False,
     save_nucleus: bool = False,
-    dataset_cls: type[Dataset] = PatchDataset,
+    dataset_cls: type[Dataset] | None = None,
     skip_existing: bool = True,
     continue_on_error: bool = False,
     precision: str | None = None,
@@ -120,7 +127,7 @@ def extract_embeddings(
     """Extract per-cell embeddings using the centre-patch approach (one patch per cell).
 
     dataset_cls: dataset class to instantiate per inference run, e.g. PatchDataset
-        (default, reads fixed-size patches from an H5 coordinate file) or
+        (None = PatchDataset, reads fixed-size patches from an H5 coordinate file) or
         ResizedCellDataset (crops a per-cell or fixed-size box around Xenium cell
         boundaries and resizes it). Must yield (patch, label, cell_id) triples.
 
@@ -146,6 +153,8 @@ def extract_embeddings(
     Returns:
         output_path of every run that raised (always empty unless continue_on_error).
     """
+    if dataset_cls is None:
+        from .data.patch_dataset import PatchDataset as dataset_cls
     failed = []
     for model_name, model_cfg in configs.items():
         runs = model_cfg['inference_runs']
@@ -210,6 +219,7 @@ def extract_embeddings_multicell(
     continue_on_error, precision: see extract_embeddings. Returns the output_path of
         every run that raised.
     """
+    from .data.patch_dataset import MultiCellPatchDataset
     failed = []
     for model_name, model_cfg in configs.items():
         runs = model_cfg['inference_runs']
@@ -790,10 +800,14 @@ def run_from_config(cfg: dict, dry_run: bool = False) -> int:
             precision=cfg.get('precision'),
         )
     else:
+        if mode == 'patch':
+            from .data.patch_dataset import PatchDataset as dataset_cls
+        else:
+            from .data.resized_cell_dataset import ResizedCellDataset as dataset_cls
         failed = extract_embeddings(
             configs, batch_size=batch_size, save_cls=cfg.get('save_cls', True),
             save_cell=save_cell, save_nucleus=save_nucleus,
-            dataset_cls=PatchDataset if mode == 'patch' else ResizedCellDataset,
+            dataset_cls=dataset_cls,
             skip_existing=skip_existing, continue_on_error=continue_on_error,
             precision=cfg.get('precision'),
         )
