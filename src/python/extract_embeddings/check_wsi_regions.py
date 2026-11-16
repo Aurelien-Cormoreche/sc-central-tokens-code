@@ -4,7 +4,8 @@ A corrupt compressed tile makes every read_region touching it fail (TIFFRGBAImag
 so instead of reading every cell's crop this reads each of the slide's storage tiles once,
 then flags the cells whose crop overlaps a bad tile. Slides/cells are resolved like
 extraction resolves them (samples / samples_manifest / exclude_samples, wsi_filename,
-converted/raw root, cells_info_root[_by_prefix], size, builder_kwargs offsets).
+converted/raw root, cells_info_root[_by_prefix], size -- or mode resized's size_side crop
+around the cell -- and builder_kwargs offsets).
 
 CPU-only: deliberately does not import extract_embeddings.py (which pulls in torch), so
 resolve_slides() mirrors its _resolve_samples + build_run_configs path logic -- keep the
@@ -13,6 +14,7 @@ two in sync if the config format changes.
 Usage (from the repo root, with .env sourced):
     python -m src.python.extract_embeddings.check_wsi_regions configs/extract_embeddings/uni2_224.json
     python -m src.python.extract_embeddings.check_wsi_regions a.json dir/ --bad-cells-csv bad_cells.csv
+    python -m src.python.extract_embeddings.check_wsi_regions configs/extract_embeddings/paper_uni2_fov  # every crop size
 """
 import argparse
 import contextlib
@@ -59,6 +61,11 @@ def resolve_slides(config_path: Path) -> list[dict]:
 
     size = cfg.get('size', 224)
     builder_kwargs = cfg.get('builder_kwargs', {})
+    offset_x, offset_y = builder_kwargs.get('offset_x', 0), builder_kwargs.get('offset_y', 0)
+    if cfg.get('mode') == 'resized' and cfg.get('size_side'):
+        # ResizedCellDataset._fixed_box: a size_side crop centred on x_start + offset (112)
+        size = int(cfg['size_side'])
+        offset_x = offset_y = builder_kwargs.get('offset', 112) - size // 2
     default_root = cfg.get('cells_info_root', 'xenium_processed')
     by_prefix = cfg.get('cells_info_root_by_prefix', {})
     slides = []
@@ -69,8 +76,7 @@ def resolve_slides(config_path: Path) -> list[dict]:
         slides.append({
             'wsi_path': os.path.join(wsi_root, info.get('wsi_filename', f'{name}_he_image.ome.tif')),
             'cells_info_path': os.path.join(_CELLS_INFO_ROOTS.get(root, root), name, 'patch_coordinates.h5'),
-            'x_size': size, 'y_size': size,
-            'offset_x': builder_kwargs.get('offset_x', 0), 'offset_y': builder_kwargs.get('offset_y', 0),
+            'x_size': size, 'y_size': size, 'offset_x': offset_x, 'offset_y': offset_y,
         })
     return slides
 
@@ -109,7 +115,8 @@ def scan_bad_tiles(wsi_path: str) -> tuple[list[tuple[int, int]], int, tuple[int
 
 
 def cells_on_bad_tiles(dataset_configs: dict, bad: list, tile: int, dims: tuple[int, int]):
-    """(cell_ids, n_cells) whose crop (clamped like PatchDataset._clamped_origin) overlaps a bad tile."""
+    """(cell_ids, n_cells) whose crop (clamped like PatchDataset._clamped_origin and
+    ResizedCellDataset._crop_box) overlaps a bad tile."""
     size_x, size_y = dataset_configs.get('x_size', 224), dataset_configs.get('y_size', 224)
     W, H = dims
     with h5py.File(dataset_configs['cells_info_path'], 'r') as f:
@@ -128,7 +135,7 @@ def cells_on_bad_tiles(dataset_configs: dict, bad: list, tile: int, dims: tuple[
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Find unreadable WSI tiles and the cells they affect.")
     parser.add_argument('configs', nargs='+', help="extraction JSON configs and/or directories of them")
-    parser.add_argument('--bad-cells-csv', help="write (wsi_path, cell_id) of every affected cell here")
+    parser.add_argument('--bad-cells-csv', help="write (wsi_path, crop_px, cell_id) of every affected cell here")
     args = parser.parse_args(argv)
 
     # every distinct (slide, coordinates, geometry) the configs would read
@@ -142,9 +149,9 @@ def main(argv: list[str] | None = None) -> int:
 
     scanned = {}
     bad_rows = []
-    damaged = 0
+    damaged = set()
     for (wsi_path, *_), dc in runs.items():
-        name = os.path.basename(wsi_path)
+        name = f"{os.path.basename(wsi_path)} [{dc['x_size']}px crop]"
         if not os.path.exists(wsi_path):
             print(f"MISSING WSI      {name}: {wsi_path}", flush=True)
             continue
@@ -158,13 +165,13 @@ def main(argv: list[str] | None = None) -> int:
         if not bad:
             print(f"ok               {name}", flush=True)
             continue
-        damaged += 1
+        damaged.add(wsi_path)
         line = f"DAMAGED          {name} | bad {tile}px tiles: {len(bad)}"
         cells_info_path = dc.get('cells_info_path')
         if cells_info_path and os.path.exists(cells_info_path):
             ids, n = cells_on_bad_tiles(dc, bad, tile, dims)
             line += f" | cells affected: {len(ids)} / {n}"
-            bad_rows += [(wsi_path, i.decode() if isinstance(i, bytes) else i) for i in ids]
+            bad_rows += [(wsi_path, dc['x_size'], i.decode() if isinstance(i, bytes) else i) for i in ids]
         xs, ys = [c * tile for c, _ in bad], [r * tile for _, r in bad]
         line += f" | region x {min(xs)}-{max(xs) + tile}, y {min(ys)}-{max(ys) + tile}"
         print(line, flush=True)
@@ -172,10 +179,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.bad_cells_csv:
         with open(args.bad_cells_csv, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['wsi_path', 'cell_id'])
+            writer.writerow(['wsi_path', 'crop_px', 'cell_id'])
             writer.writerows(bad_rows)
         print(f"wrote {len(bad_rows)} affected cell(s) to {args.bad_cells_csv}")
-    print(f"\n{damaged} damaged slide(s) out of {len(scanned)} scanned")
+    print(f"\n{len(damaged)} damaged slide(s) out of {len(scanned)} scanned")
     return 1 if damaged else 0
 
 
