@@ -103,6 +103,7 @@ class ResizedCellDataset(Dataset):
         self.offset_y = 0
 
         # ── open WSI ──────────────────────────────────────────────────────────
+        self.wsi_path = wsi_path
         self.wsi = Openslide.OpenSlide(str(wsi_path))
         self.wsi_w, self.wsi_h = self.wsi.dimensions
 
@@ -228,14 +229,28 @@ class ResizedCellDataset(Dataset):
         scale = self.size / side
         return affine_transform(polygon, [scale, 0, 0, scale, -x0 * scale, -y0 * scale])
 
+    def _read_resized(self, idx: int) -> Image.Image:
+        """Sample idx's crop, resized to size x size. A read that fails (e.g. a corrupt
+        tile) gives a black patch and reopens the WSI, as in PatchDataset.__getitem__."""
+        x0, y0, side = self._crop_box(idx)
+        try:
+            patch = self.wsi.read_region((x0, y0), 0, (side, side)).convert('RGB')
+        except Exception as e:
+            print(
+                f"WARNING: failed to read region idx={idx} cell_id={self.cell_ids_dataset[idx]} at ({x0},{y0}) "
+                f"size=({side},{side}) from {self.wsi_path} (wsi dims={self.wsi_w}x{self.wsi_h}): {e} "
+                f"-- using a black placeholder patch."
+            )
+            # An OpenSlide handle stays in an error state after any failed read, so
+            # every later read_region would fail too -- reopen to recover.
+            self.wsi = Openslide.OpenSlide(str(self.wsi_path))
+            return Image.new('RGB', (self.size, self.size))
+        return patch.resize((self.size, self.size), Image.BICUBIC)
+
     def __getitem__(self, idx: int):
         cell_id = self.cell_ids_dataset[idx]
         label = self.labels_dataset[idx]
-        x0, y0, side = self._crop_box(idx)
-
-        patch = self.wsi.read_region((x0, y0), 0, (side, side)).convert('RGB')
-        patch = patch.resize((self.size, self.size), Image.BICUBIC)
-        patch = self._maybe_mask(patch)
+        patch = self._maybe_mask(self._read_resized(idx))
 
         if self.transform is not None:
             patch = self.transform(patch)
@@ -245,7 +260,4 @@ class ResizedCellDataset(Dataset):
     def get_raw_patch(self, idx: int):
         """Return the un-transformed, resized RGB PIL Image for a given sample index
         (masked, if `mask=True`, matching what __getitem__ feeds the model)."""
-        x0, y0, side = self._crop_box(idx)
-        patch = self.wsi.read_region((x0, y0), 0, (side, side)).convert('RGB')
-        patch = patch.resize((self.size, self.size), Image.BICUBIC)
-        return self._maybe_mask(patch)
+        return self._maybe_mask(self._read_resized(idx))

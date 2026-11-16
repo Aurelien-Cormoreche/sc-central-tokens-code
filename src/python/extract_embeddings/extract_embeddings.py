@@ -380,6 +380,7 @@ def build_resized_cell_configs(
     mask_grid_size: int = 3,
     mask_token_size: int = 14,
     mask_value: tuple[int, int, int] = (127, 127, 127),
+    boundaries: tuple[str, ...] = ('cell', 'nucleus'),
 ) -> dict:
     """Build a config dict wired for extract_embeddings(dataset_cls=ResizedCellDataset).
 
@@ -403,10 +404,14 @@ def build_resized_cell_configs(
             coordinates from src/python/OT/export_matched_patch_coordinates.py instead.
         cell_boundaries_root / alignment_matrix_root: roots for each dataset_name's
             Xenium cell_boundaries.csv.gz / nucleus_boundaries.parquet / alignment
-            matrix (same layout as build_configs), wired in unconditionally so
-            ResizedCellDataset can compute boundary_polygon(idx, 'cell'/'nucleus')
-            for extract_embeddings(save_cell=..., save_nucleus=...). No-op unless
-            those flags are also passed to extract_embeddings().
+            matrix (same layout as build_configs), so ResizedCellDataset can compute
+            boundary_polygon(idx, 'cell'/'nucleus') for extract_embeddings(save_cell=...,
+            save_nucleus=...).
+        boundaries: which of those boundary files to wire in: 'cell'
+            (cell_boundaries.csv.gz) and/or 'nucleus' (nucleus_boundaries.parquet), each
+            with the alignment matrix. Default both. A file that isn't wired in is neither
+            required to exist nor loaded, e.g. ('nucleus',) for save_nucleus alone. The cell
+            file is always wired in when size_side is None (its vertices give the crop).
         mask / mask_grid_size / mask_token_size / mask_value: forwarded to
             ResizedCellDataset to mask the central mask_grid_size x mask_grid_size
             model tokens of the resized (size × size) output (see ResizedCellDataset
@@ -416,18 +421,25 @@ def build_resized_cell_configs(
     Returns:
         {model_name: {'inference_runs': [{'dataset_configs': ..., 'output_path': ...}]}}
     """
+    unknown = set(boundaries) - {'cell', 'nucleus'}
+    if unknown:
+        raise ValueError(f"boundaries must be 'cell' and/or 'nucleus', got {sorted(unknown)}")
+    with_cell = 'cell' in boundaries or size_side is None
+    with_nucleus = 'nucleus' in boundaries
     runs = []
     for dataset_name, info in infos.items():
         wsi_root = _WSI_ROOT_CONVERTED if info['converted'] else _WSI_ROOT_RAW
         wsi_filename = info.get('wsi_filename', f'{dataset_name}_he_image.ome.tif')
+        boundary_dir = os.path.join(cell_boundaries_root, f'{dataset_name}_out')
         runs.append({
             'output_path': os.path.join(_OUTPUT_ROOT, f"{info['model_output_dir']}{output_suffix}", correction_name, dataset_name),
             'dataset_configs': {
                 'wsi_path': os.path.join(wsi_root, wsi_filename),
                 'cells_info_path': os.path.join(cells_info_root, dataset_name, 'patch_coordinates.h5'),
-                'cells_csv_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'cell_boundaries.csv.gz'),
-                'nucleus_boundaries_path': os.path.join(cell_boundaries_root, f'{dataset_name}_out', 'nucleus_boundaries.parquet'),
-                'alignment_matrix_path': os.path.join(alignment_matrix_root, f'{dataset_name}_he_imagealignment.csv'),
+                'cells_csv_path': os.path.join(boundary_dir, 'cell_boundaries.csv.gz') if with_cell else None,
+                'nucleus_boundaries_path': os.path.join(boundary_dir, 'nucleus_boundaries.parquet') if with_nucleus else None,
+                'alignment_matrix_path': (os.path.join(alignment_matrix_root, f'{dataset_name}_he_imagealignment.csv')
+                                          if with_cell or with_nucleus else None),
                 'size': size,
                 'size_side': size_side,
                 'transform': None,
@@ -694,7 +706,9 @@ def build_run_configs(cfg: dict) -> dict:
             geometry = {'x_size': size, 'y_size': size, 'with_boundaries': save_cell or save_nucleus}
         case 'resized':
             builder = build_resized_cell_configs
-            geometry = {'size': size, 'size_side': size_side}
+            # only the boundary files the save_* flags read (each must exist, see run_from_config)
+            boundaries = tuple(k for k, want in (('cell', save_cell), ('nucleus', save_nucleus)) if want)
+            geometry = {'size': size, 'size_side': size_side, 'boundaries': boundaries}
         case 'multicell':
             builder = build_multicell_configs
             geometry = {'x_size': size, 'y_size': size, 'size_side_x': size_side, 'size_side_y': size_side,

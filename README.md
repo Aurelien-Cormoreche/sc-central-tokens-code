@@ -241,6 +241,17 @@ python -m src.python.extract_embeddings.run_configs configs/extract_embeddings/a
 sbatch scripts/extract_embeddings.sh configs/extract_embeddings/uni2_224.json                  # same, on a GPU node
 ```
 
+**UNI2 read-out × field-of-view sweep (SPLIT).** Central tokens vs CLS vs nucleus token at
+fields of view of 32, 56, 112, 224, 448 and 896 px. Each S × S crop around a cell is resized
+to 224 × 224 (`mode: resized`, `size_side: S`). At 224 that is no resize, so its central
+tokens and CLS equal those in `UNI2_h5`. Embeddings go to `$DATASETS_ROOT/UNI2_fov{S}_h5`;
+classifier results go to `outputs_classifier_paper/`:
+
+```bash
+bash scripts/extract_paper_uni2_fov.sh --dry-run   # inputs per slide; then without --dry-run: 6 GPU jobs
+bash scripts/launch_paper_uni2_fov.sh dry_run=true # then without dry_run: 18 joint classifier jobs
+```
+
 Three extraction modes, all consuming the same `configs` shape:
 
 - `extract_embeddings(configs, ...)` — one patch per cell (used for every condition
