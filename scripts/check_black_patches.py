@@ -1,13 +1,19 @@
-"""Find cells whose embedding comes from a black placeholder patch instead of the slide.
+"""Find cells whose embedding comes from an all-black patch instead of tissue.
 
-A failed WSI read (a corrupt tile) makes the extraction feed an all-black patch. Before
-2fd4c62 the slide was not reopened after a failure, so every later patch read by that
-DataLoader worker was black too. Every black patch gives the same embedding, so this looks
-for a group of (near-)identical rows in each slide's embeddings_dataset.h5: real cells
-never coincide. CPU-only (h5py + numpy), reads in chunks.
+Two causes give an all-black patch:
+- a failed WSI read (a corrupt tile): the extraction feeds a black placeholder and logs
+  "WARNING: failed to read region". Before 2fd4c62 the slide was not reopened after a
+  failure, so every later patch read by that DataLoader worker was black too;
+- black pixels in the slide itself: a converted slide (notebooks/check_wsi_openslide.ipynb)
+  is black wherever its raw OME-TIFF had tiles with no data. These reads succeed, so
+  nothing is logged.
+Every black patch gives the same embedding, so this looks for a group of (near-)identical
+rows in each slide's embeddings_dataset.h5: real cells never coincide. It cannot tell the
+two causes apart, and only finds crops that are entirely black. CPU-only (h5py + numpy),
+reads in chunks.
 
-The WSI side (which tiles are unreadable, which cells a crop size would hit) is
-src/python/extract_embeddings/check_wsi_regions.py.
+The WSI side (unreadable tiles, black areas, and which cells each crop size hits, including
+partly black crops) is src/python/extract_embeddings/check_wsi_regions.py.
 
 Usage (repo root, .env sourced; slides = every WSI in a classifier config's splits):
     python scripts/check_black_patches.py UNI2 configs/train_within_cohort_split.yaml
