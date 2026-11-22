@@ -1,5 +1,5 @@
 #!/bin/bash
-# Real end-to-end smoke on one GPU (~30-90 min). Submit from the repo root, after 01_fetch_weights.sh:
+# Real end-to-end smoke on one GPU (~30-90 min). Submit from the repo root, after 01_weights.sh:
 #   sbatch scripts/cluster/03_smoke.sbatch
 #   sbatch scripts/cluster/03_smoke.sbatch --models uni2 lemon        # subset of models
 #   sbatch --gres=gpu:1 scripts/cluster/03_smoke.sbatch               # other GPU type name (also set slurm.gres)

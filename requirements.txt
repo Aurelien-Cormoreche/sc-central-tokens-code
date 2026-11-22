@@ -58,6 +58,6 @@ tifffile==2024.8.30
 huggingface_hub==0.34.4
 transformers==4.57.1        # GenBio-PathFM (trust_remote_code)
 einops==0.8.1               # GenBio-PathFM remote code
-# TRIDENT (CONCH v1.5 loader), not on PyPI under this name:
-#   pip install git+https://github.com/mahmoodlab/TRIDENT.git
+# TRIDENT (CONCH v1.5 model file), pinned commit, installed with --no-deps:
+#   see scripts/cluster/requirements-bench.txt (cluster install: scripts/cluster/00_install.sh)
 pytest==9.2.0

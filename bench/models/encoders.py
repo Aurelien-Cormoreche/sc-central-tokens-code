@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 from functools import partial
+from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
 import torch
@@ -187,14 +189,38 @@ class HOptimus1(_Timm):
 
 # ── CONCH v1.5 (TRIDENT) ──
 
+def trident_conchv15():
+    """TRIDENT's model_zoo/conchv1_5/conchv1_5.py, loaded as a standalone file. Importing it through the package
+    runs trident/__init__.py, which pulls in TRIDENT's whole WSI stack (bioio, pyvips, opencv, ...); the file
+    itself needs only torch, timm and einops, so TRIDENT is installed with --no-deps."""
+    import importlib.util
+    import sys
+    name = "bench_trident_conchv1_5"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.find_spec("trident")          # locates the package without importing it
+    if spec is None or not spec.submodule_search_locations:
+        raise ImportError("TRIDENT is not installed (scripts/cluster/00_install.sh installs it with --no-deps)")
+    path = Path(list(spec.submodule_search_locations)[0]) / "patch_encoder_models/model_zoo/conchv1_5/conchv1_5.py"
+    fspec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(fspec)
+    sys.modules[name] = mod
+    fspec.loader.exec_module(mod)
+    return mod
+
+
 class Conch15(Encoder):
     name, repo = "conch15", "MahmoodLab/conchv1_5"
 
     def build(self) -> nn.Module:
+        # = TRIDENT's conchv1_5.create_model_from_pretrained without its torchvision eval transform
         from huggingface_hub import hf_hub_download
-        from trident.patch_encoder_models.model_zoo.conchv1_5.conchv1_5 import create_model_from_pretrained
+        mod = trident_conchv15()
         ckpt = hf_hub_download(self.repo, "pytorch_model_vision.bin", revision=self.revision)
-        model, _ = create_model_from_pretrained(checkpoint_path=ckpt, img_size=448)
+        model = mod.CONCHVisionTower()
+        sd = torch.load(ckpt, map_location="cpu", weights_only=True)
+        sd["trunk.pos_embed"] = mod.resize_pos_embed(model.trunk, sd["trunk.pos_embed"], verbose=False)
+        model.load_state_dict(sd, strict=True)
         return model
 
     def features(self, x):
@@ -292,6 +318,53 @@ class Tiny(Encoder):
 
 ENCODERS = {c.name: c for c in (UNI2, Conch15, Virchow2, HOptimus1, Lemon, GenBio, Tiny)}
 
+
+
+# ── weights in the local Hugging Face cache (`bench fetch-weights`) ──
+
+def weight_spec(name: str, mcfg: ModelCfg) -> Tuple[Optional[list], list]:
+    """(files to download, None = the whole repo; files the loaders above read, each a tuple of alternatives).
+    timm models read config.json plus model.safetensors or pytorch_model.bin."""
+    if name == "conch15":
+        return ["pytorch_model_vision.bin"], [("pytorch_model_vision.bin",)]
+    if name == "lemon":
+        f = f"lemon_{mcfg.arch or 'vits8'}.pth.tar"
+        return ["mean_std.json", f], [("mean_std.json",), (f,)]
+    if name == "genbio":
+        return None, [("config.json",), ("*.safetensors", "*.bin")]
+    return None, [("config.json",), ("model.safetensors", "pytorch_model.bin")]
+
+
+def hf_cache_dir() -> Path:
+    from huggingface_hub import constants
+    return Path(constants.HF_HUB_CACHE)          # $HF_HUB_CACHE, else $HF_HOME/hub
+
+
+def cached_snapshot(repo: str, revision: Optional[str] = None) -> Optional[Path]:
+    """Snapshot folder of `repo` in the local cache, without network: the commit `revision` if it is a sha,
+    else the ref `revision` (default main), else -- no revision and no ref -- the only snapshot there is."""
+    d = hf_cache_dir() / f"models--{repo.replace('/', '--')}"
+    snaps = d / "snapshots"
+    if revision and re.fullmatch(r"[0-9a-f]{40}", revision):
+        return snaps / revision if (snaps / revision).is_dir() else None
+    ref = d / "refs" / (revision or "main")
+    if ref.is_file():
+        p = snaps / ref.read_text().strip()
+        return p if p.is_dir() else None
+    found = [p for p in snaps.iterdir() if p.is_dir()] if snaps.is_dir() and not revision else []
+    return found[0] if len(found) == 1 else None
+
+
+def missing_weight_files(name: str, mcfg: ModelCfg, snap: Optional[Path]) -> list:
+    """Required files absent from `snap` (a broken symlink, e.g. from an incomplete copy, counts as absent)."""
+    if snap is None:
+        return ["not in the cache (or several snapshots and no refs/main: pin models.<name>.revision)"]
+    _, req = weight_spec(name, mcfg)
+    return [" or ".join(alts) for alts in req if not any(f.exists() for a in alts for f in snap.glob(a))]
+
+
+def hf_download_command(repo: str, revision: Optional[str], files: Optional[list]) -> str:
+    return " ".join(["hf", "download", repo, *(files or [])] + (["--revision", revision] if revision else []))
 
 def build_encoder(name: str, mcfg: ModelCfg, input_px: Optional[int] = None, device: str = "cuda",
                   precision: str = "bf16") -> Encoder:

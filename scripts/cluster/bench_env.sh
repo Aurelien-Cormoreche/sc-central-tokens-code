@@ -2,21 +2,30 @@
 #   source scripts/cluster/bench_env.sh
 # Every bench array task sources it too (configs/bench.yaml: slurm.setup).
 #
-# 1. activates the conda env $CONDA_ENV (default: bench, created by 00_install.sh)
+# 1. activates the conda env $CONDA_ENV (default: cellViT) and bench's overlay venv $BENCH_VENV on top of it
+#    (default: .venv-bench in the repo, created by 00_install.sh)
 # 2. loads the repo's .env (same file the rest of the repo uses, see .env.example) and checks the
 #    variables bench needs: BENCH_ROOT WSI_RAW_ROOT WSI_CONVERTED_ROOT XENIUM_PROCESSED_OUTPUT_ROOT HF_HOME
-# 3. inside SLURM jobs sets HF_HUB_OFFLINE=1: weights come from HF_HOME (filled by 01_fetch_weights.sh)
+# 3. inside SLURM jobs sets HF_HUB_OFFLINE=1: weights come from HF_HOME (download_weights.sh, checked by 01_weights.sh)
 
 _bench_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-_bench_conda="${CONDA_ENV:-bench}"
+_bench_conda="${CONDA_ENV:-cellViT}"
+_bench_venv="${BENCH_VENV:-$_bench_repo/.venv-bench}"
 
 _bench_env_main() {
-    if [ "${CONDA_DEFAULT_ENV:-}" != "$_bench_conda" ]; then
-        source ~/.bashrc
-        if ! conda activate "$_bench_conda"; then
-            echo "ERROR: conda env '$_bench_conda' not found (run scripts/cluster/00_install.sh, or set CONDA_ENV)" >&2
+    if [ "${VIRTUAL_ENV:-}" != "$_bench_venv" ]; then
+        if [ "${CONDA_DEFAULT_ENV:-}" != "$_bench_conda" ]; then
+            source ~/.bashrc
+            if ! conda activate "$_bench_conda"; then
+                echo "ERROR: conda env '$_bench_conda' not found (set CONDA_ENV)" >&2
+                return 1
+            fi
+        fi
+        if [ ! -f "$_bench_venv/bin/activate" ]; then
+            echo "ERROR: $_bench_venv not found (run scripts/cluster/00_install.sh, or set BENCH_VENV)" >&2
             return 1
         fi
+        source "$_bench_venv/bin/activate"
     fi
     if [ ! -f "$_bench_repo/.env" ]; then
         echo "ERROR: $_bench_repo/.env not found (copy .env.example and fill it in)" >&2
@@ -43,7 +52,7 @@ _bench_env_main() {
     if [ -n "${SLURM_JOB_ID:-}" ]; then
         export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
     fi
-    echo "bench env: conda=$_bench_conda BENCH_ROOT=$BENCH_ROOT HF_HOME=$HF_HOME config=$BENCH_CONFIG" \
+    echo "bench env: conda=$_bench_conda venv=$_bench_venv BENCH_ROOT=$BENCH_ROOT HF_HOME=$HF_HOME config=$BENCH_CONFIG" \
          "offline=${HF_HUB_OFFLINE:-0}"
 }
 

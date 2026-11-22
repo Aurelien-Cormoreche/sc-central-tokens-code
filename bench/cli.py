@@ -68,35 +68,56 @@ def _gpu(cfg: BenchConfig, mem_gb: Optional[int] = None) -> dict:
 # ── commands ──
 
 def cmd_fetch_weights(cfg: BenchConfig, args) -> int:
-    """Download every enabled model's weights into HF_HOME (run on a node with internet) and
-    record the snapshot shas; extraction then loads exactly those snapshots."""
+    """Make sure every enabled model's weights are in the local HF cache ($HF_HOME/hub) and record their
+    snapshot shas in {bench_root}/weights_revisions.json; extraction then loads exactly those snapshots.
+
+    Default: download what is missing (needs internet). --offline (or HF_HUB_OFFLINE=1): no network -- check
+    the cache, filled with `hf download` on a machine with internet, and print the commands for what is missing.
+    --dry-run: print the `hf download` commands only."""
+    import os
     from datetime import datetime
-    from bench.models.encoders import ENCODERS
+    from bench.models.encoders import (ENCODERS, cached_snapshot, hf_cache_dir, hf_download_command,
+                                       missing_weight_files, weight_spec)
     from bench.provenance import model_revisions
     from bench.utils import write_json
-    patterns = {"conch15": ["pytorch_model_vision.bin", "*.json", "*.txt"],
-                "lemon": ["mean_std.json", "*.json", "lemon_*.pth.tar"]}
+    offline = args.offline or os.environ.get("HF_HUB_OFFLINE", "").lower() in ("1", "true", "yes", "on")
     root = cfg.root.parent if cfg.is_smoke else cfg.root
     revs = dict(model_revisions(root))
-    rows = []
+    rows, todo = [], []
     for m in cfg.enabled_models(args.models):
         if m not in ENCODERS or not getattr(ENCODERS[m], "repo", ""):
             continue
-        repo, rev = ENCODERS[m].repo, cfg.models[m].revision
+        mcfg = cfg.models[m]
+        repo, rev = ENCODERS[m].repo, mcfg.revision
+        files, _ = weight_spec(m, mcfg)
+        cmd = hf_download_command(repo, rev, files)
         if args.dry_run:
-            rows.append({"model": m, "repo": repo, "revision": rev or "main"})
+            rows.append({"model": m, "command": cmd})
             continue
-        from huggingface_hub import snapshot_download
-        LOG.info("downloading %s (%s)", m, repo)
-        path = snapshot_download(repo, revision=rev, allow_patterns=patterns.get(m))
-        sha = path.rstrip("/").split("/")[-1]
-        revs[m] = {"repo": repo, "requested": rev or "main", "sha": sha, "time": datetime.now().isoformat(timespec="seconds")}
-        rows.append({"model": m, "repo": repo, "sha": sha})
+        if not offline:
+            from huggingface_hub import snapshot_download
+            LOG.info("downloading %s (%s)", m, repo)
+            snapshot_download(repo, revision=rev, allow_patterns=files)
+        snap = cached_snapshot(repo, rev)
+        miss = missing_weight_files(m, mcfg, snap)
+        if miss:
+            rows.append({"model": m, "repo": repo, "state": "MISSING: " + "; ".join(miss)})
+            todo.append(cmd)
+            continue
+        revs[m] = {"repo": repo, "requested": rev or "main", "sha": snap.name, "snapshot": str(snap),
+                   "time": datetime.now().isoformat(timespec="seconds")}
+        rows.append({"model": m, "repo": repo, "state": "ok", "sha": snap.name})
+    print(f"HF cache: {hf_cache_dir()}")
     print_table(rows)
-    if not args.dry_run:
-        write_json(root / "weights_revisions.json", revs)
-        print(f"\nrecorded in {root / 'weights_revisions.json'}; extraction pins these snapshots unless "
-              "models.<name>.revision is set. Gated repos need `huggingface-cli login` and accepted terms.")
+    if args.dry_run:
+        return 0
+    write_json(root / "weights_revisions.json", revs)
+    print(f"\nrecorded in {root / 'weights_revisions.json'} (jobs load these snapshots unless models.<name>.revision is set)")
+    if todo:
+        print("\nmissing -- on a machine with internet, with HF_HOME pointing at this cache (or copy its hub/ here):")
+        print("\n".join("  " + c for c in todo))
+        print("then rerun this command. Gated repos: `hf auth login` there, and accept the terms on the model pages.")
+        return 1
     return 0
 
 
@@ -215,8 +236,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="bench", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("fetch-weights", help="download model weights to HF_HOME, record snapshot shas")
+    p = sub.add_parser("fetch-weights", help="model weights in the HF cache: download or check, record snapshot shas")
     _common(p)
+    p.add_argument("--offline", action="store_true", help="no network: check the cache, print `hf download` commands")
     p.set_defaults(fn=cmd_fetch_weights)
 
     p = sub.add_parser("inspect", help="slide table: WSI path, size, pixel size, scale")
