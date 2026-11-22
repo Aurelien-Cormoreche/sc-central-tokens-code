@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Single-cell FM benchmark</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10); --wash: rgba(11,11,11,0.04);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --good: #006300; --warn-bg: #fff4d6; --warn-ink: #5a4100; --crit: #d03b3b;
+  --accent: #2a78d6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10); --wash: rgba(255,255,255,0.05);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --good: #0ca30c; --warn-bg: #3a2f10; --warn-ink: #f5d78a; --crit: #e66767; --accent: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10); --wash: rgba(255,255,255,0.05);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --good: #0ca30c; --warn-bg: #3a2f10; --warn-ink: #f5d78a; --crit: #e66767; --accent: #3987e5;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--border); }
+.bar { max-width: 1280px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.bar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav a { color: var(--ink-2); text-decoration: none; padding: 6px 10px; border-radius: 6px; }
+nav a.on { background: var(--wash); color: var(--ink); font-weight: 600; }
+nav a:hover { background: var(--wash); }
+.meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+section.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin: 0 0 16px; }
+h2 { font-size: 15px; margin: 0 0 4px; } h3 { font-size: 14px; margin: 16px 0 6px; }
+p.sub { color: var(--ink-2); margin: 0 0 12px; max-width: 900px; }
+.filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; margin: 0 0 12px; }
+.filters label { display: flex; flex-direction: column; font-size: 12px; color: var(--ink-2); gap: 2px; }
+select, button { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--axis); border-radius: 6px; padding: 4px 8px; }
+button { cursor: pointer; } button:hover { background: var(--wash); }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 4px 8px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--surface); }
+th:first-child, td:first-child, td.l, th.l { text-align: left; }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--wash); }
+td.best { font-weight: 700; }
+td.hm { cursor: pointer; border: 2px solid var(--surface); border-radius: 4px; min-width: 64px; text-align: center; }
+td.hm:hover, td.hm:focus { outline: 2px solid var(--ink); outline-offset: -2px; }
+.tools { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; gap: 8px; }
+.tools .cap { color: var(--muted); font-size: 12px; }
+.banner { background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
+.pill { display: inline-block; padding: 0 6px; border-radius: 10px; font-size: 12px; border: 1px solid var(--axis); color: var(--ink-2); }
+.state-done { color: var(--good); } .state-failed { color: var(--crit); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin: 4px 0; }
+.legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+svg text { fill: var(--muted); font-size: 11px; }
+#tip { position: fixed; pointer-events: none; z-index: 20; background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; box-shadow: 0 4px 16px rgba(0,0,0,.15); font-size: 12px; display: none; max-width: 320px; }
+#tip b { font-variant-numeric: tabular-nums; }
+#modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; z-index: 30; align-items: flex-start; justify-content: center; overflow: auto; padding: 32px 16px; }
+#modal .box { background: var(--surface); border-radius: 10px; padding: 16px; max-width: 1100px; width: 100%; }
+#modal .close { float: right; }
+.empty { color: var(--muted); padding: 12px 0; }
+@media (max-width: 640px) { .meta { margin-left: 0; } td.hm { min-width: 48px; } }
+</style>
+</head>
+<body>
+<header><div class="bar">
+  <h1>Single-cell FM benchmark</h1>
+  <nav id="nav"></nav>
+  <span class="meta" id="meta"></span>
+</div></header>
+<main id="main"></main>
+<div id="tip" role="tooltip"></div>
+<div id="modal" role="dialog" aria-modal="true"><div class="box" id="modalbox"></div></div>
+<script id="bench-data" type="application/json">/*__BENCH_DATA__*/null</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("bench-data").textContent) || {};
+const M = D.meta || {};
+const METRICS = ["macro_f1_present", "balanced_accuracy", "accuracy", "macro_f1", "weighted_f1", "slide_mean_macro_f1_present"];
+const MLABEL = {macro_f1_present: "macro F1 (present classes)", balanced_accuracy: "balanced accuracy", accuracy: "accuracy",
+  macro_f1: "macro F1 (all classes)", weighted_f1: "weighted F1", slide_mean_macro_f1_present: "macro F1, mean over slides"};
+const PAGES = [["overview", "Overview"], ["stage1", "Stage 1"], ["stage2", "Stage 2"], ["stage3", "Stage 3"], ["status", "Run status"]];
+const SEQ = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b"];
+
+// ── helpers ──
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") e.className = v; else if (k === "style") e.style.cssText = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return e;
+}
+const svgEl = (tag, attrs) => { const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v); return e; };
+const f3 = v => v == null || Number.isNaN(v) ? "–" : Number(v).toFixed(3);
+const pct = v => v == null ? "–" : (100 * v).toFixed(1);
+const uniq = a => [...new Set(a)];
+const mean = a => { const v = a.filter(x => x != null && !Number.isNaN(x)); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; };
+const std = a => { const v = a.filter(x => x != null); if (v.length < 2) return 0; const m = mean(v); return Math.sqrt(v.reduce((s, x) => s + (x - m) ** 2, 0) / (v.length - 1)); };
+const isDark = () => document.documentElement.dataset.theme === "dark" ||
+  (document.documentElement.dataset.theme !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+const metricOf = (row, m) => row ? row[m] : null;
+const mr = r => `${r.model} · ${r.readout}`;
+const taskLabel = t => t ? t.replace("within:", "").replace("cross:", "held-out ").replace("single:", "train ") : "";
+
+function tip(evt, nodes) {
+  const t = document.getElementById("tip"); t.replaceChildren(...nodes); t.style.display = "block";
+  const x = Math.min(evt.clientX + 14, innerWidth - t.offsetWidth - 8), y = Math.min(evt.clientY + 14, innerHeight - t.offsetHeight - 8);
+  t.style.left = x + "px"; t.style.top = y + "px";
+}
+const untip = () => { document.getElementById("tip").style.display = "none"; };
+
+function csv(cols, rows) {
+  const q = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  return [cols.map(c => q(c.label || c.key)).join(","), ...rows.map(r => cols.map(c => q(c.csv ? c.csv(r) : r[c.key])).join(","))].join("\n");
+}
+function download(name, text) {
+  const a = el("a", {href: URL.createObjectURL(new Blob([text], {type: "text/csv"})), download: name}); document.body.append(a); a.click(); a.remove();
+}
+// cols: [{key, label, fmt, cls, csv}]
+function table(cols, rows, {name = "table", caption = "", onRow = null, best = null} = {}) {
+  const head = el("tr", {}, cols.map(c => el("th", {class: c.cls || ""}, c.label || c.key)));
+  const body = rows.map(r => el("tr", {class: onRow ? "click" : "", onclick: onRow ? () => onRow(r) : null, tabindex: onRow ? 0 : null},
+    cols.map(c => el("td", {class: (c.cls || "") + (best && best(r, c) ? " best" : "")}, c.fmt ? c.fmt(r[c.key], r) : (r[c.key] ?? "–")))));
+  const tools = el("div", {class: "tools"}, el("span", {class: "cap"}, caption),
+    el("button", {onclick: () => download(name + ".csv", csv(cols, rows)), title: "Download this table as CSV"}, "CSV"));
+  return el("div", {}, tools, rows.length ? el("div", {class: "tablewrap"}, el("table", {}, el("thead", {}, head), el("tbody", {}, body)))
+    : el("div", {class: "empty"}, "No results yet."));
+}
+function select(label, options, value, onchange) {
+  const s = el("select", {onchange: e => onchange(e.target.value)}, options.map(o => {
+    const [v, t] = Array.isArray(o) ? o : [o, o]; return el("option", {value: v, selected: String(v) === String(value)}, t); }));
+  return el("label", {}, label, s);
+}
+function modal(title, ...content) {
+  const box = document.getElementById("modalbox");
+  box.replaceChildren(el("button", {class: "close", onclick: closeModal}, "Close"), el("h2", {}, title), ...content);
+  document.getElementById("modal").style.display = "flex";
+}
+function closeModal() { document.getElementById("modal").style.display = "none"; }
+document.getElementById("modal").addEventListener("click", e => { if (e.target.id === "modal") closeModal(); });
+addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+// sequential colour for a value in [lo, hi]
+function seqColor(v, lo, hi) {
+  if (v == null) return [null, null];
+  const t = hi > lo ? (v - lo) / (hi - lo) : 0.5;
+  const ramp = isDark() ? [...SEQ].reverse() : SEQ;
+  const i = Math.max(0, Math.min(SEQ.length - 1, Math.round(t * (SEQ.length - 1))));
+  const darkFill = isDark() ? i < 7 : i >= 6;
+  return [ramp[i], darkFill ? "#ffffff" : "#0b0b0b"];
+}
+// rows: [{label, key}], cols: [{label, key}], get(rk, ck) -> {v, ci, n} ; onClick(rk, ck)
+function heatmap(rows, cols, get, {name, caption, onClick, fmt = f3} = {}) {
+  const vals = []; rows.forEach(r => cols.forEach(c => { const g = get(r.key, c.key); if (g && g.v != null) vals.push(g.v); }));
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const colBest = {}; cols.forEach(c => { colBest[c.key] = Math.max(...rows.map(r => (get(r.key, c.key) || {}).v ?? -Infinity)); });
+  const head = el("tr", {}, el("th", {class: "l"}, ""), cols.map(c => el("th", {}, c.label)));
+  const body = rows.map(r => el("tr", {}, el("td", {class: "l"}, r.label), cols.map(c => {
+    const g = get(r.key, c.key) || {}; const [bg, fg] = seqColor(g.v, lo, hi);
+    const best = g.v != null && g.v === colBest[c.key];
+    const td = el("td", {class: "hm" + (best ? " best" : ""), tabindex: 0, style: bg ? `background:${bg};color:${fg}` : "",
+      onclick: () => onClick && g.v != null && onClick(r.key, c.key)}, g.v == null ? "–" : fmt(g.v) + (best ? " ▲" : ""));
+    const show = e => tip(e, [el("div", {}, el("b", {}, g.v == null ? "no result" : fmt(g.v)), " ", r.label),
+      el("div", {}, c.label), g.ci && g.ci[0] != null ? el("div", {}, `95% CI over donors ${fmt(g.ci[0])}–${fmt(g.ci[1])}`) : "",
+      g.n ? el("div", {}, `${g.n}`) : "", onClick && g.v != null ? el("div", {style: "color:var(--muted)"}, "click for per-class F1 and confusion") : ""]);
+    td.addEventListener("pointermove", show); td.addEventListener("pointerleave", untip);
+    td.addEventListener("focus", e => { const b = td.getBoundingClientRect(); show({clientX: b.right, clientY: b.top}); });
+    td.addEventListener("blur", untip);
+    td.addEventListener("keydown", e => { if (e.key === "Enter" && onClick && g.v != null) onClick(r.key, c.key); });
+    return td; })));
+  const flat = []; rows.forEach(r => cols.forEach(c => { const g = get(r.key, c.key) || {};
+    flat.push({row: r.label, column: c.label, value: g.v, ci_lo: g.ci ? g.ci[0] : null, ci_hi: g.ci ? g.ci[1] : null}); }));
+  const tools = el("div", {class: "tools"}, el("span", {class: "cap"}, caption || "▲ = best in column"),
+    el("button", {onclick: () => download((name || "heatmap") + ".csv", csv([{key: "row"}, {key: "column"}, {key: "value"}, {key: "ci_lo"}, {key: "ci_hi"}], flat))}, "CSV"));
+  return el("div", {}, tools, vals.length ? el("div", {class: "tablewrap"}, el("table", {}, el("thead", {}, head), el("tbody", {}, body)))
+    : el("div", {class: "empty"}, "No results yet."));
+}
+// series: [{name, color, points: [{x, y, lo, hi}]}]
+// "nice" ticks (1/2/5 x 10^k) covering [lo, hi]; metric values are clamped to [0, 1]
+function niceTicks(lo, hi, n = 4) {
+  if (hi - lo < 1e-9) { lo -= 0.01; hi += 0.01; }
+  const raw = (hi - lo) / n, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map(f => f * mag).find(s => s >= raw) || 10 * mag;
+  const a = Math.floor(lo / step + 1e-9) * step, b = Math.ceil(hi / step - 1e-9) * step;
+  const dec = Math.max(0, -Math.floor(Math.log10(step)));
+  const ticks = []; for (let v = a; v <= b + step / 2; v += step) ticks.push(+v.toFixed(dec + 2));
+  return {ticks, dec};
+}
+function lineChart(series, {xLog = 10, xFmt = String, yLabel = "", xLabel = "", height = 260, width = 640, bounded = true} = {}) {
+  const W = width, H = height, L = 64, R = 16, T = 12, B = 40;
+  const pts = series.flatMap(s => s.points);
+  if (!pts.length) return el("div", {class: "empty"}, "No results yet.");
+  const xs = uniq(pts.map(p => p.x)).sort((a, b) => a - b);
+  const lx = x => Math.log(x) / Math.log(xLog);
+  const x0 = lx(xs[0]), x1 = lx(xs[xs.length - 1]);
+  const X = x => xs.length === 1 ? (L + W - R) / 2 : L + (lx(x) - x0) / (x1 - x0) * (W - L - R);
+  let lo = Math.min(...pts.map(p => p.lo ?? p.y)), hi = Math.max(...pts.map(p => p.hi ?? p.y));
+  const {ticks, dec} = niceTicks(bounded ? Math.max(0, lo) : lo, bounded ? Math.min(1, hi) : hi);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const Y = y => T + (1 - (Math.min(Math.max(y, y0), y1) - y0) / (y1 - y0)) * (H - T - B);
+  // drawn at its own size: never scaled up past ~1.15x, so text stays ~11-13 px
+  const svg = svgEl("svg", {viewBox: `0 0 ${W} ${H}`, width: "100%", style: `max-width:${Math.round(W * 1.15)}px;display:block`,
+    role: "img", "aria-label": yLabel + " vs " + xLabel});
+  ticks.forEach(v => { const yy = Y(v);
+    svg.append(svgEl("line", {x1: L, x2: W - R, y1: yy, y2: yy, stroke: "var(--grid)", "stroke-width": 1}));
+    const t = svgEl("text", {x: L - 6, y: yy + 4, "text-anchor": "end"}); t.textContent = v.toFixed(dec); svg.append(t); });
+  svg.append(svgEl("line", {x1: L, x2: W - R, y1: H - B, y2: H - B, stroke: "var(--axis)", "stroke-width": 1}));
+  xs.forEach(x => { const t = svgEl("text", {x: X(x), y: H - B + 16, "text-anchor": "middle"}); t.textContent = xFmt(x); svg.append(t); });
+  const xl = svgEl("text", {x: (L + W - R) / 2, y: H - 6, "text-anchor": "middle"}); xl.textContent = xLabel; svg.append(xl);
+  const yl = svgEl("text", {x: 12, y: (T + H - B) / 2, transform: `rotate(-90 12 ${(T + H - B) / 2})`, "text-anchor": "middle"}); yl.textContent = yLabel; svg.append(yl);
+  series.forEach(s => {
+    const p = [...s.points].sort((a, b) => a.x - b.x);
+    p.forEach(q => { if (q.lo != null && q.hi != null && q.hi > q.lo) {
+      svg.append(svgEl("line", {x1: X(q.x), x2: X(q.x), y1: Y(q.lo), y2: Y(q.hi), stroke: s.color, "stroke-width": 1.5, opacity: .7}));
+      [q.lo, q.hi].forEach(v => svg.append(svgEl("line", {x1: X(q.x) - 3, x2: X(q.x) + 3, y1: Y(v), y2: Y(v), stroke: s.color, "stroke-width": 1.5, opacity: .7}))); } });
+    if (p.length > 1) svg.append(svgEl("path", {d: p.map((q, i) => (i ? "L" : "M") + X(q.x) + " " + Y(q.y)).join(" "),
+      fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round"}));
+    p.forEach(q => svg.append(svgEl("circle", {cx: X(q.x), cy: Y(q.y), r: 4, fill: s.color, stroke: "var(--surface)", "stroke-width": 2})));
+  });
+  const hair = svgEl("line", {y1: T, y2: H - B, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden"}); svg.append(hair);
+  const hit = svgEl("rect", {x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent"}); svg.append(hit);
+  hit.addEventListener("pointermove", e => {
+    const b = svg.getBoundingClientRect(), px = (e.clientX - b.left) / b.width * W;
+    const x = xs.reduce((a, c) => Math.abs(X(c) - px) < Math.abs(X(a) - px) ? c : a, xs[0]);
+    hair.setAttribute("x1", X(x)); hair.setAttribute("x2", X(x)); hair.setAttribute("visibility", "visible");
+    tip(e, [el("div", {style: "color:var(--ink-2)"}, `${xLabel} ${xFmt(x)}`), ...series.map(s => { const q = s.points.find(p => p.x === x);
+      return el("div", {}, el("i", {style: `display:inline-block;width:10px;height:3px;background:${s.color};margin-right:6px;vertical-align:middle`}),
+        el("b", {}, q ? f3(q.y) : "–"), " ", s.name, q && q.lo != null ? ` (${f3(q.lo)}–${f3(q.hi)})` : ""); })]);
+  });
+  hit.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); untip(); });
+  const legend = series.length > 1 ? el("div", {class: "legend"}, series.map(s => el("span", {}, el("i", {style: `background:${s.color}`}), s.name))) : "";
+  return el("div", {}, legend, svg);
+}
+const COLORS = ["var(--s1)", "var(--s2)", "var(--s3)"];
+
+// ── data access ──
+const CS = D.classify_summary || [], CF = D.classify_folds || [];
+function summ(f) { return CS.filter(r => Object.entries(f).every(([k, v]) => v === undefined || r[k] === v)); }
+function folds(f) { return CF.filter(r => Object.entries(f).every(([k, v]) => v === undefined || r[k] === v)); }
+const mrRows = rows => uniq(rows.map(mr)).sort().map(k => ({key: k, label: k}));
+
+function detail(filter, title) {
+  const fs = folds(filter);
+  if (!fs.length) return;
+  const classes = uniq(fs.flatMap(f => f.classes));
+  const pcf = classes.map(c => ({cls: c, f1: mean(fs.map(f => f.test.per_class_f1[c])), support: fs.reduce((s, f) => s + (f.test.support[c] || 0), 0)}));
+  const k = fs[0].classes.length, same = fs.every(f => f.classes.join() === fs[0].classes.join());
+  const parts = [el("p", {class: "sub"}, `${fs.length} fold(s). Per-class F1 = mean over folds; confusion = summed over folds (rows true, columns predicted).`)];
+  parts.push(table([{key: "cls", label: "class", cls: "l"}, {key: "f1", label: "F1", fmt: f3}, {key: "support", label: "test cells"}], pcf, {name: "per_class_f1"}));
+  if (same) {
+    const cm = fs[0].classes.map((_, i) => fs[0].classes.map((_, j) => fs.reduce((s, f) => s + f.test.confusion_matrix[i][j], 0)));
+    const rows = fs[0].classes.map(c => ({key: c, label: "true " + c})), cols = fs[0].classes.map(c => ({key: c, label: "pred " + c}));
+    const idx = Object.fromEntries(fs[0].classes.map((c, i) => [c, i]));
+    parts.push(el("h3", {}, "Confusion matrix (row-normalised colour, counts shown)"));
+    parts.push(heatmap(rows, cols, (r, c) => { const tot = cm[idx[r]].reduce((a, b) => a + b, 0);
+      return {v: tot ? cm[idx[r]][idx[c]] / tot : null, n: `${cm[idx[r]][idx[c]]} cells`}; },
+      {name: "confusion", fmt: v => (100 * v).toFixed(1) + "%", caption: "share of each true class"}));
+  }
+  parts.push(el("h3", {}, "Folds"));
+  parts.push(table([{key: "fold_key", label: "fold", cls: "l"}, {key: "note", label: "held out", cls: "l"},
+    {key: "n_test", label: "test cells"}, {key: "mf1", label: "macro F1 (present)", fmt: f3}, {key: "bacc", label: "bal. acc.", fmt: f3},
+    {key: "trial", label: "selected trial", cls: "l"}, {key: "epoch", label: "epoch"}],
+    fs.map(f => ({fold_key: f.fold_key, note: f.note || (f.test_cohorts || []).join(", "), n_test: f.n.test, mf1: f.test.macro_f1_present,
+      bacc: f.test.balanced_accuracy, trial: `lr ${f.best_trial.lr} · wd ${f.best_trial.weight_decay} · ${f.best_trial.loss_weights}`, epoch: f.selected_epoch})), {name: "folds"}));
+  parts.push(el("h3", {}, "Test slides"));
+  parts.push(table([{key: "slide", cls: "l"}, {key: "cohort", cls: "l"}, {key: "donor", cls: "l"}, {key: "n_cells", label: "cells"},
+    {key: "n_dropped_absent_from_train", label: "dropped (class not in train)"}, {key: "macro_f1_present", label: "macro F1", fmt: f3},
+    {key: "balanced_accuracy", label: "bal. acc.", fmt: f3}], fs.flatMap(f => f.slides), {name: "slides"}));
+  modal(title, ...parts);
+}
+
+// ── pages ──
+const state = {metric: "macro_f1_present", scheme: "within", readout: "all", model: null, set: null, task: null};
+const value = (r, m) => m === "slide_mean_macro_f1_present" ? r.slide_mean_macro_f1_present : r[m];
+
+function leaderboard(stage, scheme, title, sub) {
+  const rows = summ({stage, scheme, variant: stage === "1" ? "native" : undefined, frac: null});
+  const tasks = uniq(rows.map(r => r.task)).sort();
+  const keys = mrRows(rows);
+  const get = (rk, t) => { const r = rows.find(x => mr(x) === rk && x.task === t); return r ? {v: value(r, state.metric), ci: [r.ci_lo, r.ci_hi], n: `${r.n_folds} fold(s), ${r.n_donors} test donors`} : null; };
+  const cols = tasks.map(t => ({key: t, label: taskLabel(t)}));
+  const withMean = [...cols, {key: "__mean", label: "mean"}];
+  const get2 = (rk, ck) => ck === "__mean" ? {v: mean(tasks.map(t => (get(rk, t) || {}).v ?? null))} : get(rk, ck);
+  return el("section", {class: "card"}, el("h2", {}, title), el("p", {class: "sub"}, sub),
+    heatmap(keys, withMean, get2, {name: `${scheme}_${state.metric}`, onClick: (rk, t) => t !== "__mean" &&
+      detail({stage, scheme, task: t, model: rk.split(" · ")[0], readout: rk.split(" · ")[1], variant: stage === "1" ? "native" : undefined, frac: null}, `${rk} — ${taskLabel(t)}`)}));
+}
+
+function metricFilter(rerender) {
+  return select("metric", METRICS.map(m => [m, MLABEL[m]]), state.metric, v => { state.metric = v; rerender(); });
+}
+
+function pageOverview() {
+  const g1 = M.gate1 || {}, g2 = M.gate2 || {};
+  const out = [];
+  const rank = (g1.ranking || []).map((r, i) => ({rank: i + 1, model: r.model, readout: r.readout, score: r.score, val_score: r.val_score,
+    ...Object.fromEntries(Object.entries(r.per_task || {}).map(([t, v]) => [t, v])), complete: r.complete ? "yes" : "missing: " + (r.missing || []).join(", "),
+    mark: (g1.suggested && g1.suggested.model === r.model && g1.suggested.readout === r.readout ? "suggested" : "") +
+      (g1.chosen && g1.chosen.model === r.model && g1.chosen.readout === r.readout ? " · chosen" : "")}));
+  const taskCols = uniq((g1.ranking || []).flatMap(r => Object.keys(r.per_task || {}))).sort();
+  const chosen = g1.chosen && g1.chosen.model ? `${g1.chosen.model} · ${g1.chosen.readout}` : "not set";
+  out.push(el("section", {class: "card"}, el("h2", {}, "Gate 1 — best model × readout"),
+    el("p", {class: "sub"}, `Rule: ${g1.rule ? g1.rule.metric : ""} on the ${g1.rule ? g1.rule.split : ""} split, mean over the within-cohort tasks (each task = mean over held-out donors). ` +
+      `Suggestion: ${g1.suggested ? g1.suggested.model + " · " + g1.suggested.readout : "needs complete Stage-1 within-cohort results"}. Chosen in config: ${chosen}. ` +
+      "Set gate1.chosen in the config yourself; Stage 2 and 3 refuse to run until you do."),
+    g1.rule && g1.rule.split === "test" ? el("div", {class: "banner"}, "Ranked on test scores (your choice). Every Stage 2–3 number is therefore selected on test and is marked as such.") : "",
+    table([{key: "rank"}, {key: "model", cls: "l"}, {key: "readout", cls: "l"}, {key: "score", label: "gate score", fmt: f3},
+      {key: "val_score", label: "same, on val", fmt: f3},
+      ...taskCols.map(t => ({key: t, label: taskLabel(t), fmt: f3})), {key: "complete", cls: "l"}, {key: "mark", label: "", cls: "l"}], rank,
+      {name: "gate1_ranking", best: (r, c) => c.key === "score" && r.rank === 1})));
+  out.push(el("div", {class: "filters"}, metricFilter(render)));
+  out.push(leaderboard("1", "within", "Within-cohort (leave one donor out)", "Each column: mean over held-out donors of the test metric; the probe is trained on the cohort's other donors, model selection on its fixed validation donors."));
+  out.push(leaderboard("1", "cross_loco", "Cross-cohort (leave one cohort out)", "Each column: one held-out cohort; label space = classes present in both training and held-out cohorts."));
+  const gx = D.genexp_summary || [];
+  out.push(el("section", {class: "card"}, el("h2", {}, "Gene expression (DeepSpot, leave one patient out)"),
+    el("p", {class: "sub"}, "Mean over folds of the mean per-gene test correlation; readout = each model's best Stage-1 readout (rule recorded per result)."),
+    table([{key: "set", cls: "l"}, {key: "model", cls: "l"}, {key: "readout", cls: "l"}, {key: "mean_pearson_all", label: "Pearson, all genes", fmt: f3},
+      ...(M.genexp_top || []).filter(k => k < (M.genexp_num_genes || 300)).map(k => ({key: `mean_pearson_top${k}`, label: `Pearson, top ${k}`, fmt: f3})),
+      {key: "mean_spearman_all", label: "Spearman, all genes", fmt: f3}, {key: "ci", label: "95% CI (Pearson, all)", fmt: (_, r) => r.ci_lo == null ? "–" : `${f3(r.ci_lo)}–${f3(r.ci_hi)}`, csv: r => r.ci_lo == null ? "" : `${r.ci_lo}-${r.ci_hi}`},
+      {key: "n_folds", label: "folds"}], [...gx].sort((a, b) => (a.set + a.model).localeCompare(b.set + b.model)),
+      {name: "genexp_leaderboard", best: (r, c) => c.key === "mean_pearson_all" && r.mean_pearson_all === Math.max(...gx.filter(x => x.set === r.set).map(x => x.mean_pearson_all))})));
+  const fov = Object.entries(g2.by_fov || {}).map(([k, v]) => ({fov_px: Number(k), score: v}));
+  out.push(el("section", {class: "card"}, el("h2", {}, "Gate 2 — multicell tile size"),
+    el("p", {class: "sub"}, `From the Stage-2a input-size results of the Gate-1 model (mean over the ${(M.stage2 && M.stage2.cohorts || []).join(" and ")} within-cohort tasks). Suggested tile: ${g2.suggested_tile_px ?? "needs 2a results at 224 and 448 px"}; set in config: ${g2.chosen_tile_px ?? "not set"} (stage2.multicell.tile_px).`),
+    table([{key: "fov_px", label: "input px"}, {key: "score", label: M.gate1 && M.gate1.rule ? M.gate1.rule.metric : "score", fmt: f3}], fov, {name: "gate2"})));
+  return out;
+}
+
+function pageStage1() {
+  const out = [];
+  const schemes = [["within", "within-cohort"], ["cross_loco", "cross-cohort (leave one cohort out)"], ["single_cohort", "single-cohort train × test"]];
+  out.push(el("div", {class: "filters"}, select("setting", schemes, state.scheme, v => { state.scheme = v; render(); }), metricFilter(render),
+    select("readout", ["all", ...(M.readouts || [])], state.readout, v => { state.readout = v; render(); })));
+  let rows = summ({stage: "1", variant: "native", scheme: state.scheme, frac: null});
+  if (state.readout !== "all") rows = rows.filter(r => r.readout === state.readout);
+  if (state.scheme !== "single_cohort") {
+    const tasks = uniq(rows.map(r => r.task)).sort();
+    out.push(el("section", {class: "card"}, el("h2", {}, `Model × readout, ${MLABEL[state.metric]}`),
+      el("p", {class: "sub"}, "Click a cell for per-class F1, the confusion matrix, folds and slides. Hover for the 95% bootstrap CI over test donors."),
+      heatmap(mrRows(rows), tasks.map(t => ({key: t, label: taskLabel(t)})), (rk, t) => { const r = rows.find(x => mr(x) === rk && x.task === t);
+        return r ? {v: value(r, state.metric), ci: [r.ci_lo, r.ci_hi], n: `${r.n_folds} fold(s)`} : null; },
+        {name: `stage1_${state.scheme}`, onClick: (rk, t) => detail({stage: "1", scheme: state.scheme, task: t, model: rk.split(" · ")[0], readout: rk.split(" · ")[1], variant: "native", frac: null}, `${rk} — ${taskLabel(t)}`)})));
+  } else {
+    // train x test matrix from per-slide results (off-diagonal) and within-cohort results (diagonal)
+    const keys = mrRows(rows).map(k => k.key);
+    if (!state.model || !keys.includes(state.model)) state.model = keys[0];
+    out.push(el("div", {class: "filters"}, select("model · readout", keys, state.model, v => { state.model = v; render(); })));
+    if (state.model) {
+      const [m, rd] = state.model.split(" · ");
+      const fs = folds({stage: "1", scheme: "single_cohort", model: m, readout: rd, variant: "native", frac: null});
+      const met = state.metric === "slide_mean_macro_f1_present" ? "macro_f1_present" : state.metric;
+      const cell = {};
+      fs.forEach(f => { const tr = f.task.replace("single:", ""); const byD = {};
+        f.slides.forEach(s => { if (s[met] == null) return; ((byD[s.cohort] ||= {})[s.donor] ||= []).push(s[met]); });
+        Object.entries(byD).forEach(([u, dd]) => { cell[tr + "|" + u] = mean(Object.values(dd).map(mean)); }); });
+      summ({stage: "1", scheme: "within", model: m, readout: rd, variant: "native", frac: null}).forEach(r => { const c = r.task.replace("within:", ""); cell[c + "|" + c] = value(r, state.metric); });
+      const cohorts = M.cohorts || [];
+      out.push(el("section", {class: "card"}, el("h2", {}, `Train cohort × test cohort — ${state.model}`),
+        el("p", {class: "sub"}, "Off-diagonal: probe trained on the row cohort (validation on its fixed val donors), tested on the column cohort, label space = classes present in both; value = mean over test donors of per-slide " + MLABEL[met] + ". Diagonal: within-cohort leave-one-donor-out (10X has no within-cohort task)."),
+        heatmap(cohorts.map(c => ({key: c, label: "train " + c})), cohorts.map(c => ({key: c, label: "test " + c})),
+          (r, c) => cell[r + "|" + c] != null ? {v: cell[r + "|" + c]} : null, {name: `single_cohort_${m}_${rd}`,
+          onClick: (r, c) => r === c ? detail({stage: "1", scheme: "within", task: "within:" + r, model: m, readout: rd, variant: "native", frac: null}, `${state.model} — within ${r}`)
+            : detail({stage: "1", scheme: "single_cohort", task: "single:" + r, model: m, readout: rd, variant: "native", frac: null}, `${state.model} — train ${r}`)})));
+    }
+  }
+  // gene expression
+  const gx = D.genexp_summary || [];
+  const sets = uniq(gx.map(r => r.set)).sort();
+  if (!state.set || !sets.includes(state.set)) state.set = sets[0];
+  const sub = gx.filter(r => r.set === state.set).sort((a, b) => (b.mean_pearson_all ?? 0) - (a.mean_pearson_all ?? 0));
+  const box = sub.length ? boxes(sub) : el("div", {class: "empty"}, "No gene-expression results yet.");
+  out.push(el("section", {class: "card"}, el("h2", {}, "Gene expression — per-gene test Pearson"),
+    el("div", {class: "filters"}, select("slide set", sets, state.set, v => { state.set = v; render(); })),
+    el("p", {class: "sub"}, "Distribution over genes of the per-gene Pearson r (mean over folds): whiskers 5–95th percentile, box 25–75th, tick = median."), box,
+    table([{key: "model", cls: "l"}, {key: "readout", cls: "l"}, ...Object.keys(sub[0] || {}).filter(k => k.startsWith("mean_") || k.startsWith("median_")).map(k => ({key: k, label: k.replace(/_/g, " "), fmt: f3})), {key: "n_folds", label: "folds"}], sub, {name: `genexp_${state.set}`})));
+  return out;
+}
+function boxes(rows) {
+  const W = 640, rowH = 26, L = 150, R = 16, H = rows.length * rowH + 30;
+  const all = rows.flatMap(r => r.gene_quantiles || []); const lo = Math.min(0, ...all), hi = Math.max(...all, 0.1);
+  const X = v => L + (v - lo) / (hi - lo) * (W - L - R);
+  const svg = svgEl("svg", {viewBox: `0 0 ${W} ${H}`, width: "100%", style: `max-width:${Math.round(W * 1.15)}px;display:block`,
+    role: "img", "aria-label": "per-gene Pearson distribution per model"});
+  for (let i = 0; i <= 4; i++) { const v = lo + i * (hi - lo) / 4; svg.append(svgEl("line", {x1: X(v), x2: X(v), y1: 0, y2: H - 22, stroke: "var(--grid)"}));
+    const t = svgEl("text", {x: X(v), y: H - 6, "text-anchor": "middle"}); t.textContent = v.toFixed(2); svg.append(t); }
+  rows.forEach((r, i) => { const q = r.gene_quantiles; const y = i * rowH + 14;
+    const t = svgEl("text", {x: L - 8, y: y + 4, "text-anchor": "end"}); t.textContent = `${r.model} · ${r.readout}`; svg.append(t);
+    if (!q) return;
+    svg.append(svgEl("line", {x1: X(q[0]), x2: X(q[4]), y1: y, y2: y, stroke: "var(--s1)", "stroke-width": 1.5}));
+    svg.append(svgEl("rect", {x: X(q[1]), y: y - 7, width: Math.max(2, X(q[3]) - X(q[1])), height: 14, rx: 3, fill: "var(--s1)", opacity: .35}));
+    svg.append(svgEl("line", {x1: X(q[2]), x2: X(q[2]), y1: y - 8, y2: y + 8, stroke: "var(--s1)", "stroke-width": 2}));
+    const hitr = svgEl("rect", {x: L, y: y - rowH / 2, width: W - L - R, height: rowH, fill: "transparent"});
+    hitr.addEventListener("pointermove", e => tip(e, [el("div", {}, el("b", {}, f3(q[2])), " median r, ", r.model, " · ", r.readout),
+      el("div", {}, `IQR ${f3(q[1])}–${f3(q[3])}, 5–95% ${f3(q[0])}–${f3(q[4])}`)])); hitr.addEventListener("pointerleave", untip); svg.append(hitr); });
+  return svg;
+}
+
+function pageStage2() {
+  const out = [el("div", {class: "banner"}, "Model and readout were selected on test scores at Gate 1."), el("div", {class: "filters"}, metricFilter(render))];
+  const rows = summ({stage: "2a"});
+  const tasks = uniq(rows.map(r => r.task)).sort();
+  const fx = r => Number(r.variant.replace("fov", ""));
+  const series = tasks.slice(0, 3).map((t, i) => ({name: taskLabel(t), color: COLORS[i], points: rows.filter(r => r.task === t).map(r => ({x: fx(r), y: value(r, state.metric), lo: r.ci_lo != null && state.metric === "macro_f1_present" ? r.ci_lo : null, hi: state.metric === "macro_f1_present" ? r.ci_hi : null}))}));
+  out.push(el("section", {class: "card"}, el("h2", {}, "2a — input size at native resolution"),
+    el("p", {class: "sub"}, `Gate-1 model and readout, within-cohort leave-one-donor-out. Input sizes are rounded up to a multiple of the patch size; position embeddings are interpolated. Error bars: 95% bootstrap CI over test donors (macro F1 only).`),
+    lineChart(series, {xLog: 2, xLabel: "input size (px)", yLabel: MLABEL[state.metric]}),
+    table([{key: "task", fmt: taskLabel, cls: "l"}, {key: "variant", cls: "l"}, {key: "model", cls: "l"}, {key: "readout", cls: "l"}, {key: state.metric, label: MLABEL[state.metric], fmt: (_, r) => f3(value(r, state.metric))},
+      {key: "ci_lo", label: "CI low", fmt: f3}, {key: "ci_hi", label: "CI high", fmt: f3}, {key: "n_folds", label: "folds"}], rows, {name: "stage2a", onRow: r => detail({stage: "2a", task: r.task, variant: r.variant, model: r.model, readout: r.readout}, `${r.variant} — ${taskLabel(r.task)}`)})));
+  const mc = summ({stage: "2b"});
+  const st = (D.status || []).filter(s => s.kind === "extract" && (s.stage === "2b" || s.stage === "2a") && s.state === "done");
+  const passes = {}; st.filter(s => s.stage === "2b").forEach(s => { (passes[s.key.split("/")[3]] ||= []).push([s.tiles, s.cells]); });
+  const cmp = mc.map(r => { const t = Number(r.variant.replace("mc", "")); const single = rows.find(x => x.task === r.task && fx(x) === t);
+    const p = passes[r.variant] || []; const tiles = p.reduce((a, b) => a + (b[0] || 0), 0), cells = p.reduce((a, b) => a + (b[1] || 0), 0);
+    return {task: r.task, tile_px: t, multicell: value(r, state.metric), single_cell: single ? value(single, state.metric) : null,
+      forward_per_cell: cells ? tiles / cells : null}; });
+  out.push(el("section", {class: "card"}, el("h2", {}, "2b — multicell vs single cell"),
+    el("p", {class: "sub"}, "One forward pass per tile; each cell reads the 2×2 tokens nearest its centroid. Single cell = the 2a result at the same input size."),
+    table([{key: "task", fmt: taskLabel, cls: "l"}, {key: "tile_px", label: "tile px"}, {key: "multicell", label: "multicell", fmt: f3},
+      {key: "single_cell", label: "single cell", fmt: f3}, {key: "forward_per_cell", label: "forward passes per cell (multicell)", fmt: v => v == null ? "–" : v.toFixed(3)}], cmp, {name: "stage2b"})));
+  return out;
+}
+
+function pageStage3() {
+  const out = [el("div", {class: "banner"}, "Model and readout were selected on test scores at Gate 1."), el("div", {class: "filters"}, metricFilter(render))];
+  const rows = summ({stage: "3"});
+  const tasks = uniq(rows.map(r => r.task)).sort();
+  const cards = tasks.map(t => {
+    const rs = rows.filter(r => r.task === t);
+    const combos = uniq(rs.map(r => r.probe)).sort();
+    const series = combos.slice(0, 3).map((p, i) => { const fr = uniq(rs.filter(r => r.probe === p).map(r => r.frac)).sort((a, b) => a - b);
+      return {name: p === "mlp" ? "2-layer MLP" : "linear", color: COLORS[i], points: fr.map(f => { const v = rs.filter(r => r.probe === p && r.frac === f).map(r => value(r, state.metric));
+        const m = mean(v), s = std(v); return {x: f, y: m, lo: m - s, hi: m + s, n: v.length}; })}; });
+    return el("section", {class: "card"}, el("h2", {}, taskLabel(t) + (t.startsWith("cross") ? " (cross-cohort)" : " (within-cohort)") +
+        (series.length === 1 ? ` — ${series[0].name} probe` : "")),
+      lineChart(series, {xLog: 10, xFmt: x => +(x * 100).toPrecision(3) + "%", xLabel: "training fraction (log)", yLabel: MLABEL[state.metric], height: 240, width: 420}));
+  });
+  out.push(el("p", {class: "sub"}, "Class-stratified subsets of each fold's training pool (≥1 cell per class), identical across probes; validation and test sets fixed. Points: mean over seeds; bars: ± 1 s.d. over seeds."));
+  out.push(el("div", {class: "grid2"}, cards.length ? cards : el("div", {class: "empty"}, "No Stage-3 results yet.")));
+  const flat = [];
+  uniq(rows.map(r => [r.task, r.probe, r.frac].join("|"))).forEach(k => { const [t, p, f] = k.split("|"); const v = rows.filter(r => r.task === t && r.probe === p && String(r.frac) === f).map(r => value(r, state.metric));
+    flat.push({task: t, probe: p, frac: Number(f), mean: mean(v), sd: std(v), seeds: v.length}); });
+  out.push(el("section", {class: "card"}, el("h2", {}, "All scaling results"), table([{key: "task", fmt: taskLabel, cls: "l"}, {key: "probe", cls: "l"}, {key: "frac", label: "fraction"},
+    {key: "mean", fmt: f3}, {key: "sd", label: "s.d.", fmt: f3}, {key: "seeds"}], flat.sort((a, b) => (a.task + a.probe).localeCompare(b.task + b.probe) || a.frac - b.frac), {name: "stage3"})));
+  return out;
+}
+
+function pageStatus() {
+  const st = D.status || [];
+  const out = [];
+  const states = ["done", "running", "failed", "missing"];
+  const groups = uniq(st.map(s => s.kind + "|" + s.stage));
+  out.push(el("section", {class: "card"}, el("h2", {}, "Jobs implied by the current config"),
+    el("p", {class: "sub"}, "As of report time. Rerun a stage command (it skips completed jobs) or `bench retry --plan <id>` for failures; `bench status --deletable` says which Stage-1 embeddings can be deleted."),
+    table([{key: "kind", cls: "l"}, {key: "stage", cls: "l"}, ...states.map(s => ({key: s}))], groups.map(g => { const [k, s] = g.split("|");
+      const r = {kind: k, stage: s}; states.forEach(x => { r[x] = st.filter(j => j.kind === k && j.stage === s && j.state === x).length; }); return r; }), {name: "status_counts"})));
+  if (!state.task || !["all", ...states].includes(state.task)) state.task = "all";
+  const rows = st.filter(s => state.task === "all" || s.state === state.task);
+  out.push(el("section", {class: "card"}, el("div", {class: "filters"}, select("state", ["all", ...states], state.task, v => { state.task = v; render(); })),
+    table([{key: "kind", cls: "l"}, {key: "key", cls: "l"}, {key: "state", cls: "l", fmt: v => el("span", {class: "state-" + v}, v)}, {key: "time", cls: "l"}, {key: "host", cls: "l"},
+      {key: "est_h", label: "est. h"}, {key: "seconds", label: "took s"}, {key: "cells_per_s", label: "cells/s"}, {key: "error", cls: "l"}], rows, {name: "jobs"})));
+  return out;
+}
+
+function render() {
+  const page = (location.hash || "#overview").slice(1);
+  document.getElementById("nav").replaceChildren(...PAGES.map(([k, t]) => el("a", {href: "#" + k, class: k === page ? "on" : ""}, t)));
+  const fn = {overview: pageOverview, stage1: pageStage1, stage2: pageStage2, stage3: pageStage3, status: pageStatus}[page] || pageOverview;
+  document.getElementById("main").replaceChildren(...fn());
+  untip();
+}
+document.getElementById("meta").textContent = `generated ${M.generated || "?"} · commit ${(M.git_commit || "?").slice(0, 8)}${M.git_dirty ? " (dirty)" : ""}${M.smoke ? " · SMOKE RUN" : ""}`;
+addEventListener("hashchange", render);
+render();
+</script>
+</body>
+</html>

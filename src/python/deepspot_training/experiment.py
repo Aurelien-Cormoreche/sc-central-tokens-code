@@ -123,7 +123,9 @@ def _load_precomputed_hvgs(cfg: DictConfig, split_idx: int, num_genes: int) -> O
 
 
 def _build_dataset(cfg: DictConfig, wsis: list[str], num_genes=None, highly_variable_genes=None):
-    embeddings_dir = os.path.join(cfg.data.base_dir, f"{cfg.data.model_name}_h5", cfg.data.correction_name)
+    # data.embeddings_dir (bench) points straight at {embeddings_dir}/{sample}/embeddings_dataset.h5
+    embeddings_dir = OmegaConf.select(cfg, "data.embeddings_dir", default=None) or os.path.join(
+        cfg.data.base_dir, f"{cfg.data.model_name}_h5", cfg.data.correction_name)
     embeddings_datasets: list[str] = list(cfg.data.embeddings_datasets) if cfg.data.embeddings_datasets else []
     return CustomDeepCellDataLoader(
         adata_path=cfg.data.adata_path_template,
@@ -386,6 +388,7 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
                 early_stopping_patience=int(cfg.training.early_stopping_patience),
                 early_stopping_min_delta=float(cfg.training.early_stopping_min_delta),
                 random_seed=2024,
+                restore_best_epoch=bool(OmegaConf.select(cfg, "training.restore_best_epoch", default=False)),
             )
 
             with mlflow.start_run(run_name=f"trial_{trial_idx}", nested=True):
@@ -447,6 +450,8 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
     # Every trained gene's test Pearson (NaN: constant over the test cells), most variable first.
     per_gene_table = genes_table[genes_table["highly_variable"]][["gene_name", "highly_variable_rank"]].copy()
     per_gene_table["pearson"] = per_gene_table["gene_name"].map(best_trial["test_per_gene_pearson"])
+    if "test_per_gene_spearman" in best_trial:
+        per_gene_table["spearman"] = per_gene_table["gene_name"].map(best_trial["test_per_gene_spearman"])
     per_gene_table.sort_values("highly_variable_rank").to_csv(output_dir / "per_gene_pearson.csv", index=False)
     # Per slide: Pearson over each slide's own cells (val slides too when val is a separate set).
     per_slide_by_set = {"test": best_trial["test_per_slide"]}
@@ -471,6 +476,9 @@ def run_split_experiment(split_idx: int, cfg: DictConfig, device: str, output_di
             "val_median_pearson": best_trial["val_median_pearson"],
             "test_mean_pearson": best_trial["test_mean_pearson"],
             "test_median_pearson": best_trial["test_median_pearson"],
+            "test_mean_spearman": best_trial.get("test_mean_spearman"),
+            "test_median_spearman": best_trial.get("test_median_spearman"),
+            "best_epoch": best_trial.get("best_epoch"),
             # Mean over test slides of each slide's own mean Pearson (== test_mean_pearson for one slide).
             "test_slide_mean_pearson": float(np.nanmean(test_slide_means)),
         },

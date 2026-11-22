@@ -1,0 +1,116 @@
+# bench: single-cell benchmark of pathology foundation models (Xenium + H&E).
+# Schema: bench/config.py. Commands in order and decision gates: README_bench.md.
+# ${env:NAME} = required environment variable; ${env:NAME,} = optional (empty -> null).
+
+paths:
+  bench_root: ${env:BENCH_ROOT}                      # every output of the pipeline lives here
+  wsi_raw: ${env:WSI_RAW_ROOT}
+  wsi_converted: ${env:WSI_CONVERTED_ROOT}
+  xenium_processed: ${env:XENIUM_PROCESSED_OUTPUT_ROOT}   # {slide}/patch_coordinates.h5, {slide}/adata.h5ad
+  hf_home: ${env:HF_HOME,}
+  # optional notebooks/check_wsi_openslide.ipynb manifest (dataset, converted, wsi_filename, status);
+  # without it, inspect looks for {slide}{_he_image.ome.tif|_registered_HE[.ome].tif} (converted root first)
+  wsi_manifest: ${env:BENCH_WSI_MANIFEST,}
+
+slides_csv: configs/bench_slides.csv     # scripts/make_bench_slides.py (98 slides, 5 cohorts)
+exclude: []                              # extra slides to leave out everywhere
+cohorts: [SPLIT, VANNAN, MCCORD, JOHNSON, 10X]
+mapping: simplified_broad                # src/python/code_configs/mappings.py; unmapped -> Unknown (dropped for classification)
+
+geometry:
+  centre_offset_px: 112                  # patch_coordinates x_start/y_start = centroid - 112 (native px)
+
+# Slides finer than resample_below_mpp (SPLIT Zeiss 0.086, three 10X slides 0.137) are area-resampled
+# to target_mpp; all others are used as stored. Every model gets its native input size in px.
+resolution: {resample_below_mpp: 0.2, target_mpp: 0.25, mpp_mismatch_tol: 0.05}
+mpp_overrides: {}                        # slide: um/px -- only when inspect cannot read the file's pixel size
+
+# Global cell filter (identical for every model, readout and stage).
+filters:
+  black_max: 8            # no-data pixel: max(R,G,B) <= 8 or fully transparent
+  block_px: 16            # dark-spot map resolution (native px)
+  block_full_frac: 0.9    # a block is dark when >= 90% of its pixels are no-data
+  min_blob_blocks: 1      # 1 = any dark block counts
+  linf_px: 224            # drop cells within L-inf 224 extraction px of a dark or unreadable block
+  border_px: 224          # drop cells within 224 extraction px of the image edge
+  scan_tile_px: 4096
+
+# input_px/patch: model-card native input. cells_per_s: RTX 4090 bf16 throughput prior at input_px,
+# replaced by calibration.json after `bench smoke`. revision: HF commit to pin (null = latest).
+models:
+  uni2:      {input_px: 224, patch: 14, batch_size: 512,  cells_per_s: 300}
+  conch15:   {input_px: 448, patch: 16, batch_size: 128,  cells_per_s: 200}
+  virchow2:  {input_px: 224, patch: 14, batch_size: 512,  cells_per_s: 330}
+  hoptimus1: {input_px: 224, patch: 14, batch_size: 384,  cells_per_s: 190}
+  lemon:     {input_px: 40,  patch: 8,  batch_size: 4096, cells_per_s: 2200, arch: vits8}
+  genbio:    {input_px: 224, patch: 16, batch_size: 128,  cells_per_s: 80}
+
+readouts: [cls, central]   # cls = model-card standard embedding; central = mean of the 2x2 tokens at the centroid
+
+extract:
+  region_px: 2048
+  num_workers: 12
+  prefetch_factor: 4
+  precision: bf16
+storage: {dtype: float16}
+
+slurm:
+  partition: gpu
+  gres: "gpu:rtx_4090:1"
+  cpus: 16
+  mem_gb: 64
+  max_hours: 12
+  max_array: 32
+  account: null
+  cpu_partition: compute    # partition for CPU-only arrays (darkspots); null = cluster default
+  cpu_mem_gb: 32
+  extra: []                 # e.g. ["--qos=normal"]
+  setup: "source scripts/cluster/bench_env.sh || exit 1"   # runs in the repo root: conda env + .env
+  python: python
+
+classify:
+  schemes: [within, cross_loco, single_cohort]
+  within_cohorts: [SPLIT, VANNAN, MCCORD, JOHNSON]
+  selection_metric: {within: slide_macro_f1, cross_loco: cohort_balanced_slide_macro_f1, single_cohort: slide_macro_f1}
+  min_class_cells: 1
+  seed: 42
+  epochs: 30
+  patience: 5
+  batch_size: 1024
+  zscore: true
+  grid: {lr: [1.0e-3, 1.0e-4], weight_decay: [1.0e-4, 1.0e-2], loss_weights: [none, by_cell_type]}
+
+genexp:
+  sets:
+    PRIME: {slides: ["GSM9509*_5k_*", "Xenium_Prime_*"]}   # 9 Xenium Prime 5K slides, 9 donors
+    VANNAN: {cohort: VANNAN}                                # 18 slides, 14 donors
+  template: configs/deepspot_lopo_prime.yaml   # DeepSpot training/hparams/data defaults
+  num_genes: 300
+  top: [50, 100, 300]
+  readout: auto        # auto = this model's best readout by the Gate-1 rule; or cls | central
+
+# Gate 1: `bench report` shows the suggestion; set `chosen` yourself before Stage 2/3.
+gate1:
+  rule: {metric: macro_f1_present, over: within_cohort_tasks, split: test}
+  chosen: {model: null, readout: null}
+
+stage2:
+  cohorts: [SPLIT, VANNAN]
+  fov_px: [56, 112, 224, 448]
+  round_to_patch: up
+  multicell: {tile_px: null, central_frac: 0.5}   # Gate 2: set tile_px (224 or 448) from the 2a results
+
+stage3:
+  fractions: [0.005, 0.01, 0.05, 1.0]
+  seeds: [0, 1, 2]
+  min_per_class: 1
+  probes: {linear: [within, cross_loco], mlp: [cross_loco]}
+  mlp: {hidden: 256, dropout: 0.2, grid: {lr: [1.0e-3, 1.0e-4], weight_decay: [1.0e-4], loss_weights: [none, by_cell_type]}}
+
+smoke:
+  slides: [fetal_d54, fetal_d105, fetal_d136, GSM9509134_NSCLC_5k_L1_L1, GSM9509135_NSCLC_5k_L3_L3,
+           GSM9509136_NSCLC_5k_L5_L5, GSM9509138_NSCLC_5k_L7_L7]
+  max_cells_per_slide: 300
+  epochs: 2
+  max_trials: 2
+  seed: 0

@@ -575,6 +575,10 @@ class FoldData:
     test_wsi_origins: torch.Tensor
     configs: list[TrainConfig]
     val_score_fn: Callable[[np.ndarray], float]
+    # Optional precomputed z-score fit (per-feature mean, std + 1e-8) of embeddings[train_rows].
+    # None (default) fits it here as before; callers holding embeddings far larger than RAM
+    # headroom (bench) pass a chunked fit instead of letting it gather every train row at once.
+    z_stats: Optional[tuple[np.ndarray, np.ndarray]] = None
 
 
 @dataclass
@@ -778,7 +782,8 @@ def train_linear_jointly(
         if any(c.normalization == "z_score" for c in fold.configs):
             # train_and_evaluate's fit, on the same rows in the same order (embeddings[train_rows]
             # is its train_embeddings); one fit serves every z-score trial of the fold.
-            z_stats[f] = _z_score_stats(embeddings[fold.train_rows].numpy())
+            z_stats[f] = (fold.z_stats if fold.z_stats is not None
+                          else _z_score_stats(embeddings[fold.train_rows].numpy()))
         groups: dict[tuple[int, Optional[str]], list[int]] = {}
         for i, c in enumerate(fold.configs):
             sampling = c.loss_weights if _is_oversampling(c.loss_weights) else None

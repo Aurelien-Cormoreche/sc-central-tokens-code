@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bench"
+version = "0.1.0"
+description = "Single-cell benchmark of pathology foundation models (Xenium + H&E)"
+requires-python = ">=3.10"
+
+[project.scripts]
+bench = "bench.cli:main"
+
+[tool.setuptools]
+packages = { find = { include = ["bench*"] } }
+
+[tool.setuptools.package-data]
+bench = ["report/templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/bench"]
+addopts = "-q"

@@ -14,10 +14,13 @@ MLflow-free — call train_and_evaluate() from experiment.py.
 from dataclasses import dataclass
 from typing import Optional
 
+import copy
+
 import lightning as L
 import numpy as np
+from lightning.pytorch.callbacks import Callback
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from scipy.stats import pearsonr
+from scipy.stats import pearsonr, rankdata
 from torch.utils.data import DataLoader
 
 from deepspot.cell.model import DeepCell
@@ -43,6 +46,9 @@ class TrainConfig:
     early_stopping_min_delta: float
     random_seed: int
     num_workers: int = 8
+    # True: after fit, reload the weights of the epoch with the lowest val loss (the epoch early
+    # stopping monitors) instead of keeping the last epoch's. Off by default (previous behaviour).
+    restore_best_epoch: bool = False
 
 
 def _per_gene_pearson(y_pred: np.ndarray, y_true: np.ndarray, gene_names: np.ndarray) -> dict:
@@ -62,12 +68,42 @@ def _per_gene_pearson(y_pred: np.ndarray, y_true: np.ndarray, gene_names: np.nda
     return per_gene
 
 
-def _summarize(per_gene_pearson: dict) -> dict:
+def _per_gene_spearman(y_pred: np.ndarray, y_true: np.ndarray, gene_names: np.ndarray) -> dict:
+    """Per-gene Spearman rho = Pearson r of the (average-tie) ranks; NaN for a constant column."""
+    return _per_gene_pearson(rankdata(y_pred, axis=0), rankdata(y_true, axis=0), gene_names)
+
+
+def _summarize(per_gene_pearson: dict, per_gene_spearman: Optional[dict] = None) -> dict:
     valid_r = np.array([r for r in per_gene_pearson.values() if not np.isnan(r)])
-    return {
+    out = {
         "mean_pearson": float(np.mean(valid_r)) if len(valid_r) else float("nan"),
         "median_pearson": float(np.median(valid_r)) if len(valid_r) else float("nan"),
     }
+    if per_gene_spearman is not None:
+        valid_s = np.array([r for r in per_gene_spearman.values() if not np.isnan(r)])
+        out["mean_spearman"] = float(np.mean(valid_s)) if len(valid_s) else float("nan")
+        out["median_spearman"] = float(np.median(valid_s)) if len(valid_s) else float("nan")
+    return out
+
+
+class _BestEpochKeeper(Callback):
+    """Keeps a CPU copy of the weights at the lowest val loss (`val`, as logged by DeepCell)."""
+
+    def __init__(self):
+        self.best = float("inf")
+        self.state = None
+        self.epoch = None
+
+    def on_validation_end(self, trainer, pl_module):
+        if trainer.sanity_checking:
+            return
+        val = trainer.callback_metrics.get("val")
+        if val is None:
+            return
+        val = float(val)
+        if val < self.best:
+            self.best, self.epoch = val, trainer.current_epoch
+            self.state = {k: v.detach().cpu().clone() for k, v in pl_module.state_dict().items()}
 
 
 def _evaluate(model, loader: DataLoader, dataset, gene_names: np.ndarray, device: str) -> dict:
@@ -79,13 +115,15 @@ def _evaluate(model, loader: DataLoader, dataset, gene_names: np.ndarray, device
     slides = dataset.coordinates_df["sampleID"].to_numpy()
 
     per_gene_pearson = _per_gene_pearson(predictions, y_true, gene_names)
+    per_gene_spearman = _per_gene_spearman(predictions, y_true, gene_names)
     per_slide = {}
     for slide in np.unique(slides):
         rows = slides == slide
         slide_pearson = _per_gene_pearson(predictions[rows], y_true[rows], gene_names)
         per_slide[slide] = {"n_cells": int(rows.sum()), **_summarize(slide_pearson), "per_gene_pearson": slide_pearson}
 
-    return {**_summarize(per_gene_pearson), "per_gene_pearson": per_gene_pearson, "per_slide": per_slide}
+    return {**_summarize(per_gene_pearson, per_gene_spearman), "per_gene_pearson": per_gene_pearson,
+            "per_gene_spearman": per_gene_spearman, "per_slide": per_slide}
 
 
 def _prefix_metrics(metrics: dict, prefix: str) -> dict:
@@ -146,6 +184,7 @@ def train_and_evaluate(
     )
 
     accelerator = "gpu" if device == "cuda" else "cpu"
+    keeper = _BestEpochKeeper() if config.restore_best_epoch else None
     trainer = L.Trainer(
         max_epochs=config.num_epochs,
         accelerator=accelerator,
@@ -160,9 +199,13 @@ def train_and_evaluate(
                 min_delta=config.early_stopping_min_delta,
                 mode="min",
             )
-        ],
+        ] + ([keeper] if keeper is not None else []),
     )
     trainer.fit(model, train_loader, val_loader)
+    best_epoch = None
+    if keeper is not None and keeper.state is not None:
+        model.load_state_dict(keeper.state)
+        best_epoch = int(keeper.epoch)
 
     val_metrics = _evaluate(model, val_loader, val_dataset, gene_names, device)
     if test_dataset is val_dataset:
@@ -180,4 +223,5 @@ def train_and_evaluate(
         **_prefix_metrics(test_metrics, "test"),
         "train_loss_curve": list(model.training_loss),
         "val_loss_curve": list(model.validation_loss),
+        "best_epoch": best_epoch,
     }

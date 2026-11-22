@@ -1,0 +1,99 @@
+slide,cohort,donor,val
+Xenium_FFPE_Human_Breast_Cancer_Rep1,10X,"10X::Discovery Life Sciences; Sample #1 (T2N1M0, stage II-B, ER+/HER2+/PR-)",0
+Xenium_FFPE_Human_Breast_Cancer_Rep2,10X,"10X::Discovery Life Sciences; Sample #1 (T2N1M0, stage II-B, ER+/HER2+/PR-)",0
+Xenium_Prime_Human_Lymph_Node_Reactive_FFPE,10X,"10X::Avaden Biosciences (Lymph Node, Left Axilla; Reactive Lymph Node)",0
+Xenium_Prime_Human_Prostate_FFPE,10X,"10X::Discovery Life Sciences (Prostate Cancer, Adenocarcinoma)",0
+Xenium_Prime_Human_Skin_FFPE,10X,"10X::Discovery Life Sciences (Skin - Right Lower Extremity, Melanoma)",1
+Xenium_V1_FFPE_Human_Breast_IDC_Big_1,10X,"10X::Avaden Biosciences; resected tumor mass, infiltrating ductal carcinoma",1
+Xenium_V1_FFPE_Human_Breast_IDC_Big_2,10X,"10X::Avaden Biosciences; resected tumor mass, infiltrating ductal carcinoma",1
+Xenium_V1_FFPE_Human_Breast_IDC_With_Addon,10X,"10X::BioIVT (page spells BiolVT); resected tumor mass, infiltrating ductal carcinoma + DCIS",0
+Xenium_V1_FFPE_Human_Breast_ILC_With_Addon,10X,"10X::Avaden Biosciences; resected tumor mass, invasive lobular carcinoma",0
+Xenium_V1_Human_Brain_GBM_FFPE,10X,10X::Discovery Life Sciences; glioblastoma multiforme,1
+Xenium_V1_Human_Colon_Cancer_P1_CRC_Add_on_FFPE,10X,"10X::P1CRC (Discovery Life Sciences); F, 72 y, stage II-A, pretreatment",0
+Xenium_V1_Human_Colon_Cancer_P2_CRC_Add_on_FFPE,10X,"10X::P2CRC (Discovery Life Sciences); M, 60 y, stage III-B, pretreatment",0
+Xenium_V1_Human_Colon_Cancer_P5_CRC_Add_on_FFPE,10X,"10X::P5CRC (Discovery Life Sciences); F, 58 y, stage IV-A, pretreatment",1
+Xenium_V1_Human_Colorectal_Cancer_Addon_FFPE,10X,"10X::Discovery Life Sciences; colorectal adenocarcinoma, grade 2",0
+Xenium_V1_Human_Ductal_Adenocarcinoma_FFPE,10X,"10X::Avaden Biosciences; pancreatic ductal adenocarcinoma, stage IIB, grade 3",0
+Xenium_V1_Human_Lung_Cancer_Addon_FFPE,10X,"10X::Discovery Life Sciences; lung NSCLC, stage I-B, grade 2",0
+Xenium_V1_Human_Ovarian_Cancer_Addon_FFPE,10X,"10X::Discovery Life Sciences; ovary serous carcinoma, stage II-A, grade 3",0
+Xenium_V1_hBoneMarrow_acute_lymphoid_leukemia_section,10X,10X::Discovery Life Sciences; acute lymphoid leukemia bone marrow,0
+Xenium_V1_hBone_nondiseased_section,10X,10X::Avaden Biosciences (non-diseased femur bone donor; age/sex not given),0
+Xenium_V1_hColon_Cancer_Add_on_FFPE,10X,"10X::Discovery Life Sciences; colon adenocarcinoma, stage 2A",0
+Xenium_V1_hColon_Non_diseased_Base_FFPE,10X,10X::Avaden Biosciences (non-diseased colon donor; age/sex not given),1
+Xenium_V1_hHeart_nondiseased_section_FFPE,10X,10X::Avaden Biosciences (non-diseased heart donor; age/sex not given),0
+Xenium_V1_hKidney_cancer_section,10X,10X::AcePix Biosciences; papillary renal cell carcinoma,0
+Xenium_V1_hKidney_nondiseased_section,10X,10X::AcePix Biosciences (non-diseased kidney donor block; age/sex not given),0
+Xenium_V1_hLiver_cancer_section_FFPE,10X,10X::Avaden Biosciences; liver cancer,0
+Xenium_V1_hLiver_nondiseased_section_FFPE,10X,10X::Avaden Biosciences (non-diseased liver donor; age/sex not given),0
+Xenium_V1_hPancreas_Cancer_Add_on_FFPE,10X,"10X::AcePix Biosciences; adenocarcinoma, grade I-II, 50% tumor",1
+Xenium_V1_hSkin_Melanoma_Base_FFPE,10X,10X::Avaden Biosciences; melanoma,0
+Xenium_V1_hSkin_nondiseased_section_1_FFPE,10X,"10X::Avaden Biosciences (non-diseased skin, sample 1 of 2 donors; age/sex not given)",0
+Xenium_V1_hSkin_nondiseased_section_2_FFPE,10X,"10X::Avaden Biosciences (non-diseased skin, sample 2 of 2 donors; age/sex not given)",1
+Xenium_V1_hTonsil_follicular_lymphoid_hyperplasia_section_FFPE,10X,10X::Avaden Biosciences (follicular lymphoid hyperplasia tonsil donor; age/sex not given),0
+Xenium_V1_hTonsil_reactive_follicular_hyperplasia_section_FFPE,10X,10X::Avaden Biosciences (reactive follicular hyperplasia tonsil donor; age/sex not given),0
+Xenium_V1_humanLung_Cancer_FFPE,10X,10X::BioIVT; lung adenocarcinoma,0
+Xenium_V1_human_Pancreas_FFPE,10X,10X::AcePix Biosciences (pancreatic cancer donor; age/sex not given),0
+Xeniumranger_V1_hSkin_Melanoma_Add_on_FFPE,10X,10X::Avaden Biosciences (Melanoma),0
+fetal_d105,JOHNSON,fetal_d105_out,0
+fetal_d122,JOHNSON,fetal_d122_out,0
+fetal_d136,JOHNSON,fetal_d136_out,1
+fetal_d54,JOHNSON,fetal_d54_out,0
+tHIO_EGF,JOHNSON,tHIO_EGF_out,0
+GSM9054471_P1_run1,MCCORD,MCCORD::Patient 1,0
+GSM9054473_P9_run2,MCCORD,MCCORD::Patient 9,0
+GSM9054474_P12_run1,MCCORD,MCCORD::Patient 12,0
+GSM9054475_P12_run2,MCCORD,MCCORD::Patient 12,0
+GSM9054477_P13_run2,MCCORD,MCCORD::Patient 13,1
+GSM9054480_P17_run2,MCCORD,MCCORD::Patient 17,0
+GSM9054482_P19_run2,MCCORD,MCCORD::Patient 19,0
+GSM9054483_P20_run1,MCCORD,MCCORD::Patient 20,0
+GSM9054485_P23_run1,MCCORD,MCCORD::Patient 23,0
+GSM9054486_P28_run1,MCCORD,MCCORD::Patient 28,1
+GSM9054487_P28_run2,MCCORD,MCCORD::Patient 28,1
+GSM9509134_NSCLC_5k_L1_L1,SPLIT,NM::L1,0
+GSM9509135_NSCLC_5k_L3_L3,SPLIT,NM::L3,0
+GSM9509136_NSCLC_5k_L5_L5,SPLIT,NM::L5,0
+GSM9509137_NSCLC_5k_L6_L6,SPLIT,NM::L6,0
+GSM9509138_NSCLC_5k_L7_L7,SPLIT,NM::L7,1
+GSM9509139_NSCLC_5k_L8_L8,SPLIT,NM::L8,0
+GSM9509140_NSCLC_chuvio_L1_L1_1,SPLIT,NM::L1,0
+GSM9509141_NSCLC_chuvio_L1_L1_2,SPLIT,NM::L1,0
+GSM9509142_NSCLC_chuvio_L2_L2,SPLIT,NM::L2,0
+GSM9509143_NSCLC_chuvio_L3_L3,SPLIT,NM::L3,0
+GSM9509144_NSCLC_chuvio_L4_L4,SPLIT,NM::L4,0
+GSM9509145_NSCLC_lung_L1_L1,SPLIT,NM::L1,0
+GSM9509147_NSCLC_lung_L2_L2_1,SPLIT,NM::L2,0
+GSM9509148_NSCLC_lung_L2_L2_2,SPLIT,NM::L2,0
+GSM9509150_NSCLC_lung_L4_L4,SPLIT,NM::L4,0
+GSM9509156_breast_breast_B17_B17,SPLIT,NM::B17,0
+GSM9509157_breast_breast_B16_B16,SPLIT,NM::B16,1
+GSM9509158_breast_breast_B15_B15,SPLIT,NM::B15,0
+GSM9509159_breast_breast_B14_B14,SPLIT,NM::B14,0
+GSM9509161_breast_breast_B13_B13,SPLIT,NM::B13,0
+GSM9509162_breast_breast_B12_B12,SPLIT,NM::B12,0
+GSM9509163_breast_breast_B11_B11,SPLIT,NM::B11,0
+GSM9509164_breast_breast_B10_B10,SPLIT,NM::B10,0
+GSM9509166_breast_breast_B9_B9,SPLIT,NM::B9,0
+GSM9509167_breast_breast_B8_B8,SPLIT,NM::B8,0
+GSM9509168_breast_breast_B7_B7,SPLIT,NM::B7,0
+GSM9509169_breast_breast_B6_B6,SPLIT,NM::B6,0
+GSM9509171_breast_breast_B5_B5,SPLIT,NM::B5,0
+GSM9509174_breast_breast_B1_B1_3,SPLIT,NM::B1,0
+GSM7990532,VANNAN,VANNAN::THD0008,1
+GSM7990533,VANNAN,VANNAN::THD0011,0
+GSM7990534,VANNAN,VANNAN::TILD117,0
+GSM7990535,VANNAN,VANNAN::TILD117,0
+GSM7990536,VANNAN,VANNAN::TILD175,0
+GSM7990537,VANNAN,VANNAN::VUHD069,0
+GSM7990540,VANNAN,VANNAN::VUHD116,0
+GSM7990541,VANNAN,VANNAN::VUHD116,0
+GSM7990543,VANNAN,VANNAN::VUILD102,0
+GSM7990548,VANNAN,VANNAN::VUILD106,1
+GSM7990549,VANNAN,VANNAN::VUILD107,0
+GSM7990550,VANNAN,VANNAN::VUILD110,0
+GSM7990551,VANNAN,VANNAN::VUILD115,0
+GSM7990554,VANNAN,VANNAN::VUILD78,0
+GSM7990556,VANNAN,VANNAN::VUILD91,0
+GSM7990557,VANNAN,VANNAN::VUILD91,0
+GSM7990558,VANNAN,VANNAN::VUILD96,0
+GSM7990559,VANNAN,VANNAN::VUILD96,0

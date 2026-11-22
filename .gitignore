@@ -37,3 +37,9 @@ tmp/
 # Saved classifier weights (experiment.py, see configs/train.yaml save_model)
 saved_models/
 profile_reports/
+
+# bench package: `data*` above would otherwise hide bench/data/
+!bench/data/
+# bench outputs default to $BENCH_ROOT (outside the repo); local scratch runs:
+bench_runs/
+.pytest_cache/
