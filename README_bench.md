@@ -18,17 +18,18 @@ BENCH_ROOT=/path/to/bench_outputs                     # everything bench writes
 WSI_RAW_ROOT=/path/to/HE_images                        # {slide}_he_image.ome.tif etc. (quote paths with & or spaces)
 WSI_CONVERTED_ROOT=/path/to/HE_images_converted        # re-encoded copies of unreadable files
 XENIUM_PROCESSED_OUTPUT_ROOT=/path/to/xenium_processed # {slide}/patch_coordinates.h5, {slide}/adata.h5ad
-HF_HOME=/path/to/hf_cache                              # model weights, in $HF_HOME/hub (download_weights.sh)
+HF_HOME=/path/to/hf_cache                              # HF cache with the weights in hub/; only read (read-only is fine)
 # optional: BENCH_WSI_MANIFEST=/path/to/wsi_manifest.csv  (dataset, converted, wsi_filename[, status])
 ```
 
-First run, with a cluster that has no internet (`scripts/cluster/`, run from the repo root):
+First run, with a cluster that has no internet but sees a client-filled folder read-only (e.g. customapps;
+`scripts/cluster/`, run from the repo root):
 
 ```bash
-# on a machine WITH internet (e.g. your laptop):
-bash scripts/cluster/download_wheels.sh  DIR_W   # Linux wheels of bench's packages + TRIDENT (~80 MB)
-bash scripts/cluster/download_weights.sh DIR_H   # `hf download` of the 6 checkpoints into DIR_H/hub
-#   copy both to the cluster: DIR_W anywhere, DIR_H/hub/ to $HF_HOME/hub/ (rsync -a keeps the cache symlinks)
+# on the client WITH internet, writing into the folder the cluster reads:
+hf auth login                                          # once; accept the gated models' terms first
+bash scripts/cluster/download_weights.sh $HF_HOME      # `hf download` of the 6 checkpoints into $HF_HOME/hub
+bash scripts/cluster/download_wheels.sh  DIR_W         # Linux wheels of bench's packages + TRIDENT (~80 MB)
 
 # on the cluster:
 WHEELS=DIR_W bash scripts/cluster/00_install.sh  # once: overlay venv .venv-bench on top of cellViT (cellViT is
@@ -39,11 +40,12 @@ sbatch scripts/cluster/03_smoke.sbatch           # 1 GPU: real smoke + parity + 
 source scripts/cluster/bench_env.sh              # interactive shell: env + .env, then any `bench ...` command
 ```
 
-With internet on the cluster, `bash scripts/cluster/00_install.sh` (no `WHEELS`) and `bench fetch-weights`
-download directly.
+bench never writes to `HF_HOME`: `bench_env.sh` sets `HF_HUB_OFFLINE=1` (set `HF_HUB_OFFLINE=0` in `.env` if
+the cluster has internet) and moves transformers' module cache (GenBio's remote code, by default
+`$HF_HOME/modules`) to `$TMPDIR` per job, `$BENCH_ROOT/.hf_modules` otherwise. With internet on the cluster,
+`bash scripts/cluster/00_install.sh` (no `WHEELS`) and `bench fetch-weights` download directly.
 
-Every array task sources `scripts/cluster/bench_env.sh` (`slurm.setup` in `configs/bench.yaml`); it sets
-`HF_HUB_OFFLINE=1` inside jobs. Check `slurm.partition` / `gres` / `account` / `cpu_partition` there: the GPU
+Every array task sources `scripts/cluster/bench_env.sh` (`slurm.setup` in `configs/bench.yaml`). Check `slurm.partition` / `gres` / `account` / `cpu_partition` there: the GPU
 type name (`gpu:rtx_4090:1`) must match your cluster's, in the config and in `03_smoke.sbatch`.
 
 ## Commands, in order

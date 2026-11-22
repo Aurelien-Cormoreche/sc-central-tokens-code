@@ -6,7 +6,10 @@
 #    (default: .venv-bench in the repo, created by 00_install.sh)
 # 2. loads the repo's .env (same file the rest of the repo uses, see .env.example) and checks the
 #    variables bench needs: BENCH_ROOT WSI_RAW_ROOT WSI_CONVERTED_ROOT XENIUM_PROCESSED_OUTPUT_ROOT HF_HOME
-# 3. inside SLURM jobs sets HF_HUB_OFFLINE=1: weights come from HF_HOME (download_weights.sh, checked by 01_weights.sh)
+# 3. HF_HOME is only read, never written, so it can be a read-only cache (e.g. customapps, filled by `hf download`
+#    on the customapps client; 01_weights.sh checks it): HF_HUB_OFFLINE=1 (set HF_HUB_OFFLINE=0 in .env if the
+#    cluster has internet), and transformers' module cache (GenBio's remote code, by default $HF_HOME/modules)
+#    goes to a writable folder: per job in $TMPDIR, else $BENCH_ROOT/.hf_modules
 
 _bench_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 _bench_conda="${CONDA_ENV:-cellViT}"
@@ -47,10 +50,17 @@ _bench_env_main() {
             return 1
         fi
     done
-    mkdir -p "$BENCH_ROOT" "$HF_HOME" || return 1
+    if [ ! -d "$HF_HOME/hub" ]; then
+        echo "ERROR: HF_HOME='$HF_HOME' has no hub/ folder (the HF cache that \`hf download\` fills)" >&2
+        return 1
+    fi
+    mkdir -p "$BENCH_ROOT" || return 1
     export BENCH_CONFIG="${BENCH_CONFIG:-$_bench_repo/configs/bench.yaml}"
+    export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
     if [ -n "${SLURM_JOB_ID:-}" ]; then
-        export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+        export HF_MODULES_CACHE="${TMPDIR:-/tmp}/bench_hf_modules_$SLURM_JOB_ID"   # per job: no concurrent writers
+    else
+        export HF_MODULES_CACHE="$BENCH_ROOT/.hf_modules"
     fi
     echo "bench env: conda=$_bench_conda venv=$_bench_venv BENCH_ROOT=$BENCH_ROOT HF_HOME=$HF_HOME config=$BENCH_CONFIG" \
          "offline=${HF_HUB_OFFLINE:-0}"

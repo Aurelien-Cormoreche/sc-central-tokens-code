@@ -46,6 +46,7 @@ if ! python -m pip install "${SRC[@]}" -c "$CONSTRAINTS" -r "$REQ"; then
     exit 1
 fi
 python -m pip install "${SRC[@]}" --no-deps "${TRI[@]}"
+echo "   (pip may say 'trident requires bioio, pyvips, ...': expected, bench uses only its CONCH v1.5 file)"
 
 # bench itself: the repo on the venv's path + a `bench` launcher (no build step, works offline)
 SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"

@@ -1,14 +1,13 @@
 #!/bin/bash
-# Download the six checkpoints on any machine WITH internet (your laptop, a transfer node). Needs only the `hf`
-# CLI (pip install "huggingface_hub>=0.34"); the bench code and env are not needed there.
+# Download the six checkpoints into an HF cache, on a machine WITH internet. Needs only the `hf` CLI
+# (huggingface_hub >= 0.34); the bench code and env are not needed there. Typical: on the customapps client,
+# straight into the cache the cluster reads (read-only is fine, bench never writes to it):
 #
-#   bash scripts/cluster/download_weights.sh /path/to/hf_home
+#   bash scripts/cluster/download_weights.sh /path/to/HF_HOME        # = HF_HOME in the cluster's .env
 #
-# Files go to /path/to/hf_home/hub in the Hugging Face cache layout that bench reads offline (blobs/, refs/,
-# snapshots/ with symlinks). Do not use `hf download --local-dir`: that layout is not a cache.
-# Then, if this machine is not the cluster, copy the cache over, keeping the symlinks (rsync -a does):
-#   rsync -a /path/to/hf_home/hub/ <cluster>:<HF_HOME in the cluster .env>/hub/
-# and on the cluster run  bash scripts/cluster/01_weights.sh  (checks every file, records the snapshot shas).
+# Files go to /path/to/HF_HOME/hub in the Hugging Face cache layout (blobs/, refs/, snapshots/ with symlinks).
+# Do not use `hf download --local-dir`: that layout is not a cache. Then, on the cluster:
+#   bash scripts/cluster/01_weights.sh       (checks every file offline, records the snapshot shas)
 #
 # Gated: log in first (`hf auth login`) and accept the terms on each model page:
 #   https://huggingface.co/MahmoodLab/UNI2-h       https://huggingface.co/MahmoodLab/conchv1_5

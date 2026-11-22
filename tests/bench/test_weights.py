@@ -73,7 +73,14 @@ def test_cli_offline_records_shas(cache, tmp_path, monkeypatch, capsys):
     assert "hf download aliceblondel/LEMON mean_std.json lemon_vits8.pth.tar" in out
     put(cache, "aliceblondel/LEMON", ["mean_std.json", "lemon_vits8.pth.tar"])
     put(cache, "MahmoodLab/conchv1_5", ["pytorch_model_vision.bin"], sha="c" * 40)
-    assert cli.main(argv) == 0
+    dirs = [d for d in cache.rglob("*") if d.is_dir() and not d.is_symlink()] + [cache]
+    for d in dirs:                       # the cluster sees the cache read-only (customapps)
+        d.chmod(0o555)
+    try:
+        assert cli.main(argv) == 0
+    finally:
+        for d in dirs:
+            d.chmod(0o755)
     revs = json.loads((tmp_path / "out" / "weights_revisions.json").read_text())
     assert revs["lemon"]["sha"] == SHA and revs["conch15"]["sha"] == "c" * 40
 
