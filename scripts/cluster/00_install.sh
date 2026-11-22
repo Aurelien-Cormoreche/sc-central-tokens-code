@@ -1,58 +1,78 @@
 #!/bin/bash
-# Once, on the cluster (a login node is fine), from the repo root:
-#   WHEELS=/path/to/wheels bash scripts/cluster/00_install.sh   # no internet: wheels from download_wheels.sh
-#   bash scripts/cluster/00_install.sh                          # if pip can reach PyPI and GitHub
+# Once, on the cluster login node, from the repo root (safe to rerun):
+#   TRIDENT=/path/to/trident-0.3.2-py3-none-any.whl bash scripts/cluster/00_install.sh
 #
-# bench runs in the cellViT conda env plus a small overlay venv ($BENCH_VENV, default .venv-bench in the repo)
-# that sees every cellViT package and adds bench's own (requirements-bench.txt). cellViT itself is not
-# modified, and torch / torchvision / timm / numpy stay at its versions. TRIDENT goes in with --no-deps (bench
-# loads only its CONCH v1.5 file). `bench` is put on the venv's path (no build step), then the CPU checks run:
-# unit tests and the synthetic end-to-end smoke (~1 min).
-#   CONDA_ENV=other BENCH_VENV=/path/to/venv ...     # other base env / overlay location (bench_env.sh reads both)
+# 1. conda env $CONDA_ENV (default bench): cloned from $SRC_ENV (default cellViT) if it does not exist yet,
+#    reused otherwise. cellViT itself is never modified.
+# 2. bench's packages (scripts/cluster/requirements-bench.txt) with pip, through the cluster's PyPI mirror;
+#    torch / torchvision / timm / numpy stay at the env's versions. No PyPI access at all: WHEELS=/path/to/wheels
+#    (from download_wheels.sh).
+# 3. TRIDENT with --no-deps (bench loads only its CONCH v1.5 model file). GitHub is blocked on the cluster, so
+#    build the wheel where GitHub works (e.g. the customapps client), at the commit in requirements-bench.txt:
+#      pip wheel --no-deps -w DIR "git+https://github.com/mahmoodlab/TRIDENT.git@<commit>"
+#    and pass TRIDENT=DIR/trident-0.3.2-py3-none-any.whl (read-only location is fine).
+# 4. `bench` on the env's path (no build step), then the CPU checks: unit tests + synthetic end-to-end smoke.
 set -eo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
-CONDA_ENV="${CONDA_ENV:-cellViT}"
-VENV="${BENCH_VENV:-$REPO_ROOT/.venv-bench}"
+SRC_ENV="${SRC_ENV:-cellViT}"
+CONDA_ENV="${CONDA_ENV:-bench}"
 REQ=scripts/cluster/requirements-bench.txt
-TRIDENT="$(sed -n 's/^# trident: //p' "$REQ")"
+TRIDENT_URL="$(sed -n 's/^# trident: //p' "$REQ")"
 
 set +e; source ~/.bashrc; set -e
+if conda env list | awk '{print $1}' | grep -x "$CONDA_ENV" >/dev/null; then
+    echo "== reusing conda env $CONDA_ENV"
+else
+    echo "== cloning conda env $SRC_ENV -> $CONDA_ENV"
+    conda create -y -n "$CONDA_ENV" --clone "$SRC_ENV"
+fi
 conda activate "$CONDA_ENV"
 PYVER="$(python -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-echo "== base: conda env $CONDA_ENV (Python $PYVER)"
-if [ ! -x "$VENV/bin/python" ]; then
-    echo "== creating overlay venv $VENV"
-    python -m venv --system-site-packages "$VENV"
-fi
-source "$VENV/bin/activate"
+echo "== $CONDA_PREFIX (Python $PYVER)"
 
 CONSTRAINTS="$(mktemp)"
 trap 'rm -f "$CONSTRAINTS"' EXIT
 python -m pip list --format=freeze 2>/dev/null | grep -iE '^(torch|torchvision|timm|numpy)==' > "$CONSTRAINTS" || true
-echo "== kept at the cellViT versions: $(tr '\n' ' ' < "$CONSTRAINTS")"
-
+echo "== kept at the env's versions: $(tr '\n' ' ' < "$CONSTRAINTS")"
+SRC=()
 if [ -n "${WHEELS:-}" ]; then
     SRC=(--no-index --find-links "$WHEELS")
-    TRI=("$WHEELS"/trident-*.whl)
-else
-    SRC=()
-    TRI=("$TRIDENT")
 fi
-echo "== installing bench's packages${WHEELS:+ from $WHEELS}"
+
+echo "== bench's packages${WHEELS:+ from $WHEELS}"
 if ! python -m pip install "${SRC[@]}" -c "$CONSTRAINTS" -r "$REQ"; then
-    echo "pip failed. Offline, the wheels must be for Python $PYVER:" \
-         "PYVER=$PYVER bash scripts/cluster/download_wheels.sh DIR" >&2
+    echo "pip failed (above). Without a PyPI mirror: PYVER=$PYVER bash scripts/cluster/download_wheels.sh DIR" \
+         "where there is internet, then WHEELS=DIR" >&2
     exit 1
 fi
-python -m pip install "${SRC[@]}" --no-deps "${TRI[@]}"
-echo "   (pip may say 'trident requires bioio, pyvips, ...': expected, bench uses only its CONCH v1.5 file)"
+echo "   (pip may list conflicts of cellViT-only packages, e.g. cellvit/pathopatch want pydantic<2: bench does not use them)"
 
-# bench itself: the repo on the venv's path + a `bench` launcher (no build step, works offline)
+TRI="${TRIDENT:-}"
+if [ -z "$TRI" ] && [ -n "${WHEELS:-}" ]; then
+    TRI="$(ls "$WHEELS"/trident-*.whl 2>/dev/null | head -1 || true)"
+fi
+if [ -n "$TRI" ]; then
+    echo "== TRIDENT from $TRI (--no-deps)"
+    python -m pip install "${SRC[@]}" --no-deps --force-reinstall "$TRI"
+elif python -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("trident") is None)'; then
+    echo "== TRIDENT already installed (pass TRIDENT=<wheel> to replace it)"
+else
+    echo "== TRIDENT from $TRIDENT_URL (--no-deps)"
+    if ! python -m pip install --no-deps "$TRIDENT_URL"; then
+        echo >&2
+        echo "TRIDENT: GitHub is not reachable from here. Where it is (e.g. the customapps client), run" >&2
+        echo "  pip wheel --no-deps -w DIR \"$TRIDENT_URL\"" >&2
+        echo "then rerun: TRIDENT=DIR/trident-0.3.2-py3-none-any.whl bash scripts/cluster/00_install.sh" >&2
+        exit 1
+    fi
+fi
+
+# bench itself: the repo on the env's path + a `bench` launcher (no build step)
 SITE="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 echo "$REPO_ROOT" > "$SITE/bench_repo.pth"
-printf '#!/bin/sh\nexec "%s" -m bench "$@"\n' "$VENV/bin/python" > "$VENV/bin/bench"
-chmod +x "$VENV/bin/bench"
+printf '#!/bin/sh\nexec "%s" -m bench "$@"\n' "$CONDA_PREFIX/bin/python" > "$CONDA_PREFIX/bin/bench"
+chmod +x "$CONDA_PREFIX/bin/bench"
 
 echo "== versions"
 python - <<'EOF'
@@ -72,7 +92,7 @@ EOF
 echo "== unit tests + synthetic end-to-end smoke (CPU)"
 if python -m pytest tests/bench; then
     echo
-    echo "install OK. Next: BENCH_ROOT and HF_HOME in .env, weights (download_weights.sh), then 01_weights.sh"
+    echo "install OK. Next: BENCH_ROOT and HF_HOME in .env, then bash scripts/cluster/01_weights.sh"
 else
     echo
     echo "install done, but tests FAILED (output above): send it to me before running anything else" >&2

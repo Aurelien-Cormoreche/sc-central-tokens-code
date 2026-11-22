@@ -22,23 +22,27 @@ HF_HOME=/path/to/hf_cache                              # HF cache with the weigh
 # optional: BENCH_WSI_MANIFEST=/path/to/wsi_manifest.csv  (dataset, converted, wsi_filename[, status])
 ```
 
-First run, with a cluster that has no internet but sees a client-filled folder read-only (e.g. customapps;
-`scripts/cluster/`, run from the repo root):
+First run, with a cluster that has no internet (but a PyPI mirror) and sees a client-filled folder read-only
+(e.g. customapps; `scripts/cluster/`, run from the repo root):
 
 ```bash
 # on the client WITH internet, writing into the folder the cluster reads:
 hf auth login                                          # once; accept the gated models' terms first
 bash scripts/cluster/download_weights.sh $HF_HOME      # `hf download` of the 6 checkpoints into $HF_HOME/hub
-bash scripts/cluster/download_wheels.sh  DIR_W         # Linux wheels of bench's packages + TRIDENT (~80 MB)
+pip wheel --no-deps -w DIR "git+https://github.com/mahmoodlab/TRIDENT.git@<commit in requirements-bench.txt>"
 
 # on the cluster:
-WHEELS=DIR_W bash scripts/cluster/00_install.sh  # once: overlay venv .venv-bench on top of cellViT (cellViT is
-                                                 #   not modified) + `bench`; runs the tests and the synthetic smoke
+TRIDENT=DIR/trident-0.3.2-py3-none-any.whl bash scripts/cluster/00_install.sh
+                                                 # conda env `bench` = clone of cellViT (cellViT is not modified)
+                                                 #   + bench's packages + `bench`; runs the tests and synthetic smoke
 bash   scripts/cluster/01_weights.sh             # offline: checks every weight file, records the snapshot shas
 sbatch scripts/cluster/02_prepare.sbatch         # CPU: inspect -> darkspots -> manifest for every slide
 sbatch scripts/cluster/03_smoke.sbatch           # 1 GPU: real smoke + parity + calibration (runs alongside 02)
 source scripts/cluster/bench_env.sh              # interactive shell: env + .env, then any `bench ...` command
 ```
+
+No PyPI mirror either: `bash scripts/cluster/download_wheels.sh DIR_W` where there is internet (it also builds
+the TRIDENT wheel), then `WHEELS=DIR_W bash scripts/cluster/00_install.sh`.
 
 bench never writes to `HF_HOME`: `bench_env.sh` sets `HF_HUB_OFFLINE=1` (set `HF_HUB_OFFLINE=0` in `.env` if
 the cluster has internet) and moves transformers' module cache (GenBio's remote code, by default

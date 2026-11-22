@@ -1,7 +1,7 @@
 #!/bin/bash
-# On a machine WITH internet (any OS, e.g. your laptop; needs python3 with pip, and git): Linux x86_64 wheels of
-# bench's extra packages (requirements-bench.txt) and of TRIDENT, so 00_install.sh can install them on the
-# cluster without internet.
+# Only for a cluster WITHOUT a PyPI mirror (with one, 00_install.sh needs just the TRIDENT wheel). On a machine
+# WITH internet (any OS; needs python3 with pip, and git): Linux x86_64 wheels of bench's extra packages
+# (requirements-bench.txt) and of TRIDENT, so 00_install.sh can install them on the cluster without internet.
 #
 #   bash scripts/cluster/download_wheels.sh /path/to/wheels
 #   PYVER=3.11 bash scripts/cluster/download_wheels.sh /path/to/wheels   # if cellViT is not Python 3.10

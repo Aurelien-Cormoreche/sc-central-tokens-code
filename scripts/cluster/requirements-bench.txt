@@ -1,12 +1,12 @@
-# bench's packages on top of the cellViT conda env (scripts/cluster/00_install.sh; download_wheels.sh fetches
-# them for an offline install). torch / torchvision / timm / numpy are kept at the cellViT versions.
+# bench's packages on top of a clone of the cellViT conda env (scripts/cluster/00_install.sh; download_wheels.sh
+# fetches them for clusters without a PyPI mirror). torch / torchvision / timm / numpy are kept at the cellViT versions.
 pydantic==2.11.7
 pyarrow==17.0.0
 tifffile==2024.8.30
 huggingface_hub==0.34.4
 transformers==4.57.1        # GenBio-PathFM remote code
 einops==0.8.1               # GenBio-PathFM remote code, CONCH v1.5
-scikit-misc==0.5.1          # seurat_v3 HVGs (deepspot_training.compute_hvgs)
+scikit-misc                 # seurat_v3 HVGs (deepspot_training.compute_hvgs); the env's version if present
 pytest==9.2.0
 # installed with --no-deps (bench loads only its CONCH v1.5 model file):
 # trident: git+https://github.com/mahmoodlab/TRIDENT.git@e38c9b65abb0862599dc88ad519562840538d22d
