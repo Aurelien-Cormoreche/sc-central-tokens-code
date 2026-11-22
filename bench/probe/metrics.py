@@ -6,9 +6,14 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from src.python.classifier_training.trainer import classification_metrics
 
 SCALARS = ("macro_f1_present", "macro_f1", "balanced_accuracy", "accuracy", "weighted_f1")
+
+
+def classification_metrics(*args, **kwargs):
+    # trainer imports torch: load it only when metrics are computed, not when reports import SCALARS
+    from src.python.classifier_training.trainer import classification_metrics as f
+    return f(*args, **kwargs)
 
 
 def slide_macro_f1(labels: np.ndarray, preds: np.ndarray, slides: np.ndarray, n_slides: int, k: int) -> np.ndarray:

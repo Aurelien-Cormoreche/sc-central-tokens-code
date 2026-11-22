@@ -37,7 +37,7 @@ def _main_root(cfg: BenchConfig) -> Path:
 
 
 def _bench_sizes(cfg: BenchConfig, model: str) -> List[int]:
-    from bench.models.encoders import round_to_patch
+    from bench.models.catalog import round_to_patch
     m = cfg.models[model]
     return sorted({m.input_px} | {round_to_patch(f, m.patch, cfg.stage2.round_to_patch) for f in cfg.stage2.fov_px})
 

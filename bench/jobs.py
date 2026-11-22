@@ -87,21 +87,38 @@ def get_status(cfg: BenchConfig, job: dict) -> Optional[dict]:
 
 # ── kinds ────────────────────────────────────────────────────────────────────
 
-def _kinds() -> Dict[str, dict]:
-    from bench.extract import worker
-    from bench.probe import run as probe_run
-    from bench.genexp import run as genexp_run
-    from bench.data import darkspots
-    return {
-        "extract": {"is_done": worker.job_done, "run_bin": worker.run_extract_bin},
-        "classify": {"is_done": probe_run.job_done, "run_bin": probe_run.run_probe_bin},
-        "genexp": {"is_done": genexp_run.job_done, "run_bin": genexp_run.run_genexp_bin},
-        "darkspots": {"is_done": darkspots.job_done, "run_bin": darkspots.run_darkspots_bin},
-    }
+def _done_check(kind: str) -> Callable:
+    """Is-done check of a job kind: file checks only, no torch (planning runs on login nodes)."""
+    if kind == "extract":
+        from bench.extract.planner import job_done
+    elif kind == "classify":
+        from bench.probe.run import job_done
+    elif kind == "genexp":
+        from bench.genexp.run import job_done
+    elif kind == "darkspots":
+        from bench.data.darkspots import job_done
+    else:
+        raise KeyError(f"unknown job kind {kind!r}")
+    return job_done
+
+
+def _runner(kind: str) -> Callable:
+    """Bin runner of a job kind (imports torch & co.; only in array tasks / --local)."""
+    if kind == "extract":
+        from bench.extract.worker import run_extract_bin as f
+    elif kind == "classify":
+        from bench.probe.run import run_probe_bin as f
+    elif kind == "genexp":
+        from bench.genexp.run import run_genexp_bin as f
+    elif kind == "darkspots":
+        from bench.data.darkspots import run_darkspots_bin as f
+    else:
+        raise KeyError(f"unknown job kind {kind!r}")
+    return f
 
 
 def is_done(cfg: BenchConfig, job: dict) -> bool:
-    return bool(_kinds()[job["kind"]]["is_done"](cfg, job))
+    return bool(_done_check(job["kind"])(cfg, job))
 
 
 # ── plans ────────────────────────────────────────────────────────────────────
@@ -177,7 +194,7 @@ def run_bin(cfg: BenchConfig, plan: dict, index: int, device: Optional[str] = No
         todo.append(j)
     if not todo:
         return 0
-    runner: Callable = _kinds()[todo[0]["kind"]]["run_bin"]
+    runner: Callable = _runner(todo[0]["kind"])
     failed = 0
     try:
         res = runner(cfg, todo, device)

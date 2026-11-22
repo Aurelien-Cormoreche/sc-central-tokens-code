@@ -76,8 +76,8 @@ def cmd_fetch_weights(cfg: BenchConfig, args) -> int:
     --dry-run: print the `hf download` commands only."""
     import os
     from datetime import datetime
-    from bench.models.encoders import (ENCODERS, cached_snapshot, hf_cache_dir, hf_download_command,
-                                       missing_weight_files, weight_spec)
+    from bench.models.catalog import (REPOS, cached_snapshot, hf_cache_dir, hf_download_command,
+                                      missing_weight_files, weight_spec)
     from bench.provenance import model_revisions
     from bench.utils import write_json
     offline = args.offline or os.environ.get("HF_HUB_OFFLINE", "").lower() in ("1", "true", "yes", "on")
@@ -85,10 +85,10 @@ def cmd_fetch_weights(cfg: BenchConfig, args) -> int:
     revs = dict(model_revisions(root))
     rows, todo = [], []
     for m in cfg.enabled_models(args.models):
-        if m not in ENCODERS or not getattr(ENCODERS[m], "repo", ""):
+        if m not in REPOS:
             continue
         mcfg = cfg.models[m]
-        repo, rev = ENCODERS[m].repo, mcfg.revision
+        repo, rev = REPOS[m], mcfg.revision
         files, _ = weight_spec(m, mcfg)
         cmd = hf_download_command(repo, rev, files)
         if args.dry_run:

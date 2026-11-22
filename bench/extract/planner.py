@@ -18,8 +18,8 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from bench.config import BenchConfig
-from bench.extract.store import embeddings_path
-from bench.models.encoders import round_to_patch
+from bench.extract.store import embeddings_path, is_valid
+from bench.models.catalog import round_to_patch
 from bench.registry import Slide, stage2_slides
 from bench.utils import read_json
 
@@ -136,3 +136,12 @@ def plan_jobs(cfg: BenchConfig, stage: str, models: List[str], slides: List[Slid
                     "out": str(embeddings_path(cfg.root, stage, model, variant, s.slide)),
                 })
     return jobs
+
+
+def job_done(cfg: BenchConfig, job: dict) -> bool:
+    """Output valid: complete, row count and manifest hash match (torch-free: used by planning on login nodes)."""
+    try:
+        rows, h = expected(cfg, job["stage"], job["slide"])
+    except (KeyError, SystemExit):
+        return False
+    return is_valid(Path(job["out"]), rows, h, tuple(job["readouts"]))[0]

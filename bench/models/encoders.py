@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import re
 from functools import partial
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
@@ -29,6 +28,7 @@ import torch
 import torch.nn as nn
 
 from bench.config import ModelCfg
+from bench.models.catalog import REPOS
 from bench.models.readouts import central_flat
 
 IMAGENET = ((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
@@ -141,7 +141,8 @@ class _Timm(Encoder):
 
 
 class UNI2(_Timm):
-    name, repo = "uni2", "MahmoodLab/UNI2-h"
+    name = "uni2"
+    repo = REPOS[name]
 
     def card_kwargs(self) -> dict:
         import timm
@@ -156,7 +157,8 @@ class UNI2(_Timm):
 
 
 class Virchow2(_Timm):
-    name, repo = "virchow2", "paige-ai/Virchow2"
+    name = "virchow2"
+    repo = REPOS[name]
 
     def card_kwargs(self) -> dict:
         import timm
@@ -176,7 +178,8 @@ class Virchow2(_Timm):
 
 
 class HOptimus1(_Timm):
-    name, repo = "hoptimus1", "bioptimus/H-optimus-1"
+    name = "hoptimus1"
+    repo = REPOS[name]
     mean, std = (0.707223, 0.578729, 0.703617), (0.211883, 0.230117, 0.177517)
 
     def card_kwargs(self) -> dict:
@@ -210,7 +213,8 @@ def trident_conchv15():
 
 
 class Conch15(Encoder):
-    name, repo = "conch15", "MahmoodLab/conchv1_5"
+    name = "conch15"
+    repo = REPOS[name]
 
     def build(self) -> nn.Module:
         # = TRIDENT's conchv1_5.create_model_from_pretrained without its torchvision eval transform
@@ -232,7 +236,8 @@ class Conch15(Encoder):
 # ── LEMON ──
 
 class Lemon(Encoder):
-    name, repo = "lemon", "aliceblondel/LEMON"
+    name = "lemon"
+    repo = REPOS[name]
 
     def __init__(self, mcfg: ModelCfg, input_px: int, device: str = "cuda", precision: str = "bf16"):
         from huggingface_hub import hf_hub_download
@@ -284,7 +289,8 @@ class Lemon(Encoder):
 # ── GenBio-PathFM ──
 
 class GenBio(Encoder):
-    name, repo = "genbio", "genbio-ai/genbio-pathfm"
+    name = "genbio"
+    repo = REPOS[name]
     mean, std = (0.697, 0.575, 0.728), (0.188, 0.240, 0.187)
 
     def build(self) -> nn.Module:
@@ -319,61 +325,9 @@ class Tiny(Encoder):
 ENCODERS = {c.name: c for c in (UNI2, Conch15, Virchow2, HOptimus1, Lemon, GenBio, Tiny)}
 
 
-
-# ── weights in the local Hugging Face cache (`bench fetch-weights`) ──
-
-def weight_spec(name: str, mcfg: ModelCfg) -> Tuple[Optional[list], list]:
-    """(files to download, None = the whole repo; files the loaders above read, each a tuple of alternatives).
-    timm models read config.json plus model.safetensors or pytorch_model.bin."""
-    if name == "conch15":
-        return ["pytorch_model_vision.bin"], [("pytorch_model_vision.bin",)]
-    if name == "lemon":
-        f = f"lemon_{mcfg.arch or 'vits8'}.pth.tar"
-        return ["mean_std.json", f], [("mean_std.json",), (f,)]
-    if name == "genbio":
-        return None, [("config.json",), ("*.safetensors", "*.bin")]
-    return None, [("config.json",), ("model.safetensors", "pytorch_model.bin")]
-
-
-def hf_cache_dir() -> Path:
-    from huggingface_hub import constants
-    return Path(constants.HF_HUB_CACHE)          # $HF_HUB_CACHE, else $HF_HOME/hub
-
-
-def cached_snapshot(repo: str, revision: Optional[str] = None) -> Optional[Path]:
-    """Snapshot folder of `repo` in the local cache, without network: the commit `revision` if it is a sha,
-    else the ref `revision` (default main), else -- no revision and no ref -- the only snapshot there is."""
-    d = hf_cache_dir() / f"models--{repo.replace('/', '--')}"
-    snaps = d / "snapshots"
-    if revision and re.fullmatch(r"[0-9a-f]{40}", revision):
-        return snaps / revision if (snaps / revision).is_dir() else None
-    ref = d / "refs" / (revision or "main")
-    if ref.is_file():
-        p = snaps / ref.read_text().strip()
-        return p if p.is_dir() else None
-    found = [p for p in snaps.iterdir() if p.is_dir()] if snaps.is_dir() and not revision else []
-    return found[0] if len(found) == 1 else None
-
-
-def missing_weight_files(name: str, mcfg: ModelCfg, snap: Optional[Path]) -> list:
-    """Required files absent from `snap` (a broken symlink, e.g. from an incomplete copy, counts as absent)."""
-    if snap is None:
-        return ["not in the cache (or several snapshots and no refs/main: pin models.<name>.revision)"]
-    _, req = weight_spec(name, mcfg)
-    return [" or ".join(alts) for alts in req if not any(f.exists() for a in alts for f in snap.glob(a))]
-
-
-def hf_download_command(repo: str, revision: Optional[str], files: Optional[list]) -> str:
-    return " ".join(["hf", "download", repo, *(files or [])] + (["--revision", revision] if revision else []))
-
 def build_encoder(name: str, mcfg: ModelCfg, input_px: Optional[int] = None, device: str = "cuda",
                   precision: str = "bf16") -> Encoder:
     if name not in ENCODERS:
         raise KeyError(f"no encoder named {name!r} (known: {', '.join(ENCODERS)})")
     return ENCODERS[name](mcfg, input_px or mcfg.input_px, device, precision).load()
 
-
-def round_to_patch(px: int, patch: int, mode: str = "up") -> int:
-    import math
-    f = {"up": math.ceil, "down": math.floor, "nearest": round}[mode]
-    return max(1, int(f(px / patch))) * patch

@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from bench.data.regions import crop_origins, emission_order, plan_regions
-from bench.models.encoders import round_to_patch
+from bench.models.catalog import round_to_patch
 from bench.models.readouts import central_flat, central_pixel_box, central_tokens, nearest_2x2_flat
 
 # stage 1 (model input sizes) + stage 2a sizes after rounding up to the patch

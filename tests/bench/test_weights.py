@@ -6,7 +6,7 @@ import pytest
 
 from bench import cli
 from bench.config import ModelCfg
-from bench.models.encoders import cached_snapshot, hf_download_command, missing_weight_files, weight_spec
+from bench.models.catalog import REPOS, cached_snapshot, hf_download_command, missing_weight_files, weight_spec
 
 SHA = "a" * 40
 
@@ -88,10 +88,9 @@ def test_cli_offline_records_shas(cache, tmp_path, monkeypatch, capsys):
 def test_download_script_matches_weight_spec():
     """scripts/cluster/download_weights.sh fetches exactly what the loaders read."""
     from bench import REPO
-    from bench.models.encoders import ENCODERS
     text = (REPO / "scripts" / "cluster" / "download_weights.sh").read_text()
     lines = [" ".join(ln.split("--cache-dir")[0].split()) for ln in text.splitlines() if ln.startswith("hf download")]
     cfg = {"lemon": ModelCfg(input_px=40, patch=8, arch="vits8")}
-    expected = [hf_download_command(ENCODERS[m].repo, None, weight_spec(m, cfg.get(m, ModelCfg(input_px=224, patch=14)))[0])
+    expected = [hf_download_command(REPOS[m], None, weight_spec(m, cfg.get(m, ModelCfg(input_px=224, patch=14)))[0])
                 for m in ("uni2", "virchow2", "hoptimus1", "conch15", "lemon", "genbio")]
     assert lines == expected

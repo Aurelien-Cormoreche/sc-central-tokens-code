@@ -23,20 +23,14 @@ from bench.config import BenchConfig
 from bench.data.reader import WSIReader
 from bench.data.regions import crop_origins, emission_order, plan_regions
 from bench.extract import planner
-from bench.extract.store import H5Writer, is_valid
+from bench.extract.store import H5Writer
 from bench.models.encoders import Encoder, build_encoder
 from bench.models.readouts import nearest_2x2_flat
 from bench.provenance import git_state, package_versions
 from bench.utils import LOG, fmt_hours
 
 
-def job_done(cfg: BenchConfig, job: dict) -> bool:
-    try:
-        rows, h = planner.expected(cfg, job["stage"], job["slide"])
-    except (KeyError, SystemExit):
-        return False
-    from pathlib import Path
-    return is_valid(Path(job["out"]), rows, h, tuple(job["readouts"]))[0]
+job_done = planner.job_done
 
 
 # ── data loading ──
