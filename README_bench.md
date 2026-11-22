@@ -33,8 +33,10 @@ pip wheel --no-deps -w DIR "git+https://github.com/mahmoodlab/TRIDENT.git@<commi
 
 # on the cluster:
 TRIDENT=DIR/trident-0.3.2-py3-none-any.whl bash scripts/cluster/00_install.sh
-                                                 # conda env `bench` = clone of cellViT (cellViT is not modified)
-                                                 #   + bench's packages + `bench`; runs the tests and synthetic smoke
+                                                 # login node: conda env `bench` = clone of cellViT (cellViT is
+                                                 #   not modified) + bench's packages + `bench`
+sbatch scripts/cluster/00_check.sbatch           # CPU node: versions, unit tests, synthetic end-to-end smoke
+                                                 #   (torch's CUDA libraries do not load on login nodes)
 bash   scripts/cluster/01_weights.sh             # offline: checks every weight file, records the snapshot shas
 sbatch scripts/cluster/02_prepare.sbatch         # CPU: inspect -> darkspots -> manifest for every slide
 sbatch scripts/cluster/03_smoke.sbatch           # 1 GPU: real smoke + parity + calibration (runs alongside 02)

@@ -11,7 +11,7 @@
 #    build the wheel where GitHub works (e.g. the customapps client), at the commit in requirements-bench.txt:
 #      pip wheel --no-deps -w DIR "git+https://github.com/mahmoodlab/TRIDENT.git@<commit>"
 #    and pass TRIDENT=DIR/trident-0.3.2-py3-none-any.whl (read-only location is fine).
-# 4. `bench` on the env's path (no build step), then the CPU checks: unit tests + synthetic end-to-end smoke.
+# 4. `bench` on the env's path (no build step). The checks run on a compute node: sbatch scripts/cluster/00_check.sbatch
 set -eo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
@@ -74,27 +74,6 @@ echo "$REPO_ROOT" > "$SITE/bench_repo.pth"
 printf '#!/bin/sh\nexec "%s" -m bench "$@"\n' "$CONDA_PREFIX/bin/python" > "$CONDA_PREFIX/bin/bench"
 chmod +x "$CONDA_PREFIX/bin/bench"
 
-echo "== versions"
-python - <<'EOF'
-import importlib
-for m in ["torch", "timm", "numpy", "transformers", "huggingface_hub", "openslide", "tifffile", "pyarrow",
-          "pydantic", "einops", "lightning", "deepspot", "skmisc", "bench"]:
-    try:
-        mod = importlib.import_module(m)
-        print(f"  {m:16s} {getattr(mod, '__version__', 'ok')}")
-    except Exception as e:
-        print(f"  {m:16s} MISSING ({type(e).__name__}: {e})")
-from bench.models.encoders import trident_conchv15
-trident_conchv15()
-print("  trident          ok (CONCH v1.5 model file)")
-EOF
-
-echo "== unit tests + synthetic end-to-end smoke (CPU)"
-if python -m pytest tests/bench; then
-    echo
-    echo "install OK. Next: BENCH_ROOT and HF_HOME in .env, then bash scripts/cluster/01_weights.sh"
-else
-    echo
-    echo "install done, but tests FAILED (output above): send it to me before running anything else" >&2
-    exit 1
-fi
+echo
+echo "install done. Checks (they import torch, whose CUDA libraries do not load on login nodes):"
+echo "  sbatch scripts/cluster/00_check.sbatch"
