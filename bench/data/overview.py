@@ -6,6 +6,7 @@ problems (red when above a threshold):
   outside image   cells whose centroid falls outside the image             (> 0.5%: coordinates / wrong file)
   on glass        cells on background (overview pixel min RGB >= 235)      (> 5%: registration off)
   on black        cells on black / no-data (overview pixel max RGB <= 20)  (> 0.5%: missing tiles)
+  unreadable      share of the image in tiles that cannot be decoded (blue; > 0: corrupt tiles)
   black area      share of the image that is black / no-data
 The overview is block-averaged from the best pyramid level; single-level files (the converted copies) are
 read in full, in strips (minutes for the largest), so run it on a compute node with --workers.
@@ -22,14 +23,27 @@ import numpy as np
 
 CELL_RGB = (0, 200, 255)
 STRIP_BYTES = 128 * 2**20
-LIMITS = {"outside_pct": 0.5, "on_glass_pct": 5.0, "on_black_pct": 0.5}
+LIMITS = {"outside_pct": 0.5, "on_glass_pct": 5.0, "on_black_pct": 0.5, "unreadable_pct": 0.0}
+BAD_RGB = (30, 60, 220)                 # unreadable, as in the dark-spot review images
+SUB_PX = 512                            # a failed strip is re-read in blocks of about this size
 
 
 def downscaled(path: str, max_side: int):
-    """(H x W x 3 uint8 overview, level-0 (W, H), level-0 px -> overview px factor, level, block)."""
+    """(H x W x 3 uint8 overview, level-0 (W, H), level-0 px -> overview px factor, level, block, unreadable
+    mask). A strip that fails to decode is re-read in ~SUB_PX blocks after reopening the slide (OpenSlide
+    stays in an error state after a failed read); blocks that still fail are painted BAD_RGB."""
     import openslide
-    sl = openslide.OpenSlide(str(path))
+    state = {"sl": openslide.OpenSlide(str(path))}
+
+    def reopen():
+        try:
+            state["sl"].close()
+        except Exception:
+            pass
+        state["sl"] = openslide.OpenSlide(str(path))
+
     try:
+        sl = state["sl"]
         W, H = sl.dimensions
         level = sl.get_best_level_for_downsample(max(1.0, max(W, H) / max_side))
         ds = float(sl.level_downsamples[level])
@@ -37,17 +51,37 @@ def downscaled(path: str, max_side: int):
         g = max(1, math.ceil(max(lw, lh) / max_side))          # integer block size at that level
         tw, th = lw // g, lh // g
         out = np.empty((th, tw, 3), np.uint8)
-        rows = max(g, (STRIP_BYTES // max(lw * 4, 1)) // g * g)
-        for y0 in range(0, th * g, rows):
-            h = min(rows, th * g - y0)
-            a = np.asarray(sl.read_region((0, int(round(y0 * ds))), level, (tw * g, h)))
+        bad = np.zeros((th, tw), bool)
+
+        def fill(x0, y0, w, h):                                # level px, all multiples of g
+            a = np.asarray(state["sl"].read_region((int(round(x0 * ds)), int(round(y0 * ds))), level, (w, h)))
             rgb = a[..., :3].copy()
             rgb[a[..., 3] == 0] = 255                          # transparent = not scanned: white, as extraction
-            blk = rgb.reshape(h // g, g, tw, g, 3).sum(axis=(1, 3), dtype=np.uint32)
-            out[y0 // g: (y0 + h) // g] = (blk // (g * g)).astype(np.uint8)
-        return out, (W, H), 1.0 / (ds * g), level, g
+            blk = rgb.reshape(h // g, g, w // g, g, 3).sum(axis=(1, 3), dtype=np.uint32)
+            out[y0 // g: (y0 + h) // g, x0 // g: (x0 + w) // g] = (blk // (g * g)).astype(np.uint8)
+
+        rows = max(g, (STRIP_BYTES // max(lw * 4, 1)) // g * g)
+        sb = max(g, (SUB_PX // g) * g)
+        for y0 in range(0, th * g, rows):
+            h = min(rows, th * g - y0)
+            try:
+                fill(0, y0, tw * g, h)
+                continue
+            except openslide.OpenSlideError:
+                reopen()
+            for yy in range(y0, y0 + h, sb):
+                hh = min(sb, y0 + h - yy)
+                for xx in range(0, tw * g, sb):
+                    ww = min(sb, tw * g - xx)
+                    try:
+                        fill(xx, yy, ww, hh)
+                    except openslide.OpenSlideError:
+                        reopen()
+                        out[yy // g: (yy + hh) // g, xx // g: (xx + ww) // g] = BAD_RGB
+                        bad[yy // g: (yy + hh) // g, xx // g: (xx + ww) // g] = True
+        return out, (W, H), 1.0 / (ds * g), level, g, bad
     finally:
-        sl.close()
+        state["sl"].close()
 
 
 def slide_page(cfg, row: dict, max_side: int):
@@ -56,7 +90,7 @@ def slide_page(cfg, row: dict, max_side: int):
     from bench.data.crop_sheet import _font, _num
     from bench.data.darkspots import load_coords
 
-    thumb, (W, H), k, level, g = downscaled(row["wsi_path"], max_side)
+    thumb, (W, H), k, level, g, bad = downscaled(row["wsi_path"], max_side)
     th, tw = thumb.shape[:2]
     stats = {"slide": row["slide"], "cohort": row.get("cohort", ""), "width": W, "height": H}
     right = thumb.copy()
@@ -75,6 +109,7 @@ def slide_page(cfg, row: dict, max_side: int):
                      on_glass_pct=100.0 * float((px.min(1) >= 235).mean()) if len(px) else 0.0,
                      on_black_pct=100.0 * float((px.max(1) <= 20).mean()) if len(px) else 0.0)
         right[ty[ok], tx[ok]] = CELL_RGB
+    stats["unreadable_pct"] = 100.0 * float(bad.mean())
     stats["black_area_pct"] = 100.0 * float((thumb.max(2) <= 20).mean())
 
     gap, head, foot = 16, 86, 22
@@ -88,7 +123,8 @@ def slide_page(cfg, row: dict, max_side: int):
                      f"overview: level {level}, 1 px = {1 / k:.0f} slide px", fill="black", font=f_small)
     x = 10
     items = [("cells", f"{stats.get('n_cells', 0):,}", False)]
-    for key, label in (("outside_pct", "outside image"), ("on_glass_pct", "on glass"), ("on_black_pct", "on black")):
+    for key, label in (("outside_pct", "outside image"), ("on_glass_pct", "on glass"), ("on_black_pct", "on black"),
+                       ("unreadable_pct", "unreadable (blue)")):
         if key in stats:
             items.append((label, f"{stats[key]:.2f}%", stats[key] > LIMITS[key]))
     items.append(("black area", f"{stats['black_area_pct']:.2f}%", False))
