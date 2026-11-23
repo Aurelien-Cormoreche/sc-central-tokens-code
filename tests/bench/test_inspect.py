@@ -1,5 +1,6 @@
-"""bench inspect's pixel-size sources (file > raw original of a converted copy > alignment matrix > metadata) and
-when a missing / disagreeing one stops the pipeline (only with resampling on)."""
+"""bench inspect's pixel-size sources (file > raw original of a converted copy > alignment matrix, except that the
+alignment wins over a header that disagrees with it; metadata is a cross-check) and when a missing / disagreeing
+one stops the pipeline (only with resampling on)."""
 import h5py
 import numpy as np
 import pytest
@@ -67,8 +68,12 @@ def test_alignment_matrix_scale(tmp_path):
 def test_file_mpp_cross_checked_against_alignment(env):
     r = env("a", raw={"mpp": 0.2738}, align=(0.2738,))
     assert r["status"] == "ok" and r["mpp_source"] in ("openslide", "tiff_cm") and r["mpp"] == pytest.approx(0.2738, rel=1e-4)
+    # a header that disagrees with the alignment loses: alignment used, header reported (MCCORD)
     r = env("b", raw={"mpp": 0.2738}, align=(0.3638,))
-    assert r["mpp_status"] == "mpp_mismatch" and "alignment 0.36380" in r["mpp_error"]
+    assert r["mpp_source"] == "alignment" and r["mpp"] == pytest.approx(0.3638)
+    assert r["mpp_status"] == "mpp_mismatch" and "0.27380" in r["mpp_error"] and "alignment used" in r["mpp_note"]
+    r = env("b2", conv={}, raw={"ome_mpp": 0.6085}, align=(0.7582,))
+    assert r["mpp_source"] == "alignment" and r["mpp"] == pytest.approx(0.7582) and "raw:ome" in r["mpp_error"]
 
 
 def test_converted_copy_takes_raw_originals_pixel_size(env):
@@ -116,3 +121,10 @@ def test_metadata_is_a_cross_check_never_the_value(env):
     r = env("n", conv={}, align=(0.2125,), meta=0.08625)
     assert r["mpp_source"] == "alignment" and r["mpp"] == pytest.approx(0.2125)
     assert r["mpp_status"] == "mpp_mismatch" and "xenium_metadata 0.08625" in r["mpp_error"]
+
+
+def test_metadata_disagreement_is_a_note_when_header_and_alignment_agree(env):
+    # SPLIT Zeiss crop: raw OME 0.2145, alignment 0.2125, GEO original 0.08625 in xenium_metadata
+    r = env("o", conv={}, raw={"ome_mpp": 0.2145}, align=(0.2125,), meta=0.08625)
+    assert r["mpp_source"] == "raw:ome" and r["mpp"] == pytest.approx(0.2145)
+    assert r["mpp_status"] == "ok" and "xenium_metadata 0.08625" in r["mpp_note"]

@@ -8,9 +8,14 @@ Pixel size, first source that has one (column mpp_source):
                   paths.wsi_raw, read with tifffile, used only when its level-0 size equals the copy's
   alignment       the Xenium<->H&E affine ({paths.alignment}/{slide}_he_imagealignment.csv, H&E px ->
                   Xenium morphology px): 0.2125 um x sqrt(|det|) -- the registration the cell coordinates use
+Except: when a file header (file or raw original) disagrees with the alignment, the alignment is used and the
+header is reported. The alignment is measured on this very image against Xenium's calibrated pixel; a header
+is whatever the scanner or converter wrote (MCCORD raw OME headers 0.32-0.72 um/px, where the alignments give
+exactly the Keyence BZ-X810's 0.375 / 0.755 for 20x / 10x).
 Every other source that has a value is a cross-check (mpp_mismatch_tol), and so is he_pixel_size_um in
 xenium_metadata.csv, which is never used as the value: it describes the original public download, and the file
-bench reads may be a resampled crop of it (the SPLIT crops: GEO originals 0.08625, crops ~0.21 um/px).
+bench reads may be a resampled crop of it (the SPLIT crops: GEO originals 0.08625, crops ~0.2145 um/px). A
+metadata disagreement is only a note when the header and the alignment agree with each other.
 
 Writes {bench_root}/manifest/slides_inspect.parquet (+ .csv). Stops (non-zero exit) when a slide has no
 readable WSI or no coordinates. An unknown or disagreeing pixel size (column mpp_status) stops it only when
@@ -255,10 +260,24 @@ def _inspect_one(cfg: BenchConfig, s: Slide, manifest: dict, meta: dict) -> dict
             cands.append(("alignment", ampp))
         except Exception as e:
             notes.append(f"alignment matrix {ap}: {type(e).__name__}: {e}")
+    align = dict(cands).get("alignment")
+    confirmed = False                  # a header and the alignment agree
+    if cands and cands[0][0] != "alignment" and align is not None:
+        hsrc, hmpp = cands[0]
+        if abs(hmpp - align) / align > tol:                 # a header that disagrees with the registration
+            cands.insert(0, cands.pop([k for k, _ in cands].index("alignment")))
+            notes.append(f"{hsrc} header {hmpp:.5f} disagrees with the alignment: alignment used")
+        else:
+            confirmed = True
     if s.slide in cfg.mpp_overrides:
         cands.insert(0, ("override", float(cfg.mpp_overrides[s.slide])))
     src, mpp = cands[0] if cands else ("none", None)
-    checks = cands[1:] + ([("xenium_metadata", meta_mpp)] if meta_mpp else [])
+    checks = cands[1:]
+    if meta_mpp and mpp is not None and confirmed and src != "override" and abs(meta_mpp - mpp) / mpp > tol:
+        notes.append(f"xenium_metadata {meta_mpp:.5f} disagrees (it describes the original download; "
+                     f"header and alignment agree on this file)")
+    elif meta_mpp:
+        checks.append(("xenium_metadata", meta_mpp))
     row.update(mpp=mpp, mpp_source=src, mpp_note="; ".join(notes), mpp_status="ok", mpp_error="")
     if mpp is None:
         hint = f" (xenium_metadata has {meta_mpp:.5f} for the original download, not necessarily this file)" \
