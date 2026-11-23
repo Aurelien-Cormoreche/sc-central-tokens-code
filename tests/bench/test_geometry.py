@@ -66,3 +66,17 @@ def test_regions_cover_every_cell_once():
         assert np.all(r.dx >= 0) and np.all(r.dy >= 0)
         assert np.all(r.dx + 224 <= r.w) and np.all(r.dy + 224 <= r.h)
         assert np.array_equal(ox[r.cells] - r.x0, r.dx)
+
+
+def test_normalized_batch_is_contiguous_nchw():
+    """GenBio's forward does pixel_values.view(b * 3, 1, h, w): the batch must be standard NCHW in memory."""
+    import torch
+    from bench.config import ModelCfg
+    from bench.models.encoders import Encoder
+    enc = Encoder(ModelCfg(input_px=32, patch=8), 32, device="cpu")
+    crops = torch.randint(0, 256, (4, 32, 32, 3), dtype=torch.uint8)
+    x = enc.normalize(crops)
+    assert x.shape == (4, 3, 32, 32) and x.is_contiguous()
+    assert x.view(12, 1, 32, 32).shape == (12, 1, 32, 32)
+    ref = (crops.permute(0, 3, 1, 2).float() / 255 - enc._mean) / enc._std
+    assert torch.allclose(x, ref)

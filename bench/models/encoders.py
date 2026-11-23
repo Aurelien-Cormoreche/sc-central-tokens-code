@@ -79,8 +79,11 @@ class Encoder:
         return self
 
     def normalize(self, crops_uint8: torch.Tensor) -> torch.Tensor:
+        """(B, N, N, 3) uint8 -> (B, 3, N, N) float, contiguous (standard NCHW layout, as the model cards'
+        preprocessing gives; after the permute it would stay channels-last in memory, and GenBio's
+        forward does pixel_values.view(b * 3, 1, h, w), which fails on that)."""
         x = crops_uint8.permute(0, 3, 1, 2).float().div_(255.0)
-        return (x - self._mean) / self._std
+        return ((x - self._mean) / self._std).contiguous()
 
     def autocast(self):
         if self.precision == "fp32":
