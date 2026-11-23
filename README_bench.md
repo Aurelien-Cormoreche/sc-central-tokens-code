@@ -67,7 +67,8 @@ bench fetch-weights --offline      # weights already in $HF_HOME/hub (download_w
 bench inspect                      # slide table: WSI path, size, pixel size, scale -> $BENCH_ROOT/manifest/slides_inspect.csv
                                    #   pixel size: override > file > raw original (converted copies) > alignment
                                    #   matrix > xenium_metadata; the other sources are cross-checks. Stops on a missing
-                                   #   file / unknown or disagreeing pixel size (fix: mpp_overrides)
+                                   #   file or coordinates. Unknown / disagreeing pixel sizes are printed as NOTE
+                                   #   (slides are used at their stored resolution, so the value is only reported)
 bench darkspots                    # CPU array: black / no-data / unreadable block maps
                                    #   review $BENCH_ROOT/darkspots/*.png (red = dark, blue = unreadable, grey = scanned)
 bench manifest                     # global cell manifest + per-cohort drop counts (unknown label, border, dark spot)
@@ -158,8 +159,10 @@ hardware and model revisions.
 ## Definitions
 
 - **Geometry.**
-  - Slides finer than 0.2 µm/px (SPLIT-Zeiss 0.086, three 10X slides at 0.137) are area-resampled to
-    0.25 µm/px. All other slides are used as stored.
+  - Every slide is used at its stored pixel size (`resolution.resample_below_mpp: null`) and every model at its
+    native input size in px, so the field of view in µm varies per slide: a 224-px crop is 19 µm on SPLIT-Zeiss
+    (0.086 µm/px), 31 µm at 0.137, 48 µm on VANNAN, 61 µm on most 10X, 113 µm on JOHNSON.
+    `resample_below_mpp: 0.2` would instead area-resample finer slides to `target_mpp` (0.25).
   - The crop is centred on the Xenium centroid, `patch_coordinates` `x_start + 112`. Its origin is
     `floor(e + 0.5) − N/2` in extraction pixels.
   - Crops come from tile-aligned region reads. They are pixel-identical to direct reads; after resampling they

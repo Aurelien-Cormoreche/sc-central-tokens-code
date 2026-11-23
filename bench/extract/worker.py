@@ -173,12 +173,21 @@ def extract_slide(cfg: BenchConfig, enc: Encoder, job: dict, row: dict, max_cell
             "regions": len(regions)}
 
 
+def _num(v) -> float:
+    """float, NaN for a missing value (unknown pixel size)."""
+    try:
+        return float(v) if v is not None else float("nan")
+    except (TypeError, ValueError):
+        return float("nan")
+
+
 def _attrs(cfg, enc: Encoder, job, row, mhash, secs, n) -> dict:
     g = git_state()
     return {
         "model": job["model"], "revision": str(enc.revision or ""), "stage": job["stage"], "variant": job["variant"],
         "slide": job["slide"], "input_px": enc.input_px, "patch": enc.patch, "grid": enc.grid,
-        "scale": float(row["scale"]), "native_mpp": float(row["mpp"]), "extraction_mpp": float(row["mpp"]) / float(row["scale"]),
+        "scale": float(row["scale"]), "native_mpp": _num(row.get("mpp")),
+        "extraction_mpp": _num(row.get("mpp")) / float(row["scale"]), "mpp_source": str(row.get("mpp_source") or ""),
         "readouts": list(job["readouts"]), "precision": enc.precision,
         "readout_cls": "model-card standard embedding",
         "readout_central": ("mean of the 2x2 tokens nearest each cell in its multicell tile" if job["multicell"]

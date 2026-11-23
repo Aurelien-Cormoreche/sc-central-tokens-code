@@ -394,6 +394,8 @@ def make_synthetic(work: Path, seed: int = 0) -> Path:
         "paths": {"bench_root": str(root), "wsi_raw": str(wsi), "wsi_converted": str(work / "wsi_converted"),
                   "xenium_processed": str(xen)},
         "slides_csv": str(work / "slides.csv"), "cohorts": ["A", "B"], "mapping": "simplified_broad",
+        # resampling on here (bench.yaml has it off) so the resampled path (B_s2 at 0.125 um/px) stays tested
+        "resolution": {"resample_below_mpp": 0.2, "target_mpp": 0.25},
         "filters": {"linf_px": 24, "border_px": 40, "block_px": 16, "scan_tile_px": 512},
         "models": {"tiny": {"input_px": 32, "patch": 8, "batch_size": 64, "cells_per_s": 400}},
         "extract": {"region_px": 512, "num_workers": 0, "slide_overhead_s": 1, "bin_overhead_s": 1},

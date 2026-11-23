@@ -1,7 +1,7 @@
 """Level-0 WSI region reads in extraction space.
 
-Extraction space = native level-0 pixels scaled by s (s < 1 only for slides finer than
-resolution.resample_below_mpp, which are area-resampled to resolution.target_mpp). Extraction
+Extraction space = native level-0 pixels scaled by s (s = 1 unless resolution.resample_below_mpp is set;
+then slides finer than it are area-resampled to resolution.target_mpp, s < 1). Extraction
 pixel i covers native [i/s, (i+1)/s). With s == 1 a read is a plain level-0 read_region, so a
 crop taken from a region is pixel-identical to reading that crop directly.
 
@@ -124,5 +124,8 @@ class WSIReader:
         return np.asarray(img.resize((w, h), resample=Image.BOX, box=box))
 
 
-def scale_for(mpp: float, resample_below: float, target: float) -> float:
+def scale_for(mpp: Optional[float], resample_below: Optional[float], target: float) -> float:
+    """Extraction scale s: 1 (stored resolution) unless resampling is on and the slide is finer than resample_below."""
+    if resample_below is None or mpp is None or not math.isfinite(mpp):
+        return 1.0
     return mpp / target if mpp < resample_below else 1.0

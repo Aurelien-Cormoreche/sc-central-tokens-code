@@ -95,9 +95,16 @@ class Geometry(_Strict):
 
 
 class Resolution(_Strict):
-    resample_below_mpp: float = 0.2
+    # null = every slide is used at its stored pixel size; the pixel size is then informational only (inspect
+    # reports unknown / disagreeing values but does not stop on them). A number: slides finer than it are
+    # area-resampled to target_mpp.
+    resample_below_mpp: Optional[float] = None
     target_mpp: float = 0.25
-    mpp_mismatch_tol: float = 0.05     # relative tolerance file MPP vs xenium_metadata.csv
+    mpp_mismatch_tol: float = 0.05     # relative tolerance between the pixel-size sources (bench inspect)
+
+    @property
+    def resampling(self) -> bool:
+        return self.resample_below_mpp is not None
 
 
 class Filters(_Strict):

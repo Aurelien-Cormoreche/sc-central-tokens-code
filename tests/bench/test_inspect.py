@@ -1,4 +1,5 @@
-"""bench inspect's pixel-size sources: file > raw original of a converted copy > alignment matrix > metadata."""
+"""bench inspect's pixel-size sources (file > raw original of a converted copy > alignment matrix > metadata) and
+when a missing / disagreeing one stops the pipeline (only with resampling on)."""
 import h5py
 import numpy as np
 import pytest
@@ -39,7 +40,7 @@ def env(tmp_path):
                                            "wsi_converted": str(d["conv"]), "xenium_processed": str(d["xen"]),
                                            "alignment": str(d["align"]), "wsi_manifest": None}})
 
-    def slide(name, conv=None, raw=None, align=None, override=None):
+    def slide(name, conv=None, raw=None, align=None, override=None, resample=None):
         (d["xen"] / name).mkdir()
         with h5py.File(d["xen"] / name / "patch_coordinates.h5", "w") as f:
             f["cell_id"] = np.arange(3)
@@ -50,6 +51,8 @@ def env(tmp_path):
         if align is not None:
             _align(d["align"] / f"{name}_he_imagealignment.csv", *align)
         c = cfg if override is None else cfg.model_copy(update={"mpp_overrides": {name: override}})
+        if resample is not None:
+            c = c.model_copy(update={"resolution": c.resolution.model_copy(update={"resample_below_mpp": resample})})
         return _inspect_one(c, Slide(name, "C", "d", False), {}, {})
     return slide
 
@@ -65,7 +68,7 @@ def test_file_mpp_cross_checked_against_alignment(env):
     r = env("a", raw={"mpp": 0.2738}, align=(0.2738,))
     assert r["status"] == "ok" and r["mpp_source"] in ("openslide", "tiff_cm") and r["mpp"] == pytest.approx(0.2738, rel=1e-4)
     r = env("b", raw={"mpp": 0.2738}, align=(0.3638,))
-    assert r["status"] == "mpp_mismatch" and "alignment 0.36380" in r["error"]
+    assert r["mpp_status"] == "mpp_mismatch" and "alignment 0.36380" in r["mpp_error"]
 
 
 def test_converted_copy_takes_raw_originals_pixel_size(env):
@@ -81,9 +84,24 @@ def test_raw_original_of_another_size_is_not_used(env):
 
 def test_no_pixel_size_anywhere(env):
     r = env("e", conv={})
-    assert r["status"] == "unknown_mpp" and r["mpp"] is None
+    assert r["mpp_status"] == "unknown_mpp" and r["mpp"] is None
     r = env("f", conv={}, override=0.3)
-    assert (r["status"], r["mpp_source"], r["mpp"]) == ("ok", "override", 0.3)
+    assert (r["status"], r["mpp_status"], r["mpp_source"], r["mpp"]) == ("ok", "ok", "override", 0.3)
+
+
+def test_pixel_size_blocks_only_when_resampling(env):
+    # stored resolution (bench.yaml): reported, not blocking, scale 1
+    r = env("h", conv={})
+    assert (r["status"], r["mpp_status"], r["scale"], r["ext_mpp"]) == ("ok", "unknown_mpp", 1.0, None)
+    r = env("i", raw={"mpp": 0.086})
+    assert r["status"] == "ok" and r["scale"] == 1.0 and r["ext_width"] == W
+    # resampling on: the value decides the scale, so unknown / disagreeing values stop the slide
+    r = env("j", conv={}, resample=0.2)
+    assert r["status"] == "unknown_mpp" and "scale" not in r
+    r = env("k", raw={"mpp": 0.2738}, align=(0.3638,), resample=0.2)
+    assert r["status"] == "mpp_mismatch"
+    r = env("l", raw={"mpp": 0.125}, resample=0.2)
+    assert r["status"] == "ok" and r["scale"] == pytest.approx(0.5) and r["ext_width"] == W // 2
 
 
 def test_anisotropic_alignment_is_reported(env):

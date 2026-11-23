@@ -21,10 +21,11 @@ mapping: simplified_broad                # src/python/code_configs/mappings.py; 
 geometry:
   centre_offset_px: 112                  # patch_coordinates x_start/y_start = centroid - 112 (native px)
 
-# Slides finer than resample_below_mpp (SPLIT Zeiss 0.086, three 10X slides 0.137) are area-resampled
-# to target_mpp; all others are used as stored. Every model gets its native input size in px.
-resolution: {resample_below_mpp: 0.2, target_mpp: 0.25, mpp_mismatch_tol: 0.05}
-mpp_overrides: {}                        # slide: um/px -- only when no source has it or the sources disagree (bench inspect)
+# Every slide is used at its stored pixel size (resample_below_mpp: null), and every model gets its native
+# input size in px, so the field of view in um differs per slide (SPLIT Zeiss 0.086 um/px: 224 px = 19 um).
+# resample_below_mpp: 0.2 would area-resample finer slides (SPLIT Zeiss, three 10X slides at 0.137) to target_mpp.
+resolution: {resample_below_mpp: null, target_mpp: 0.25, mpp_mismatch_tol: 0.05}
+mpp_overrides: {}                        # slide: um/px (bench inspect; informational while resample_below_mpp is null)
 
 # Global cell filter (identical for every model, readout and stage).
 filters:

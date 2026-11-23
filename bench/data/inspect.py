@@ -11,9 +11,10 @@ Pixel size, first source that has one (column mpp_source):
   xenium_metadata he_pixel_size_um in xenium_metadata.csv
 Every other source that has a value is a cross-check (mpp_mismatch_tol).
 
-Writes {bench_root}/manifest/slides_inspect.parquet (+ .csv). Stops (non-zero exit) when a slide
-has no readable WSI, no coordinates, an unknown pixel size, or pixel sizes that disagree -- fix
-those with `mpp_overrides` in the config or by fixing the files.
+Writes {bench_root}/manifest/slides_inspect.parquet (+ .csv). Stops (non-zero exit) when a slide has no
+readable WSI or no coordinates. An unknown or disagreeing pixel size (column mpp_status) stops it only when
+resolution.resample_below_mpp is set, since only then does the value change the extraction; otherwise it is
+printed as a NOTE. Fix with `mpp_overrides` in the config or by fixing the files.
 """
 from __future__ import annotations
 
@@ -258,20 +259,23 @@ def _inspect_one(cfg: BenchConfig, s: Slide, manifest: dict, meta: dict) -> dict
     if s.slide in cfg.mpp_overrides:
         cands.insert(0, ("override", float(cfg.mpp_overrides[s.slide])))
     src, mpp = cands[0] if cands else ("none", None)
-    row.update(mpp=mpp, mpp_source=src, mpp_note="; ".join(notes))
+    row.update(mpp=mpp, mpp_source=src, mpp_note="; ".join(notes), mpp_status="ok", mpp_error="")
     if mpp is None:
-        if row["status"] == "ok":
-            row.update(status="unknown_mpp", error="no pixel size in the file, its raw original, the alignment "
-                                                   "matrix (paths.alignment) or xenium_metadata; set mpp_overrides")
-        return row
-    if src != "override":
+        row.update(mpp_status="unknown_mpp", mpp_error="no pixel size in the file, its raw original, the alignment "
+                                                        "matrix (paths.alignment) or xenium_metadata; set mpp_overrides")
+    elif src != "override":
         bad = [f"{k} {v:.5f}" for k, v in cands[1:] if abs(v - mpp) / mpp > tol]
-        if bad and row["status"] == "ok":
-            row.update(status="mpp_mismatch", error=f"{src} {mpp:.5f} vs " + ", ".join(bad) + " um/px")
+        if bad:
+            row.update(mpp_status="mpp_mismatch", mpp_error=f"{src} {mpp:.5f} vs " + ", ".join(bad) + " um/px")
+    # the pixel size only matters when it decides resampling; otherwise it is reported, not required
+    if cfg.resolution.resampling and row["mpp_status"] != "ok" and row["status"] == "ok":
+        row.update(status=row["mpp_status"], error=row["mpp_error"])
+    if row["status"] != "ok":
+        return row
     s_ = scale_for(mpp, cfg.resolution.resample_below_mpp, cfg.resolution.target_mpp)
     row.update(scale=s_, ext_width=int(math.floor(row["width"] * s_ + 1e-9)),
                ext_height=int(math.floor(row["height"] * s_ + 1e-9)),
-               ext_mpp=mpp / s_)
+               ext_mpp=mpp / s_ if mpp is not None else None)
     return row
 
 
@@ -303,6 +307,11 @@ def run_inspect(cfg: BenchConfig, slides: List[Slide], workers: int = 8, strict:
     print_table(view.to_dict("records"))
     bad = shown[shown.status != "ok"]
     LOG.info("wrote %s (%d slides, %d problems)", out, len(shown), len(bad))
+    if "mpp_status" in shown and not cfg.resolution.resampling:
+        for r in shown[(shown.status == "ok") & (shown.mpp_status.fillna("ok") != "ok")].itertuples():
+            note = r.mpp_note if isinstance(r.mpp_note, str) and r.mpp_note else ""
+            print(f"  NOTE {r.slide}: {r.mpp_status} -- {r.mpp_error}{f' [{note}]' if note else ''} "
+                  "(used at its stored resolution; the pixel size is only reported)")
     if len(bad):
         for r in bad.itertuples():
             note = getattr(r, "mpp_note", "")
