@@ -72,6 +72,8 @@ bench inspect                      # slide table: WSI path, size, pixel size, sc
 bench crops                        # visual check: 3 cells per slide at every model input size, read with the
                                    #   extraction code (centroid cross, nested boxes, um scale bar)
                                    #   -> $BENCH_ROOT/qc/crops/<slide>.png + crops_all.pdf
+bench overview --workers 8          # visual check: one PDF page per slide, whole slide plain and with its cells,
+                                   #   + cells outside the image / on glass / on black -> $BENCH_ROOT/qc/overview/
 bench darkspots                    # CPU array: black / no-data / unreadable block maps
                                    #   review $BENCH_ROOT/darkspots/*.png (red = dark, blue = unreadable, grey = scanned)
 bench manifest                     # global cell manifest + per-cohort drop counts (unknown label, border, dark spot)

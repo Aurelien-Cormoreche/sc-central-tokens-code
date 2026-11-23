@@ -1,6 +1,6 @@
 """`bench` command line. Every command takes --config, --smoke, --dry-run, --models, --datasets.
 
-Data preparation (CPU):   fetch-weights, inspect, crops, darkspots, manifest
+Data preparation (CPU):   fetch-weights, inspect, crops, overview, darkspots, manifest
 Jobs (SLURM arrays):      extract, classify, genexp, scaling   (--local: run the bins here)
 Results:                  report, status, retry, calibrate
 Checks:                   smoke [--synthetic]
@@ -129,6 +129,17 @@ def cmd_crops(cfg: BenchConfig, args) -> int:
               f"{cfg.root / 'qc' / 'crops'}")
         return 0
     run_crop_sheets(cfg, slides, models=args.models, cells=args.cells, seed=args.seed)
+    return 0
+
+
+def cmd_overview(cfg: BenchConfig, args) -> int:
+    from bench.data.overview import run_overview
+    slides = _slides(cfg, args)
+    if args.dry_run:
+        print(f"would draw the whole-slide overview of {len(slides)} slides -> "
+              f"{cfg.root / 'qc' / 'overview' / 'overview_all.pdf'}")
+        return 0
+    run_overview(cfg, slides, workers=args.workers, max_side=args.max_side)
     return 0
 
 
@@ -263,6 +274,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--cells", type=int, default=3, help="cells per slide")
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(fn=cmd_crops)
+
+    p = sub.add_parser("overview", help="visual check: one PDF page per slide, whole slide with its cells")
+    _common(p)
+    p.add_argument("--workers", type=int, default=4, help="slides read in parallel")
+    p.add_argument("--max-side", type=int, default=2000, help="longest side of each overview, px")
+    p.set_defaults(fn=cmd_overview)
 
     p = sub.add_parser("darkspots", help="black/no-data/unreadable block maps (CPU array)")
     _common(p, jobs=True)
