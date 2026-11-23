@@ -19,6 +19,8 @@ WSI_RAW_ROOT=/path/to/HE_images                        # {slide}_he_image.ome.ti
 WSI_CONVERTED_ROOT=/path/to/HE_images_converted        # re-encoded copies of unreadable files
 XENIUM_PROCESSED_OUTPUT_ROOT=/path/to/xenium_processed # {slide}/patch_coordinates.h5, {slide}/adata.h5ad
 HF_HOME=/path/to/hf_cache                              # HF cache with the weights in hub/; only read (read-only is fine)
+ALIGNMENT_MATRIX_ROOT=/path/to/alignments              # {slide}_he_imagealignment.csv; pixel size of slides whose file
+                                                       #   has none (converted copies, MCCORD) + cross-check of all others
 # optional: BENCH_WSI_MANIFEST=/path/to/wsi_manifest.csv  (dataset, converted, wsi_filename[, status])
 ```
 
@@ -52,7 +54,7 @@ the cluster has internet) and moves transformers' module cache (GenBio's remote 
 `bash scripts/cluster/00_install.sh` (no `WHEELS`) and `bench fetch-weights` download directly.
 
 Every array task sources `scripts/cluster/bench_env.sh` (`slurm.setup` in `configs/bench.yaml`). Check `slurm.partition` / `gres` / `account` / `cpu_partition` there: the GPU
-type name (`gpu:rtx_4090:1`) must match your cluster's, in the config and in `03_smoke.sbatch`.
+type name (`gpu:rtx4090:1`) must match your cluster's, in the config and in `03_smoke.sbatch`.
 
 ## Commands, in order
 
@@ -63,13 +65,15 @@ bench fetch-weights --offline      # weights already in $HF_HOME/hub (download_w
                                    #   the `hf download` command for anything missing, records the snapshot shas in
                                    #   $BENCH_ROOT/weights_revisions.json (jobs pin them). Without --offline it downloads
 bench inspect                      # slide table: WSI path, size, pixel size, scale -> $BENCH_ROOT/manifest/slides_inspect.csv
-                                   #   stops on a missing file / unknown or mismatching pixel size (fix: mpp_overrides)
+                                   #   pixel size: override > file > raw original (converted copies) > alignment
+                                   #   matrix > xenium_metadata; the other sources are cross-checks. Stops on a missing
+                                   #   file / unknown or disagreeing pixel size (fix: mpp_overrides)
 bench darkspots                    # CPU array: black / no-data / unreadable block maps
                                    #   review $BENCH_ROOT/darkspots/*.png (red = dark, blue = unreadable, grey = scanned)
 bench manifest                     # global cell manifest + per-cohort drop counts (unknown label, border, dark spot)
 
 # ── 1. real smoke (1 GPU, ~30–60 min) ──
-srun --gres=gpu:rtx_4090:1 --cpus-per-task=16 --mem=64G --time=02:00:00 bench smoke
+srun --gres=gpu:rtx4090:1 --cpus-per-task=16 --mem=64G --time=02:00:00 bench smoke
 #   inspect -> darkspots -> manifest -> extract -> classify -> genexp -> 2a/2b -> scaling -> report on the 7 smoke
 #   slides (<= 300 cells each) for every model, plus:
 #   * parity: each model's `cls` (bf16, our loader) vs its model-card forward (fp32); PASS = mean cos >= 0.999

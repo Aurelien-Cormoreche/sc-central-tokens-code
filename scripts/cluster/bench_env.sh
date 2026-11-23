@@ -41,6 +41,10 @@ _bench_env_main() {
             return 1
         fi
     done
+    if [ -n "${ALIGNMENT_MATRIX_ROOT:-}" ] && [ ! -d "$ALIGNMENT_MATRIX_ROOT" ]; then
+        echo "ERROR: ALIGNMENT_MATRIX_ROOT='$ALIGNMENT_MATRIX_ROOT' is not a directory" >&2
+        return 1
+    fi
     if [ ! -d "$HF_HOME/hub" ]; then
         echo "ERROR: HF_HOME='$HF_HOME' has no hub/ folder (the HF cache that \`hf download\` fills)" >&2
         return 1

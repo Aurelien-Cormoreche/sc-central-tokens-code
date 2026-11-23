@@ -13,7 +13,7 @@
 # The last table lists every step as PASS/FAIL; the job exits non-zero if any step failed.
 #SBATCH --job-name=bench-smoke
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:rtx_4090:1
+#SBATCH --gres=gpu:rtx4090:1
 #SBATCH --cpus-per-task=16
 #SBATCH --ntasks=1
 #SBATCH --mem=64G

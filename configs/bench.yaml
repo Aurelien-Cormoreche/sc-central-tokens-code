@@ -8,6 +8,7 @@ paths:
   wsi_converted: ${env:WSI_CONVERTED_ROOT}
   xenium_processed: ${env:XENIUM_PROCESSED_OUTPUT_ROOT}   # {slide}/patch_coordinates.h5, {slide}/adata.h5ad
   hf_home: ${env:HF_HOME,}
+  alignment: ${env:ALIGNMENT_MATRIX_ROOT,}               # {slide}_he_imagealignment.csv: pixel-size fallback + cross-check
   # optional notebooks/check_wsi_openslide.ipynb manifest (dataset, converted, wsi_filename, status);
   # without it, inspect looks for {slide}{_he_image.ome.tif|_registered_HE[.ome].tif} (converted root first)
   wsi_manifest: ${env:BENCH_WSI_MANIFEST,}
@@ -23,7 +24,7 @@ geometry:
 # Slides finer than resample_below_mpp (SPLIT Zeiss 0.086, three 10X slides 0.137) are area-resampled
 # to target_mpp; all others are used as stored. Every model gets its native input size in px.
 resolution: {resample_below_mpp: 0.2, target_mpp: 0.25, mpp_mismatch_tol: 0.05}
-mpp_overrides: {}                        # slide: um/px -- only when inspect cannot read the file's pixel size
+mpp_overrides: {}                        # slide: um/px -- only when no source has it or the sources disagree (bench inspect)
 
 # Global cell filter (identical for every model, readout and stage).
 filters:
@@ -56,7 +57,7 @@ storage: {dtype: float16}
 
 slurm:
   partition: gpu
-  gres: "gpu:rtx_4090:1"
+  gres: "gpu:rtx4090:1"
   cpus: 16
   mem_gb: 64
   max_hours: 12

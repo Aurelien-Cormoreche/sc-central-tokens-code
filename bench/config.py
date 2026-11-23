@@ -62,6 +62,9 @@ class Paths(_Strict):
     wsi_converted: Optional[str] = None
     xenium_processed: Optional[str] = None
     hf_home: Optional[str] = None
+    # Optional: {alignment}/{slide}_he_imagealignment.csv, the Xenium<->H&E affines (bench inspect's pixel-size
+    # fallback and cross-check).
+    alignment: Optional[str] = None
     # Optional CSV (dataset, converted, wsi_filename[, status]) as written by
     # notebooks/check_wsi_openslide.ipynb; without it `bench inspect` scans wsi_raw/wsi_converted.
     wsi_manifest: Optional[str] = None
@@ -132,7 +135,7 @@ class Storage(_Strict):
 
 class Slurm(_Strict):
     partition: Optional[str] = "gpu"
-    gres: str = "gpu:rtx_4090:1"
+    gres: str = "gpu:rtx4090:1"
     cpus: int = 16
     mem_gb: int = 64
     max_hours: float = 12.0
