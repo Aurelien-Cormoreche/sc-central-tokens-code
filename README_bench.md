@@ -160,8 +160,11 @@ hardware and model revisions.
 
 - **Geometry.**
   - Every slide is used at its stored pixel size (`resolution.resample_below_mpp: null`) and every model at its
-    native input size in px, so the field of view in µm varies per slide: a 224-px crop is 19 µm on SPLIT-Zeiss
-    (0.086 µm/px), 31 µm at 0.137, 48 µm on VANNAN, 61 µm on most 10X, 113 µm on JOHNSON.
+    native input size in px, so the field of view in µm varies per slide: a 224-px crop is 31 µm on three 10X
+    slides (0.137 µm/px), about 47 µm on SPLIT and VANNAN (~0.21), 61 µm on most 10X, 113 µm on JOHNSON.
+  - SPLIT: the crops bench reads carry no pixel size. The GEO originals are 0.08625 (Zeiss) and 0.2211
+    (NanoZoomer), but cell density and same-patient section sizes put every crop at ~0.21 µm/px, so
+    `xenium_metadata.csv` is only a cross-check in `bench inspect`, never the value.
     `resample_below_mpp: 0.2` would instead area-resample finer slides to `target_mpp` (0.25).
   - The crop is centred on the Xenium centroid, `patch_coordinates` `x_start + 112`. Its origin is
     `floor(e + 0.5) − N/2` in extraction pixels.

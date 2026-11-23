@@ -8,8 +8,9 @@ Pixel size, first source that has one (column mpp_source):
                   paths.wsi_raw, read with tifffile, used only when its level-0 size equals the copy's
   alignment       the Xenium<->H&E affine ({paths.alignment}/{slide}_he_imagealignment.csv, H&E px ->
                   Xenium morphology px): 0.2125 um x sqrt(|det|) -- the registration the cell coordinates use
-  xenium_metadata he_pixel_size_um in xenium_metadata.csv
-Every other source that has a value is a cross-check (mpp_mismatch_tol).
+Every other source that has a value is a cross-check (mpp_mismatch_tol), and so is he_pixel_size_um in
+xenium_metadata.csv, which is never used as the value: it describes the original public download, and the file
+bench reads may be a resampled crop of it (the SPLIT crops: GEO originals 0.08625, crops ~0.21 um/px).
 
 Writes {bench_root}/manifest/slides_inspect.parquet (+ .csv). Stops (non-zero exit) when a slide has no
 readable WSI or no coordinates. An unknown or disagreeing pixel size (column mpp_status) stops it only when
@@ -254,17 +255,18 @@ def _inspect_one(cfg: BenchConfig, s: Slide, manifest: dict, meta: dict) -> dict
             cands.append(("alignment", ampp))
         except Exception as e:
             notes.append(f"alignment matrix {ap}: {type(e).__name__}: {e}")
-    if meta_mpp:
-        cands.append(("xenium_metadata", meta_mpp))
     if s.slide in cfg.mpp_overrides:
         cands.insert(0, ("override", float(cfg.mpp_overrides[s.slide])))
     src, mpp = cands[0] if cands else ("none", None)
+    checks = cands[1:] + ([("xenium_metadata", meta_mpp)] if meta_mpp else [])
     row.update(mpp=mpp, mpp_source=src, mpp_note="; ".join(notes), mpp_status="ok", mpp_error="")
     if mpp is None:
-        row.update(mpp_status="unknown_mpp", mpp_error="no pixel size in the file, its raw original, the alignment "
-                                                        "matrix (paths.alignment) or xenium_metadata; set mpp_overrides")
+        hint = f" (xenium_metadata has {meta_mpp:.5f} for the original download, not necessarily this file)" \
+            if meta_mpp else ""
+        row.update(mpp_status="unknown_mpp", mpp_error="no pixel size in the file, its raw original or the alignment "
+                                                        f"matrix (paths.alignment){hint}; set mpp_overrides")
     elif src != "override":
-        bad = [f"{k} {v:.5f}" for k, v in cands[1:] if abs(v - mpp) / mpp > tol]
+        bad = [f"{k} {v:.5f}" for k, v in checks if abs(v - mpp) / mpp > tol]
         if bad:
             row.update(mpp_status="mpp_mismatch", mpp_error=f"{src} {mpp:.5f} vs " + ", ".join(bad) + " um/px")
     # the pixel size only matters when it decides resampling; otherwise it is reported, not required

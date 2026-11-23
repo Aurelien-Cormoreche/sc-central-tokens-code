@@ -40,7 +40,7 @@ def env(tmp_path):
                                            "wsi_converted": str(d["conv"]), "xenium_processed": str(d["xen"]),
                                            "alignment": str(d["align"]), "wsi_manifest": None}})
 
-    def slide(name, conv=None, raw=None, align=None, override=None, resample=None):
+    def slide(name, conv=None, raw=None, align=None, override=None, resample=None, meta=None):
         (d["xen"] / name).mkdir()
         with h5py.File(d["xen"] / name / "patch_coordinates.h5", "w") as f:
             f["cell_id"] = np.arange(3)
@@ -53,7 +53,7 @@ def env(tmp_path):
         c = cfg if override is None else cfg.model_copy(update={"mpp_overrides": {name: override}})
         if resample is not None:
             c = c.model_copy(update={"resolution": c.resolution.model_copy(update={"resample_below_mpp": resample})})
-        return _inspect_one(c, Slide(name, "C", "d", False), {}, {})
+        return _inspect_one(c, Slide(name, "C", "d", False), {}, {name: meta} if meta else {})
     return slide
 
 
@@ -107,3 +107,12 @@ def test_pixel_size_blocks_only_when_resampling(env):
 def test_anisotropic_alignment_is_reported(env):
     r = env("g", conv={}, align=(0.25, 1.05))
     assert r["mpp_source"] == "alignment" and "anisotropic" in r
+
+
+def test_metadata_is_a_cross_check_never_the_value(env):
+    # SPLIT: crop without a pixel size, GEO original 0.08625 in xenium_metadata, crop actually ~0.2125
+    r = env("m", conv={}, meta=0.08625)
+    assert r["mpp"] is None and r["mpp_status"] == "unknown_mpp" and "0.08625" in r["mpp_error"]
+    r = env("n", conv={}, align=(0.2125,), meta=0.08625)
+    assert r["mpp_source"] == "alignment" and r["mpp"] == pytest.approx(0.2125)
+    assert r["mpp_status"] == "mpp_mismatch" and "xenium_metadata 0.08625" in r["mpp_error"]
