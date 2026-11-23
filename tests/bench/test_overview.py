@@ -64,3 +64,25 @@ def test_corrupt_tile_only_marks_its_blocks(tmp_path, monkeypatch):
     assert (out[bad] == ov.BAD_RGB).all()
     ok = _block_mean(img, 7)
     np.testing.assert_array_equal(out[~bad], ok[~bad])
+
+
+def _cut_module():
+    import importlib.util
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[2] / "scripts" / "find_cut_line.py"
+    spec = importlib.util.spec_from_file_location("find_cut_line", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_cut_line_starts_where_cells_lie_on_black():
+    m = _cut_module()
+    rng = np.random.default_rng(0)
+    cy = rng.uniform(0, 40000, 200000)
+    onb = (cy > 21000) & (rng.random(cy.size) < 0.15)          # lower images: 15% of cells on black
+    hole = (cy > 8000) & (cy < 8040)                             # a small black hole in the upper image
+    onb |= hole & (rng.random(cy.size) < 0.02)
+    y, n, k = m.find_line(cy, onb, band=38.0)
+    assert y is not None and 21000 - 38 <= y <= 21000
+    assert m.find_line(cy, np.zeros_like(onb), band=38.0)[0] is None

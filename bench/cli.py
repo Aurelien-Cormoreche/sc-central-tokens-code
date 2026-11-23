@@ -137,9 +137,10 @@ def cmd_overview(cfg: BenchConfig, args) -> int:
     slides = _slides(cfg, args)
     if args.dry_run:
         print(f"would draw the whole-slide overview of {len(slides)} slides -> "
-              f"{cfg.root / 'qc' / 'overview' / 'overview_all.pdf'}")
+              f"{cfg.root / 'qc' / 'overview' / ('overview_subset.pdf' if args.datasets else 'overview_all.pdf')}")
         return 0
-    run_overview(cfg, slides, workers=args.workers, max_side=args.max_side)
+    run_overview(cfg, slides, workers=args.workers, max_side=args.max_side,
+                 name="subset" if args.datasets else "all")
     return 0
 
 

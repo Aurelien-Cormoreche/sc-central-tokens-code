@@ -10,7 +10,8 @@ problems (red when above a threshold):
   black area      share of the image that is black / no-data
 The overview is block-averaged from the best pyramid level; single-level files (the converted copies) are
 read in full, in strips (minutes for the largest), so run it on a compute node with --workers.
-Writes {bench_root}/qc/overview/overview_all.pdf, one PNG per slide and overview_stats.csv. Torch-free.
+Writes {bench_root}/qc/overview/overview_all.pdf, one PNG per slide and overview_stats.csv; with --datasets
+overview_subset.pdf / overview_stats_subset.csv instead, so overview_all.pdf stays complete. Torch-free.
 """
 from __future__ import annotations
 
@@ -24,8 +25,20 @@ import numpy as np
 CELL_RGB = (0, 200, 255)
 STRIP_BYTES = 128 * 2**20
 LIMITS = {"outside_pct": 0.5, "on_glass_pct": 5.0, "on_black_pct": 0.5, "unreadable_pct": 0.0}
+BLACK_MAX = 20                          # overview pixel max RGB <= this: black / no-data
+PAGE_HEAD, PAGE_LEFT = 86, 10           # where the plain overview sits on a page
 BAD_RGB = (30, 60, 220)                 # unreadable, as in the dark-spot review images
 SUB_PX = 512                            # a failed strip is re-read in blocks of about this size
+
+
+def thumb_geometry(sl, max_side: int):
+    """(W, H, level, downsample, level width, level height, block) of the overview, from the header only."""
+    W, H = sl.dimensions
+    level = sl.get_best_level_for_downsample(max(1.0, max(W, H) / max_side))
+    ds = float(sl.level_downsamples[level])
+    lw, lh = sl.level_dimensions[level]
+    g = max(1, math.ceil(max(lw, lh) / max_side))          # integer block size at that level
+    return W, H, level, ds, lw, lh, g
 
 
 def downscaled(path: str, max_side: int):
@@ -43,12 +56,7 @@ def downscaled(path: str, max_side: int):
         state["sl"] = openslide.OpenSlide(str(path))
 
     try:
-        sl = state["sl"]
-        W, H = sl.dimensions
-        level = sl.get_best_level_for_downsample(max(1.0, max(W, H) / max_side))
-        ds = float(sl.level_downsamples[level])
-        lw, lh = sl.level_dimensions[level]
-        g = max(1, math.ceil(max(lw, lh) / max_side))          # integer block size at that level
+        W, H, level, ds, lw, lh, g = thumb_geometry(state["sl"], max_side)
         tw, th = lw // g, lh // g
         out = np.empty((th, tw, 3), np.uint8)
         bad = np.zeros((th, tw), bool)
@@ -107,12 +115,12 @@ def slide_page(cfg, row: dict, max_side: int):
         px = thumb[ty[ok], tx[ok]].astype(np.int16)
         stats.update(n_cells=n, outside_pct=100.0 * (1 - inside.mean()) if n else 0.0,
                      on_glass_pct=100.0 * float((px.min(1) >= 235).mean()) if len(px) else 0.0,
-                     on_black_pct=100.0 * float((px.max(1) <= 20).mean()) if len(px) else 0.0)
+                     on_black_pct=100.0 * float((px.max(1) <= BLACK_MAX).mean()) if len(px) else 0.0)
         right[ty[ok], tx[ok]] = CELL_RGB
     stats["unreadable_pct"] = 100.0 * float(bad.mean())
-    stats["black_area_pct"] = 100.0 * float((thumb.max(2) <= 20).mean())
+    stats["black_area_pct"] = 100.0 * float((thumb.max(2) <= BLACK_MAX).mean())
 
-    gap, head, foot = 16, 86, 22
+    gap, head, foot = 16, PAGE_HEAD, 22
     page = Image.new("RGB", (2 * tw + gap + 20, th + head + foot), "white")
     d = ImageDraw.Draw(page)
     f_big, f_small = _font(18), _font(13)
@@ -134,7 +142,7 @@ def slide_page(cfg, row: dict, max_side: int):
         txt = f"{label} {val}".strip()
         d.text((x, 54), txt, fill=(210, 0, 0) if bad else "black", font=f_small)
         x += int(d.textlength(txt, font=f_small)) + 28
-    page.paste(Image.fromarray(thumb), (10, head))
+    page.paste(Image.fromarray(thumb), (PAGE_LEFT, head))
     page.paste(Image.fromarray(right), (10 + tw + gap, head))
     d.text((10, head + th + 4), "image", fill=(90, 90, 90), font=f_small)
     d.text((10 + tw + gap, head + th + 4), "image + cells (cyan)", fill=(90, 90, 90), font=f_small)
@@ -150,7 +158,8 @@ def _job(args):
         return row["slide"], None, None, f"{type(e).__name__}: {e}"
 
 
-def run_overview(cfg, slides, workers: int = 4, max_side: int = 2000) -> Optional[Path]:
+def run_overview(cfg, slides, workers: int = 4, max_side: int = 2000, name: str = "all") -> Optional[Path]:
+    """name: the PDF is overview_{name}.pdf (a subset run must not replace overview_all.pdf)."""
     import pandas as pd
     from bench.data.inspect import load_inspect
     from bench.utils import LOG, print_table
@@ -167,7 +176,7 @@ def run_overview(cfg, slides, workers: int = 4, max_side: int = 2000) -> Optiona
             problems.append(f"{s.slide}: no WSI file ({row.get('status')})")
             continue
         tasks.append((cfg, row, max_side))
-    pdf = out / "overview_all.pdf"
+    pdf = out / f"overview_{name}.pdf"
     tmp = pdf.with_name(pdf.name + ".tmp")
     tmp.unlink(missing_ok=True)
     rows, n_pages = [], 0
@@ -189,7 +198,7 @@ def run_overview(cfg, slides, workers: int = 4, max_side: int = 2000) -> Optiona
     if n_pages:
         tmp.replace(pdf)
         df = pd.DataFrame(rows)
-        df.to_csv(out / "overview_stats.csv", index=False)
+        df.to_csv(out / ("overview_stats.csv" if name == "all" else f"overview_stats_{name}.csv"), index=False)
         view = []
         for r in rows:
             flags = [k.replace("_pct", "") for k, lim in LIMITS.items() if r.get(k, 0) > lim]
