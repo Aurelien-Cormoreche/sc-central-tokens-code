@@ -29,6 +29,9 @@ BLACK_MAX = 20                          # overview pixel max RGB <= this: black 
 PAGE_HEAD, PAGE_LEFT = 86, 10           # where the plain overview sits on a page
 BAD_RGB = (30, 60, 220)                 # unreadable, as in the dark-spot review images
 SUB_PX = 512                            # a failed strip is re-read in blocks of about this size
+# PDF pages are JPEG: without chroma subsampling and at this quality the 1-px cell dots keep their colour
+# (Pillow's default 4:2:0 / 75 turns every dot grey); ~2 MB per page
+PDF_JPEG = {"quality": 90, "subsampling": 0}
 
 
 def thumb_geometry(sl, max_side: int):
@@ -188,7 +191,7 @@ def run_overview(cfg, slides, workers: int = 4, max_side: int = 2000, name: str 
                 problems.append(f"{slide}: {err}")
                 continue
             page.save(out / f"{slide}.png")
-            page.save(tmp, "PDF", resolution=110, append=n_pages > 0)
+            page.save(tmp, "PDF", resolution=110, append=n_pages > 0, **PDF_JPEG)
             n_pages += 1
             rows.append(stats)
             LOG.info("%s: done (%d/%d)", slide, n_pages, len(tasks))

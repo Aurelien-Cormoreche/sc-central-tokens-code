@@ -177,7 +177,8 @@ def run_crop_sheets(cfg, slides, models: Optional[List[str]] = None, cells: int 
     if pages:
         pdf = out / "crops_all.pdf"
         tmp = pdf.with_name(pdf.name + ".tmp")
-        pages[0].save(tmp, "PDF", save_all=True, append_images=pages[1:], resolution=96)
+        from bench.data.overview import PDF_JPEG
+        pages[0].save(tmp, "PDF", save_all=True, append_images=pages[1:], resolution=96, **PDF_JPEG)
         tmp.replace(pdf)
         print(f"{len(pages)} slide sheets: {out}/<slide>.png and {pdf}")
     for p in problems:
