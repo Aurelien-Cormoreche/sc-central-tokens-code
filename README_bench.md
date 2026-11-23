@@ -69,6 +69,9 @@ bench inspect                      # slide table: WSI path, size, pixel size, sc
                                    #   matrix > xenium_metadata; the other sources are cross-checks. Stops on a missing
                                    #   file or coordinates. Unknown / disagreeing pixel sizes are printed as NOTE
                                    #   (slides are used at their stored resolution, so the value is only reported)
+bench crops                        # visual check: 3 cells per slide at every model input size, read with the
+                                   #   extraction code (centroid cross, nested boxes, um scale bar)
+                                   #   -> $BENCH_ROOT/qc/crops/<slide>.png + crops_all.pdf
 bench darkspots                    # CPU array: black / no-data / unreadable block maps
                                    #   review $BENCH_ROOT/darkspots/*.png (red = dark, blue = unreadable, grey = scanned)
 bench manifest                     # global cell manifest + per-cohort drop counts (unknown label, border, dark spot)

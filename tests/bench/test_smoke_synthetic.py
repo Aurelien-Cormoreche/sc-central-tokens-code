@@ -11,7 +11,7 @@ pytest.importorskip("tifffile")
 # Every command run on a login node: plan, submit (--dry-run here), status, report, weights. Torch must not be
 # imported there: its CUDA libraries fail to load on login nodes ("failed to map segment from shared object").
 LOGIN_NODE_COMMANDS = [
-    ["inspect", "--dry-run"], ["darkspots", "--dry-run"], ["manifest", "--dry-run"],
+    ["inspect", "--dry-run"], ["crops", "--cells", "2"], ["darkspots", "--dry-run"], ["manifest", "--dry-run"],
     ["fetch-weights", "--offline", "--dry-run"],
     ["extract", "--stage", "1", "--dry-run"], ["classify", "--stage", "1", "--dry-run"], ["genexp", "--dry-run"],
     ["status"], ["status", "--deletable"], ["report"], ["calibrate", "--from-status", "--dry-run"],

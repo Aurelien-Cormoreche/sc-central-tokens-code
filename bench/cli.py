@@ -1,6 +1,6 @@
 """`bench` command line. Every command takes --config, --smoke, --dry-run, --models, --datasets.
 
-Data preparation (CPU):   fetch-weights, inspect, darkspots, manifest
+Data preparation (CPU):   fetch-weights, inspect, crops, darkspots, manifest
 Jobs (SLURM arrays):      extract, classify, genexp, scaling   (--local: run the bins here)
 Results:                  report, status, retry, calibrate
 Checks:                   smoke [--synthetic]
@@ -118,6 +118,17 @@ def cmd_fetch_weights(cfg: BenchConfig, args) -> int:
         print("\n".join("  " + c for c in todo))
         print("then rerun this command. Gated repos: `hf auth login` there, and accept the terms on the model pages.")
         return 1
+    return 0
+
+
+def cmd_crops(cfg: BenchConfig, args) -> int:
+    from bench.data.crop_sheet import run_crop_sheets
+    slides = _slides(cfg, args)
+    if args.dry_run:
+        print(f"would draw {args.cells} cells x every model input size for {len(slides)} slides -> "
+              f"{cfg.root / 'qc' / 'crops'}")
+        return 0
+    run_crop_sheets(cfg, slides, models=args.models, cells=args.cells, seed=args.seed)
     return 0
 
 
@@ -246,6 +257,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--no-strict", action="store_true", help="write the table even if some slides have problems")
     p.set_defaults(fn=cmd_inspect)
+
+    p = sub.add_parser("crops", help="visual check: a few cells per slide at every model input size (PNG + PDF)")
+    _common(p)
+    p.add_argument("--cells", type=int, default=3, help="cells per slide")
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(fn=cmd_crops)
 
     p = sub.add_parser("darkspots", help="black/no-data/unreadable block maps (CPU array)")
     _common(p, jobs=True)
