@@ -117,6 +117,16 @@ class Filters(_Strict):
     scan_tile_px: int = 4096           # dark-spot scan read size (native px); only tiles near cells are read
 
 
+class Region(_Strict):
+    """Keep only the cells inside this box (native slide px; a missing edge = the image edge). The edges act like
+    the image edge: cells within filters.border_px of them are dropped too, so no crop crosses them."""
+    x_min: Optional[float] = None
+    x_max: Optional[float] = None
+    y_min: Optional[float] = None
+    y_max: Optional[float] = None
+    note: str = ""
+
+
 class ModelCfg(_Strict):
     input_px: int
     patch: int
@@ -263,6 +273,7 @@ class BenchConfig(_Strict):
     geometry: Geometry = Field(default_factory=Geometry)
     resolution: Resolution = Field(default_factory=Resolution)
     mpp_overrides: Dict[str, float] = Field(default_factory=dict)
+    regions: Dict[str, Region] = Field(default_factory=dict)
     filters: Filters = Field(default_factory=Filters)
     models: Dict[str, ModelCfg] = Field(default_factory=dict)
     readouts: List[Literal["cls", "central"]] = Field(default_factory=lambda: ["cls", "central"])

@@ -3,12 +3,13 @@
 Per slide, {bench_root}/manifest/cells/{slide}.parquet holds every row of the slide's
 patch_coordinates.h5 (row i = coordinates row i) with:
   cell_id, label_raw, label (mapped; "Unknown" for unmapped types), cx, cy (native centroid),
-  ex, ey (extraction-space centroid), drop ("" | border | darkspot | smoke), labelled, extract.
+  ex, ey (extraction-space centroid), drop ("" | border | region | darkspot | smoke), labelled, extract.
 `extract` = kept by the image filter and (labelled, or on a gene-expression slide);
 classification uses extract & labelled.
 
 Image filter: drop a cell when its rounded extraction position is within filters.border_px of
-the image edge, or when a dark/unreadable block lies within L-inf filters.linf_px (extraction px).
+the image edge, outside the slide's `regions` box or within filters.border_px of its edges, or when a
+dark/unreadable block lies within L-inf filters.linf_px (extraction px).
 {bench_root}/manifest/slides.parquet summarises counts and the per-slide hash that embeddings
 are validated against; manifest/class_counts.json gives per-cohort class counts (fold label
 spaces).
@@ -98,6 +99,18 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     ry = np.floor(df["ey"].to_numpy() + 0.5)
     border = (rx - fl.border_px < 0) | (ry - fl.border_px < 0) | (rx + fl.border_px > ew) | (ry + fl.border_px > eh)
     drop[(drop == "") & border] = "border"
+    reg = cfg.regions.get(row["slide"])
+    if reg is not None:                       # the box edges act like the image edge
+        b, out = fl.border_px, np.zeros(n, dtype=bool)
+        if reg.x_min is not None:
+            out |= rx - b < reg.x_min * s
+        if reg.x_max is not None:
+            out |= rx + b > reg.x_max * s
+        if reg.y_min is not None:
+            out |= ry - b < reg.y_min * s
+        if reg.y_max is not None:
+            out |= ry + b > reg.y_max * s
+        drop[(drop == "") & out] = "region"
 
     ds = load_darkspots(cfg, row["slide"])
     if ds is None:
@@ -138,14 +151,28 @@ def _manifest_job(args):
     return {
         "slide": row["slide"], "cohort": row["cohort"], "n_total": int(len(df)),
         "n_labelled": int(df["labelled"].sum()),
-        "n_border": int((df["drop"] == "border").sum()), "n_darkspot": int((df["drop"] == "darkspot").sum()),
+        "n_border": int((df["drop"] == "border").sum()), "n_region": int((df["drop"] == "region").sum()),
+        "n_darkspot": int((df["drop"] == "darkspot").sum()),
         "n_extract": int(df["extract"].sum()), "n_classify": int((df["extract"] & df["labelled"]).sum()),
         "genexp": genexp, "hash": manifest_hash(df),
         "hash_classify": manifest_hash(df, df["extract"] & df["labelled"]), "class_counts": counts,
     }
 
 
+def check_regions(cfg: BenchConfig, known) -> None:
+    """Every `regions` entry names a known slide and a non-empty box."""
+    bad = sorted(set(cfg.regions) - set(known) - set(cfg.exclude))
+    if bad:
+        raise SystemExit(f"regions: unknown slide(s) {', '.join(bad)} (check the names in configs/bench.yaml)")
+    for name, r in cfg.regions.items():
+        for lo, hi in ((r.x_min, r.x_max), (r.y_min, r.y_max)):
+            if lo is not None and hi is not None and lo >= hi:
+                raise SystemExit(f"regions: {name} is empty ({lo} >= {hi})")
+
+
 def run_manifest(cfg: BenchConfig, slides: List[Slide], inspect: pd.DataFrame, workers: int = 8) -> pd.DataFrame:
+    from bench.registry import load_slides
+    check_regions(cfg, {s.slide for s in load_slides(cfg)} | set(inspect.index))
     gx = {s.slide for ss in genexp_slides(cfg, slides).values() for s in ss}
     jobs = []
     for s in slides:
@@ -177,7 +204,9 @@ def run_manifest(cfg: BenchConfig, slides: List[Slide], inspect: pd.DataFrame, w
     write_json(cfg.root / "manifest" / "class_counts_by_slide.json", per_slide)
     write_json(cfg.root / "manifest" / "class_counts.json", cc)
     shown = new[new.slide.isin([s.slide for s in slides])]
-    agg = shown.groupby("cohort")[["n_total", "n_labelled", "n_border", "n_darkspot", "n_extract", "n_classify"]].sum()
+    cols = [c for c in ("n_total", "n_labelled", "n_border", "n_region", "n_darkspot", "n_extract", "n_classify")
+            if c in shown]
+    agg = shown.groupby("cohort")[cols].sum()
     agg.loc["TOTAL"] = agg.sum()
     print_table([{"cohort": k, **{c: f"{int(v):,}" for c, v in r.items()}} for k, r in agg.iterrows()])
     LOG.info("wrote %s", out)

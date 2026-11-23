@@ -27,6 +27,13 @@ geometry:
 resolution: {resample_below_mpp: null, target_mpp: 0.25, mpp_mismatch_tol: 0.05}
 mpp_overrides: {}                        # slide: um/px (bench inspect; informational while resample_below_mpp is null)
 
+# Per-slide part to keep (native slide px; x_min / x_max / y_min / y_max, any subset). bench manifest drops the
+# cells outside it ("region"), and those within filters.border_px of its edges, so no crop crosses them.
+regions:
+  GSM9509144_NSCLC_chuvio_L4_L4:
+    y_max: 19038
+    note: "three superposed images below this line; keep the top one (scripts/find_cut_line.py, checked 2026-11-23)"
+
 # Global cell filter (identical for every model, readout and stage).
 filters:
   black_max: 8            # no-data pixel: max(R,G,B) <= 8 or fully transparent

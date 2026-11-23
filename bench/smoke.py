@@ -397,6 +397,7 @@ def make_synthetic(work: Path, seed: int = 0) -> Path:
         # resampling on here (bench.yaml has it off) so the resampled path (B_s2 at 0.125 um/px) stays tested
         "resolution": {"resample_below_mpp": 0.2, "target_mpp": 0.25},
         "filters": {"linf_px": 24, "border_px": 40, "block_px": 16, "scan_tile_px": 512},
+        "regions": {"A_s2": {"y_max": 700, "note": "synthetic: keep the top part"}},
         "models": {"tiny": {"input_px": 32, "patch": 8, "batch_size": 64, "cells_per_s": 400}},
         "extract": {"region_px": 512, "num_workers": 0, "slide_overhead_s": 1, "bin_overhead_s": 1},
         "slurm": {"partition": None, "max_hours": 1, "cpus": 2},
@@ -453,6 +454,19 @@ def run_synthetic(out: Optional[str] = None, keep: bool = False) -> int:
             print(f"  A_s1: {n} cells dropped next to the black patch, {int((df['drop'] == 'border').sum())} at the border")
             return 0 if n > 0 else 1
         _step(results, "dark-spot filter drops cells near the black patch", check_darkspot_drop)
+
+        def check_region_drop():
+            from bench.data.manifest import load_cells
+            df = load_cells(g, "A_s2")
+            b, y_max = g.filters.border_px, g.regions["A_s2"].y_max
+            ry = np.floor(df["ey"].to_numpy() + 0.5)
+            reg = (df["drop"] == "region").to_numpy()
+            kept = (df["drop"] == "").to_numpy()
+            print(f"  A_s2: {int(reg.sum())} cells dropped below y_max={y_max:g} (- {b} px margin), "
+                  f"{int(kept.sum())} kept, lowest kept at y={ry[kept].max():.0f}")
+            ok = reg.any() and (ry[kept] + b <= y_max).all() and (ry[reg] + b > y_max).all()
+            return 0 if ok else 1
+        _step(results, "regions: cells below a slide's cut line are dropped", check_region_drop)
     finally:
         print()
         print_table(results)
