@@ -245,7 +245,7 @@ def plan_jobs(cfg: BenchConfig, slides, inspect) -> List[dict]:
 
 
 def job_done(cfg: BenchConfig, job: dict) -> bool:
-    """Done = the map exists and was made with the current filter parameters."""
+    """Done = the map exists and was made with the current filter parameters and the slide's current scale."""
     p = Path(job["out"])
     if not p.exists():
         return False
@@ -255,7 +255,9 @@ def job_done(cfg: BenchConfig, job: dict) -> bool:
     except Exception:
         return False
     fl = cfg.filters
-    return (meta.get("block") == fl.block_px and meta.get("tile") == fl.scan_tile_px
+    r_native = fl.linf_px / float(job["row"]["scale"])         # the scale changes the radius in native px
+    return (abs(float(meta.get("r_native", -1.0)) - r_native) < 1e-6
+            and meta.get("block") == fl.block_px and meta.get("tile") == fl.scan_tile_px
             and meta.get("black_max") == fl.black_max and meta.get("full_frac") == fl.block_full_frac
             and meta.get("min_blob_blocks") == fl.min_blob_blocks and meta.get("linf_px") == fl.linf_px
             and bool(meta.get("smoke")) == cfg.is_smoke)

@@ -45,3 +45,18 @@ def test_remove_small_blobs():
     out = remove_small_blobs(m, 4)
     assert not out[2, 2] and out[10:14, 10:14].all()
     assert remove_small_blobs(m, 1).sum() == m.sum()
+
+
+def test_darkspot_map_redone_when_scale_changes(tmp_path):
+    """A map made at another scale has another L-inf radius in native px: it must not count as done."""
+    from types import SimpleNamespace
+    from bench.data.darkspots import job_done
+    fl = SimpleNamespace(block_px=16, scan_tile_px=4096, black_max=8, block_full_frac=0.9, min_blob_blocks=1,
+                         linf_px=224)
+    cfg = SimpleNamespace(filters=fl, is_smoke=False)
+    p = tmp_path / "s.npz"
+    meta = dict(block=16, tile=4096, black_max=8, full_frac=0.9, min_blob_blocks=1, linf_px=224,
+                r_native=224 / 0.5, scale=0.5, smoke=False)
+    np.savez(p, meta=np.array([repr(meta)]))
+    assert job_done(cfg, {"out": str(p), "row": {"scale": 0.5}})
+    assert not job_done(cfg, {"out": str(p), "row": {"scale": 1.0}})
