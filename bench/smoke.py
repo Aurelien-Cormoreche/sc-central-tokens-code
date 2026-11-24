@@ -469,7 +469,7 @@ def run_synthetic(out: Optional[str] = None, keep: bool = False) -> int:
         _step(results, "regions: cells below a slide's cut line are dropped", check_region_drop)
 
         def check_replaced_image():
-            """A slide file replaced by another version (as scripts/fix_wrapped_tiff.py does): its dark-spot map,
+            """A slide file replaced by another version (as scripts/reconvert_slide.py does): its dark-spot map,
             manifest row and embeddings stop counting as done, the other slides' do not."""
             import tifffile
             from bench.data import darkspots, manifest
