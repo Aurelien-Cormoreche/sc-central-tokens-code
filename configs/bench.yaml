@@ -40,7 +40,8 @@ regions:
 # swapped (the raw file repeats itself). Cells there are read at (x - dx, y - dy), i.e. from the original part
 # (bench/data/remap.py); crops that would reach into the copy are dropped ("remap"). Values: the last lines of
 # scripts/find_copy_offset.py <slide> (<slide>_copy_offset.json). After a change: bench darkspots + manifest.
-remap: {}
+remap: 
+  GSM9509150_NSCLC_lung_L4_L4: {from_row: 21024, dy: 19808, dx: 12757}
 #  GSM9509150_NSCLC_lung_L4_L4: {from_row: <green_from_row>, dy: <dy>, dx: <dx>,
 #                                note: "raw file repeats itself below from_row; shift from find_copy_offset.py"}
 
