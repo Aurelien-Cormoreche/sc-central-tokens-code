@@ -11,7 +11,8 @@ Image filter: drop a cell when its rounded extraction position is within filters
 the image edge, outside the slide's `regions` box or within filters.border_px of its edges, or when a
 dark/unreadable block lies within L-inf filters.linf_px (extraction px).
 {bench_root}/manifest/slides.parquet summarises counts and the per-slide hash that embeddings
-are validated against; manifest/class_counts.json gives per-cohort class counts (fold label
+and probe results are validated against: the extracted cells and the image file's content fingerprint, so
+a replaced image (e.g. a re-converted slide) invalidates them too; manifest/class_counts.json gives per-cohort class counts (fold label
 spaces).
 """
 from __future__ import annotations
@@ -26,8 +27,9 @@ import numpy as np
 import pandas as pd
 
 from bench.config import BenchConfig
-from bench.data.darkspots import load_coords, load_darkspots, smoke_rows
+from bench.data.darkspots import darkspot_path, load_coords, load_darkspots, map_matches_image, smoke_rows
 from bench.registry import UNKNOWN, Slide, genexp_slides
+from bench.utils import file_fingerprint
 from bench.utils import LOG, atomic_path, print_table, read_json, write_json
 
 
@@ -62,14 +64,16 @@ def linf_hits(mask: np.ndarray, cell: int, cx: np.ndarray, cy: np.ndarray, r: fl
     return _box_any(_sat(mask), y0, y1, x0, x1)
 
 
-def manifest_hash(df: pd.DataFrame, mask=None) -> str:
-    """Hash of the cells an extraction covers (rows, positions, ids, labels)."""
+def manifest_hash(df: pd.DataFrame, mask=None, wsi_fp: str = "") -> str:
+    """Hash of the cells an extraction covers (rows, positions, ids, labels) and of the image they are read
+    from (wsi_fp: bench.utils.file_fingerprint of the slide file)."""
     ext = df[df["extract"] if mask is None else mask]
     h = hashlib.sha256()
     h.update(ext.index.to_numpy(np.int64).tobytes())
     h.update(np.round(ext[["ex", "ey"]].to_numpy(np.float64), 4).tobytes())
     h.update("\n".join(ext["cell_id"].astype(str)).encode())
     h.update("\n".join(ext["label"].astype(str)).encode())
+    h.update(wsi_fp.encode())
     return h.hexdigest()[:16]
 
 
@@ -119,6 +123,10 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     r_native = fl.linf_px / s
     if abs(meta["r_native"] - r_native) > 1e-6 or meta["block"] != fl.block_px:
         raise SystemExit(f"{row['slide']}: dark-spot map was made with other filter settings; rerun `bench darkspots`")
+    fp = file_fingerprint(row["wsi_path"])
+    if not map_matches_image(meta, darkspot_path(cfg, row["slide"]), row["wsi_path"], fp):
+        raise SystemExit(f"{row['slide']}: the dark-spot map was made from another version of {row['wsi_path']} "
+                         f"(the file was replaced since); rerun `bench darkspots` for it")
     cand = drop == ""
     if cand.any():
         bad = ds["dark"] | ds["bad"]
@@ -137,6 +145,7 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     if dup.any():
         raise SystemExit(f"{row['slide']}: {int(dup.sum())} duplicate cell ids among extracted cells")
     df.index.name = "row"
+    df.attrs["wsi_fp"] = fp
     return df
 
 
@@ -144,6 +153,7 @@ def _manifest_job(args):
     cfg_dump, row, genexp, smoke = args
     cfg = BenchConfig.model_validate(cfg_dump)
     df = build_slide_manifest(cfg, row, genexp, smoke)
+    fp = df.attrs.get("wsi_fp", "")
     out = cells_path(cfg, row["slide"])
     with atomic_path(out) as tmp:
         df.to_parquet(tmp)
@@ -154,8 +164,8 @@ def _manifest_job(args):
         "n_border": int((df["drop"] == "border").sum()), "n_region": int((df["drop"] == "region").sum()),
         "n_darkspot": int((df["drop"] == "darkspot").sum()),
         "n_extract": int(df["extract"].sum()), "n_classify": int((df["extract"] & df["labelled"]).sum()),
-        "genexp": genexp, "hash": manifest_hash(df),
-        "hash_classify": manifest_hash(df, df["extract"] & df["labelled"]), "class_counts": counts,
+        "genexp": genexp, "wsi_fp": fp, "hash": manifest_hash(df, wsi_fp=fp),
+        "hash_classify": manifest_hash(df, df["extract"] & df["labelled"], wsi_fp=fp), "class_counts": counts,
     }
 
 

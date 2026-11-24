@@ -54,9 +54,50 @@ def test_darkspot_map_redone_when_scale_changes(tmp_path):
     fl = SimpleNamespace(block_px=16, scan_tile_px=4096, black_max=8, block_full_frac=0.9, min_blob_blocks=1,
                          linf_px=224)
     cfg = SimpleNamespace(filters=fl, is_smoke=False)
+    wsi = tmp_path / "s.tif"
+    wsi.write_bytes(b"image")
     p = tmp_path / "s.npz"
     meta = dict(block=16, tile=4096, black_max=8, full_frac=0.9, min_blob_blocks=1, linf_px=224,
                 r_native=224 / 0.5, scale=0.5, smoke=False)
     np.savez(p, meta=np.array([repr(meta)]))
-    assert job_done(cfg, {"out": str(p), "row": {"scale": 0.5}})
-    assert not job_done(cfg, {"out": str(p), "row": {"scale": 1.0}})
+    assert job_done(cfg, {"out": str(p), "row": {"scale": 0.5, "wsi_path": str(wsi)}})
+    assert not job_done(cfg, {"out": str(p), "row": {"scale": 1.0, "wsi_path": str(wsi)}})
+
+
+def test_darkspot_map_redone_when_image_replaced(tmp_path):
+    """A map made from another version of the image file (e.g. before a re-conversion) is not done, and the
+    manifest refuses it; maps from before fingerprints fall back on the file times."""
+    import os
+    from types import SimpleNamespace
+    from bench.data.darkspots import job_done, map_matches_image
+    from bench.utils import file_fingerprint
+    fl = SimpleNamespace(block_px=16, scan_tile_px=4096, black_max=8, block_full_frac=0.9, min_blob_blocks=1,
+                         linf_px=224)
+    cfg = SimpleNamespace(filters=fl, is_smoke=False)
+    wsi = tmp_path / "s.tif"
+    rng = np.random.default_rng(0)
+    wsi.write_bytes(rng.integers(0, 255, 1 << 20, dtype=np.uint8).tobytes())
+    base = dict(block=16, tile=4096, black_max=8, full_frac=0.9, min_blob_blocks=1, linf_px=224,
+                r_native=224.0, scale=1.0, smoke=False)
+    job = {"out": str(tmp_path / "s.npz"), "row": {"scale": 1.0, "wsi_path": str(wsi)}}
+    np.savez(job["out"], meta=np.array([repr({**base, "wsi_fp": file_fingerprint(wsi)})]))
+    assert job_done(cfg, job)
+    np.savez(tmp_path / "legacy.npz", meta=np.array([repr(base)]))            # no fingerprint, newer than image
+    assert map_matches_image(base, tmp_path / "legacy.npz", str(wsi))
+
+    data = bytearray(wsi.read_bytes())                                       # same size, other pixels
+    data[len(data) // 2: len(data) // 2 + 4096] = bytes(4096)
+    wsi.write_bytes(bytes(data))
+    t = os.path.getmtime(tmp_path / "legacy.npz") + 10
+    os.utime(wsi, (t, t))                                                    # replaced after the legacy map
+    assert not job_done(cfg, job)
+    assert not map_matches_image(base, tmp_path / "legacy.npz", str(wsi))
+
+
+def test_manifest_hash_follows_the_image():
+    import pandas as pd
+    from bench.data.manifest import manifest_hash
+    df = pd.DataFrame({"cell_id": ["a", "b"], "label": ["T", "B"], "ex": [1.0, 2.0], "ey": [3.0, 4.0],
+                       "extract": [True, True]})
+    assert manifest_hash(df) == manifest_hash(df, wsi_fp="")
+    assert manifest_hash(df, wsi_fp="f1") != manifest_hash(df, wsi_fp="f2")

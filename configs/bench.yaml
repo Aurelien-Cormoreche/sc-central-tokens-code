@@ -32,7 +32,9 @@ mpp_overrides: {}                        # slide: um/px (bench inspect; informat
 regions:
   GSM9509144_NSCLC_chuvio_L4_L4:
     y_max: 19038
-    note: "three superposed images below this line; keep the top one (scripts/find_cut_line.py, checked 2026-11-23)"
+    note: "below ~row 19027 the image is misread: the raw file is a classic TIFF whose 32-bit offsets wrap past 4 GiB
+      (scripts/check_tiff_offsets.py). Kept as a cut by choice (line from scripts/find_cut_line.py, checked
+      2026-11-23); GSM9509150, the other such slide, was re-converted instead (scripts/fix_wrapped_tiff.py)"
 
 # Global cell filter (identical for every model, readout and stage).
 filters:

@@ -467,6 +467,37 @@ def run_synthetic(out: Optional[str] = None, keep: bool = False) -> int:
             ok = reg.any() and (ry[kept] + b <= y_max).all() and (ry[reg] + b > y_max).all()
             return 0 if ok else 1
         _step(results, "regions: cells below a slide's cut line are dropped", check_region_drop)
+
+        def check_replaced_image():
+            """A slide file replaced by another version (as scripts/fix_wrapped_tiff.py does): its dark-spot map,
+            manifest row and embeddings stop counting as done, the other slides' do not."""
+            import tifffile
+            from bench.data import darkspots, manifest
+            from bench.data.inspect import load_inspect
+            from bench.extract import planner
+            from bench.jobs import execute, is_done, new_plan
+            from bench.registry import load_slides
+            name, ins, slides = "B_s1", load_inspect(g), load_slides(g)
+            path = ins.loc[name, "wsi_path"]
+            img = tifffile.imread(path)
+            tifffile.imwrite(path, np.ascontiguousarray(img[..., [1, 2, 0]]), tile=(256, 256), photometric="rgb",
+                             resolution=(1e4 / 0.25, 1e4 / 0.25), resolutionunit="CENTIMETER")
+            ds_jobs = darkspots.plan_jobs(g, slides, ins)
+            stale_maps = sorted(j["slide"] for j in ds_jobs if not is_done(g, j))
+            try:
+                manifest.build_slide_manifest(g, ins.loc[name].to_dict(), False)
+                refused = False
+            except SystemExit:
+                refused = True
+            execute(g, new_plan(g, "darkspots", [j for j in ds_jobs if j["slide"] == name], {"unit": "CPU"}),
+                    False, True, "cpu")
+            manifest.run_manifest(g, [s for s in slides if s.slide == name], ins, workers=1)
+            redo = sorted({j["slide"] for j in planner.plan_jobs(g, "1", g.enabled_models(), slides)
+                           if not is_done(g, j)})
+            print(f"  {name} replaced: dark-spot maps to redo {stale_maps}, manifest refused the old map: {refused}, "
+                  f"stage-1 extractions to redo after the new map and manifest: {redo}")
+            return 0 if stale_maps == [name] and refused and redo == [name] else 1
+        _step(results, "replaced slide image: only that slide is redone", check_replaced_image)
     finally:
         print()
         print_table(results)

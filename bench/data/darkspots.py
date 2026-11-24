@@ -12,6 +12,7 @@ Output per slide: {bench_root}/darkspots/{slide}.npz (+ .png review image).
 from __future__ import annotations
 
 import math
+import os
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -20,7 +21,7 @@ import numpy as np
 
 from bench.config import BenchConfig
 from bench.data.reader import ReadError, WSIReader
-from bench.utils import LOG, atomic_path, fmt_hours
+from bench.utils import LOG, atomic_path, file_fingerprint, fmt_hours
 
 
 def darkspot_path(cfg: BenchConfig, slide: str) -> Path:
@@ -186,7 +187,8 @@ def darkspots_one(cfg: BenchConfig, row: dict, smoke: bool = False) -> dict:
         reader.close()
     dark = remove_small_blobs(res["dark"], fl.min_blob_blocks)
     out = darkspot_path(cfg, row["slide"])
-    meta = dict(slide=row["slide"], wsi_path=row["wsi_path"], width=reader.width, height=reader.height,
+    meta = dict(slide=row["slide"], wsi_path=row["wsi_path"], wsi_fp=file_fingerprint(row["wsi_path"]),
+                width=reader.width, height=reader.height,
                 block=fl.block_px, tile=fl.scan_tile_px, black_max=fl.black_max, full_frac=fl.block_full_frac,
                 min_blob_blocks=fl.min_blob_blocks, r_native=r_native, linf_px=fl.linf_px, scale=s,
                 n_cells_considered=int(len(cx)), smoke=smoke)
@@ -244,8 +246,17 @@ def plan_jobs(cfg: BenchConfig, slides, inspect) -> List[dict]:
     return jobs
 
 
+def map_matches_image(meta: dict, map_path, wsi_path: str, fp: Optional[str] = None) -> bool:
+    """The map was made from the image file as it is now: same content fingerprint, or, for maps made before
+    fingerprints were recorded, the image has not been replaced since the map was written."""
+    if "wsi_fp" in meta:
+        return meta["wsi_fp"] == (fp or file_fingerprint(wsi_path))
+    return os.path.getmtime(map_path) >= os.path.getmtime(wsi_path)
+
+
 def job_done(cfg: BenchConfig, job: dict) -> bool:
-    """Done = the map exists and was made with the current filter parameters and the slide's current scale."""
+    """Done = the map exists and was made with the current filter parameters, the slide's current scale and
+    the current image file."""
     p = Path(job["out"])
     if not p.exists():
         return False
@@ -260,7 +271,8 @@ def job_done(cfg: BenchConfig, job: dict) -> bool:
             and meta.get("block") == fl.block_px and meta.get("tile") == fl.scan_tile_px
             and meta.get("black_max") == fl.black_max and meta.get("full_frac") == fl.block_full_frac
             and meta.get("min_blob_blocks") == fl.min_blob_blocks and meta.get("linf_px") == fl.linf_px
-            and bool(meta.get("smoke")) == cfg.is_smoke)
+            and bool(meta.get("smoke")) == cfg.is_smoke
+            and map_matches_image(meta, p, job["row"]["wsi_path"]))
 
 
 def _one(args):

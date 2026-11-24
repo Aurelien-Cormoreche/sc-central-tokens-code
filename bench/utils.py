@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import fnmatch
 import json
 import logging
@@ -147,6 +148,19 @@ def write_npy(path: os.PathLike, arr: np.ndarray) -> None:
 
 def matches_any(name: str, patterns: Iterable[str]) -> bool:
     return any(fnmatch.fnmatchcase(name, p) for p in patterns)
+
+
+def file_fingerprint(path: os.PathLike, n_blocks: int = 64, block: int = 64 * 1024) -> str:
+    """Content fingerprint of a (large) file: its size and n_blocks evenly spaced blocks (~4 MB read).
+    Unlike mtime it survives copies; an image rewritten with other pixels gets another one (the blocks land
+    in tissue)."""
+    size = os.path.getsize(path)
+    h = hashlib.sha256(str(size).encode())
+    with open(path, "rb") as fh:
+        for i in range(n_blocks):
+            fh.seek(0 if n_blocks == 1 else max(0, size - block) * i // (n_blocks - 1))
+            h.update(fh.read(block))
+    return h.hexdigest()[:16]
 
 
 def fmt_hours(h: float) -> str:
