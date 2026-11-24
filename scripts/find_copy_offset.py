@@ -17,6 +17,9 @@ Everything is measured on the slide, nothing assumed:
      <slide>_copy_offset.json: green part = rows >= green_from_row; there (x, y) -> (x - dx, y - dy)
 
   python scripts/find_copy_offset.py GSM9509150_NSCLC_lung_L4_L4
+  python scripts/find_copy_offset.py GSM9509150_NSCLC_lung_L4_L4 --landmarks XG YG XP YP
+      # use your own shift: the same feature at (XG, YG) in the green part and (XP, YP) in the purple part
+      # (QuPath pixel coordinates); it is checked on the green patches and drawn like a measured one
 Reads the overview (bench overview PNG if present, else the whole slide: minutes) and some MB at full res.
 """
 from __future__ import annotations
@@ -346,6 +349,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("slide")
     ap.add_argument("--max-side", type=int, default=2000, help="overview size, as used by bench overview")
+    ap.add_argument("--landmarks", nargs=4, type=float, metavar=("XG", "YG", "XP", "YP"),
+                    help="a feature in the green part (XG, YG) and the same in the purple part (XP, YP): use that shift")
+    ap.add_argument("--start", type=int, help="first row of the green part (default: measured)")
     ap.add_argument("--config", help="bench YAML (default: $BENCH_CONFIG or configs/bench.yaml)")
     a = ap.parse_args(argv)
     import openslide
@@ -372,12 +378,28 @@ def main(argv=None) -> int:
 
         print(f"{a.slide}: {W} x {H} px; overview {thumb.shape[1]} x {thumb.shape[0]} ({src})")
         start, cols = green_start(read, W, H, thumb, kf)
-        if start is None:
+        if start is None and a.start is None:
             print("no green part found")
             return 1
         print(f"green part from row {start}" + (f" (measured at columns {', '.join(f'{x}: row {y}' for x, y in cols)})"
                                                 if cols else " (overview estimate)"))
-        cands = measure(read, W, H, thumb, kf, start)
+        if a.start is not None:
+            start = a.start
+            print(f"  using row {start} (--start)")
+        if a.landmarks:
+            xg, yg, xp, yp = a.landmarks
+            ldy, ldx = int(round(yg - yp)), int(round(xg - xp))
+            print(f"landmarks: green ({xg:.0f}, {yg:.0f}) = purple ({xp:.0f}, {yp:.0f}) -> shift (dy, dx) = ({ldy}, {ldx})")
+            g0 = read(int(xg) - 128, int(yg) - 128, 256, 256)
+            p0 = read(int(xp) - 128 - 32, int(yp) - 128 - 32, 256 + 64, 256 + 64)
+            oy, ox, ncc = locate(g0, p0)
+            order, mad, mad0 = best_order(g0, p0[oy:oy + 256, ox:ox + 256])
+            print(f"  around the landmark: best match {oy - 32:+d} / {ox - 32:+d} px from the purple point, NCC {ncc:.3f}, "
+                  f"stored channels {order} give the purple (mean |diff| {mad:.1f}, {mad0:.1f} as stored)")
+            cands = [{"dy": ldy, "dx": ldx, "boxes": 0, "ncc": ncc, "order": order, "mad": mad, "mad_as_stored": mad0,
+                      "overview": "landmarks"}]
+        else:
+            cands = measure(read, W, H, thumb, kf, start)
         if not cands:
             print("no shift found: no box of green tissue matched the purple tissue")
             return 1
