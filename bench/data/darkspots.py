@@ -21,6 +21,7 @@ import numpy as np
 
 from bench.config import BenchConfig
 from bench.data.reader import ReadError, WSIReader
+from bench.data.remap import read_positions, remap_for, remap_key
 from bench.utils import LOG, atomic_path, file_fingerprint, fmt_hours
 
 
@@ -170,6 +171,8 @@ def darkspots_one(cfg: BenchConfig, row: dict, smoke: bool = False) -> dict:
         rows = smoke_rows(cx, cy, cfg.smoke.max_cells_per_slide, cfg.smoke.seed, int(row["width"]),
                           int(row["height"]), margin=(fl.border_px + 2 * fl.linf_px) / s)
         cx, cy = cx[rows], cy[rows]
+    rm = remap_for(cfg, row["slide"])
+    cx, cy, _ = read_positions(rm, cx, cy)                      # scan where the cells are read
     reader = WSIReader(row["wsi_path"], scale=s)
     try:
         need = needed_tiles(cx, cy, r_native, reader.width, reader.height, fl.scan_tile_px)
@@ -191,7 +194,7 @@ def darkspots_one(cfg: BenchConfig, row: dict, smoke: bool = False) -> dict:
                 width=reader.width, height=reader.height,
                 block=fl.block_px, tile=fl.scan_tile_px, black_max=fl.black_max, full_frac=fl.block_full_frac,
                 min_blob_blocks=fl.min_blob_blocks, r_native=r_native, linf_px=fl.linf_px, scale=s,
-                n_cells_considered=int(len(cx)), smoke=smoke)
+                n_cells_considered=int(len(cx)), smoke=smoke, remap=remap_key(rm))
     with atomic_path(out) as tmp:
         with open(tmp, "wb") as fh:
             np.savez_compressed(fh, dark=np.packbits(dark), bad=np.packbits(res["bad"]),
@@ -255,8 +258,8 @@ def map_matches_image(meta: dict, map_path, wsi_path: str, fp: Optional[str] = N
 
 
 def job_done(cfg: BenchConfig, job: dict) -> bool:
-    """Done = the map exists and was made with the current filter parameters, the slide's current scale and
-    the current image file."""
+    """Done = the map exists and was made with the current filter parameters, the slide's current scale, `remap`
+    setting and image file."""
     p = Path(job["out"])
     if not p.exists():
         return False
@@ -272,6 +275,7 @@ def job_done(cfg: BenchConfig, job: dict) -> bool:
             and meta.get("black_max") == fl.black_max and meta.get("full_frac") == fl.block_full_frac
             and meta.get("min_blob_blocks") == fl.min_blob_blocks and meta.get("linf_px") == fl.linf_px
             and bool(meta.get("smoke")) == cfg.is_smoke
+            and meta.get("remap") == remap_key(remap_for(cfg, job.get("slide") or job["row"].get("slide", "")))
             and map_matches_image(meta, p, job["row"]["wsi_path"]))
 
 

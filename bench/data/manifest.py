@@ -3,7 +3,9 @@
 Per slide, {bench_root}/manifest/cells/{slide}.parquet holds every row of the slide's
 patch_coordinates.h5 (row i = coordinates row i) with:
   cell_id, label_raw, label (mapped; "Unknown" for unmapped types), cx, cy (native centroid),
-  ex, ey (extraction-space centroid), drop ("" | border | region | darkspot | smoke), labelled, extract.
+  ex, ey (extraction-space position the crop is read at: the centroid, or, on a `remap` slide, where the copied
+  part's cells are read from; bench/data/remap.py), moved (read elsewhere than cx, cy),
+  drop ("" | remap | border | region | darkspot | smoke), labelled, extract.
 `extract` = kept by the image filter and (labelled, or on a gene-expression slide);
 classification uses extract & labelled.
 
@@ -28,6 +30,7 @@ import pandas as pd
 
 from bench.config import BenchConfig
 from bench.data.darkspots import darkspot_path, load_coords, load_darkspots, map_matches_image, smoke_rows
+from bench.data.remap import read_positions, remap_drop, remap_for, remap_key
 from bench.registry import UNKNOWN, Slide, genexp_slides
 from bench.utils import file_fingerprint
 from bench.utils import LOG, atomic_path, print_table, read_json, write_json
@@ -84,13 +87,15 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     s = float(row["scale"])
     cx, cy, ids, types = load_coords(row["coords_path"], cfg.geometry.centre_offset_px)
     n = len(cx)
+    rm = remap_for(cfg, row["slide"])
+    qx, qy, steps = read_positions(rm, cx, cy)                 # where each cell is read (native px)
     label = np.array([mapping.get(t if isinstance(t, bytes) else str(t).encode(), UNKNOWN) for t in types],
                      dtype=object)
     df = pd.DataFrame({
         "cell_id": [c.decode() if isinstance(c, bytes) else str(c) for c in ids],
         "label_raw": [t.decode() if isinstance(t, bytes) else str(t) for t in types],
         "label": label.astype(str),
-        "cx": cx, "cy": cy, "ex": cx * s, "ey": cy * s,
+        "cx": cx, "cy": cy, "ex": qx * s, "ey": qy * s, "moved": steps > 0,
     })
     drop = np.full(n, "", dtype=object)
     if smoke:
@@ -101,6 +106,7 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     ew, eh = int(row["ext_width"]), int(row["ext_height"])
     rx = np.floor(df["ex"].to_numpy() + 0.5)
     ry = np.floor(df["ey"].to_numpy() + 0.5)
+    drop[(drop == "") & remap_drop(rm, rx, ry, steps > 0, s, fl.border_px, ew)] = "remap"
     border = (rx - fl.border_px < 0) | (ry - fl.border_px < 0) | (rx + fl.border_px > ew) | (ry + fl.border_px > eh)
     drop[(drop == "") & border] = "border"
     reg = cfg.regions.get(row["slide"])
@@ -123,6 +129,9 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     r_native = fl.linf_px / s
     if abs(meta["r_native"] - r_native) > 1e-6 or meta["block"] != fl.block_px:
         raise SystemExit(f"{row['slide']}: dark-spot map was made with other filter settings; rerun `bench darkspots`")
+    if meta.get("remap") != remap_key(rm):
+        raise SystemExit(f"{row['slide']}: the dark-spot map was made with another `remap` setting; rerun "
+                         f"`bench darkspots` for it")
     fp = file_fingerprint(row["wsi_path"])
     if not map_matches_image(meta, darkspot_path(cfg, row["slide"]), row["wsi_path"], fp):
         raise SystemExit(f"{row['slide']}: the dark-spot map was made from another version of {row['wsi_path']} "
@@ -130,9 +139,9 @@ def build_slide_manifest(cfg: BenchConfig, row: dict, genexp: bool, smoke: bool 
     cand = drop == ""
     if cand.any():
         bad = ds["dark"] | ds["bad"]
-        hit = linf_hits(bad, fl.block_px, cx[cand], cy[cand], r_native)
+        hit = linf_hits(bad, fl.block_px, qx[cand], qy[cand], r_native)
         # every kept cell's box must lie in scanned tiles, otherwise the map is incomplete
-        unscanned = linf_hits(~ds["scanned"], meta["tile"], cx[cand], cy[cand], r_native)
+        unscanned = linf_hits(~ds["scanned"], meta["tile"], qx[cand], qy[cand], r_native)
         if (unscanned & ~hit).any():
             raise SystemExit(f"{row['slide']}: dark-spot map does not cover {int((unscanned & ~hit).sum())} cells "
                              f"(made for another cell set?) -- rerun `bench darkspots`")
@@ -162,7 +171,8 @@ def _manifest_job(args):
         "slide": row["slide"], "cohort": row["cohort"], "n_total": int(len(df)),
         "n_labelled": int(df["labelled"].sum()),
         "n_border": int((df["drop"] == "border").sum()), "n_region": int((df["drop"] == "region").sum()),
-        "n_darkspot": int((df["drop"] == "darkspot").sum()),
+        "n_darkspot": int((df["drop"] == "darkspot").sum()), "n_remap": int((df["drop"] == "remap").sum()),
+        "n_moved": int((df["moved"] & df["extract"]).sum()),
         "n_extract": int(df["extract"].sum()), "n_classify": int((df["extract"] & df["labelled"]).sum()),
         "genexp": genexp, "wsi_fp": fp, "hash": manifest_hash(df, wsi_fp=fp),
         "hash_classify": manifest_hash(df, df["extract"] & df["labelled"], wsi_fp=fp), "class_counts": counts,
@@ -170,10 +180,11 @@ def _manifest_job(args):
 
 
 def check_regions(cfg: BenchConfig, known) -> None:
-    """Every `regions` entry names a known slide and a non-empty box."""
-    bad = sorted(set(cfg.regions) - set(known) - set(cfg.exclude))
-    if bad:
-        raise SystemExit(f"regions: unknown slide(s) {', '.join(bad)} (check the names in configs/bench.yaml)")
+    """Every `regions` and `remap` entry names a known slide; every box is non-empty."""
+    for key, d in (("regions", cfg.regions), ("remap", cfg.remap)):
+        bad = sorted(set(d) - set(known) - set(cfg.exclude))
+        if bad:
+            raise SystemExit(f"{key}: unknown slide(s) {', '.join(bad)} (check the names in configs/bench.yaml)")
     for name, r in cfg.regions.items():
         for lo, hi in ((r.x_min, r.x_max), (r.y_min, r.y_max)):
             if lo is not None and hi is not None and lo >= hi:
@@ -214,8 +225,8 @@ def run_manifest(cfg: BenchConfig, slides: List[Slide], inspect: pd.DataFrame, w
     write_json(cfg.root / "manifest" / "class_counts_by_slide.json", per_slide)
     write_json(cfg.root / "manifest" / "class_counts.json", cc)
     shown = new[new.slide.isin([s.slide for s in slides])]
-    cols = [c for c in ("n_total", "n_labelled", "n_border", "n_region", "n_darkspot", "n_extract", "n_classify")
-            if c in shown]
+    cols = [c for c in ("n_total", "n_labelled", "n_border", "n_region", "n_remap", "n_darkspot", "n_extract",
+                        "n_moved", "n_classify") if c in shown]
     agg = shown.groupby("cohort")[cols].sum()
     agg.loc["TOTAL"] = agg.sum()
     print_table([{"cohort": k, **{c: f"{int(v):,}" for c, v in r.items()}} for k, r in agg.iterrows()])

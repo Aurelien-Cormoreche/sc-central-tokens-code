@@ -127,6 +127,17 @@ class Region(_Strict):
     note: str = ""
 
 
+class Remap(_Strict):
+    """The part of a slide from row `from_row` down is a copy of the part above, shifted by (dy, dx) and with its
+    colours swapped (the raw file repeats itself; scripts/find_copy_offset.py measures this). A cell whose centroid
+    lies at a row >= from_row is read at (x - dx, y - dy), moved again while still at a row >= from_row, so its
+    crop comes from the original part in the right colours (native slide px)."""
+    from_row: int = Field(gt=0)
+    dy: int = Field(gt=0)
+    dx: int
+    note: str = ""
+
+
 class ModelCfg(_Strict):
     input_px: int
     patch: int
@@ -274,6 +285,7 @@ class BenchConfig(_Strict):
     resolution: Resolution = Field(default_factory=Resolution)
     mpp_overrides: Dict[str, float] = Field(default_factory=dict)
     regions: Dict[str, Region] = Field(default_factory=dict)
+    remap: Dict[str, Remap] = Field(default_factory=dict)
     filters: Filters = Field(default_factory=Filters)
     models: Dict[str, ModelCfg] = Field(default_factory=dict)
     readouts: List[Literal["cls", "central"]] = Field(default_factory=lambda: ["cls", "central"])

@@ -340,6 +340,10 @@ def _paint(rng, w: int, h: int, cx, cy, types, r: int, dark: Optional[tuple]) ->
     return img
 
 
+# B_s3: from row 600 down, a copy of the part above shifted by (500, 20), colours swapped (like GSM9509150)
+SYNTH_REMAP = {"slide": "B_s3", "from_row": 600, "dy": 500, "dx": 20}
+
+
 def make_synthetic(work: Path, seed: int = 0) -> Path:
     """Slides, coordinates, adata and a config under `work`; returns the config path."""
     import h5py
@@ -364,6 +368,11 @@ def make_synthetic(work: Path, seed: int = 0) -> Path:
         types = np.array(RAW_TYPES, dtype=object)[rng.choice(len(RAW_TYPES), size=n, p=p / p.sum())]
         dark = (300 * f, 300 * f, 420 * f, 420 * f) if s["slide"] == "A_s1" else None
         img = _paint(rng, w, h, cx, cy, types, 5 * f, dark)
+        if s["slide"] == SYNTH_REMAP["slide"]:
+            r0, dy, dx = SYNTH_REMAP["from_row"], SYNTH_REMAP["dy"], SYNTH_REMAP["dx"]
+            src = img.copy()
+            img[r0:] = 236
+            img[r0:, dx:] = src[r0 - dy:h - dy, :w - dx][..., [1, 2, 0]]
         tifffile.imwrite(wsi / f"{s['slide']}_he_image.tif", img, tile=(256, 256), photometric="rgb",
                          resolution=(1e4 / mpp, 1e4 / mpp), resolutionunit="CENTIMETER")
         d = xen / s["slide"]
@@ -398,6 +407,7 @@ def make_synthetic(work: Path, seed: int = 0) -> Path:
         "resolution": {"resample_below_mpp": 0.2, "target_mpp": 0.25},
         "filters": {"linf_px": 24, "border_px": 40, "block_px": 16, "scan_tile_px": 512},
         "regions": {"A_s2": {"y_max": 700, "note": "synthetic: keep the top part"}},
+        "remap": {SYNTH_REMAP["slide"]: {k: v for k, v in SYNTH_REMAP.items() if k != "slide"}},
         "models": {"tiny": {"input_px": 32, "patch": 8, "batch_size": 64, "cells_per_s": 400}},
         "extract": {"region_px": 512, "num_workers": 0, "slide_overhead_s": 1, "bin_overhead_s": 1},
         "slurm": {"partition": None, "max_hours": 1, "cpus": 2},
@@ -467,6 +477,41 @@ def run_synthetic(out: Optional[str] = None, keep: bool = False) -> int:
             ok = reg.any() and (ry[kept] + b <= y_max).all() and (ry[reg] + b > y_max).all()
             return 0 if ok else 1
         _step(results, "regions: cells below a slide's cut line are dropped", check_region_drop)
+
+        def check_remap():
+            """Cells of B_s3's copied part are read from the original part: each moved cell's crop equals its
+            crop in the copy with the colours restored; no kept crop reaches into the copy."""
+            from bench.data.inspect import load_inspect
+            from bench.data.manifest import load_cells
+            from bench.data.reader import WSIReader
+            from bench.data.regions import crop_origins
+            name = SYNTH_REMAP["slide"]
+            rm, df, row = g.remap[name], load_cells(g, name), load_inspect(g).loc[name]
+            s, n = float(row["scale"]), 32
+            kept = (df["drop"] == "").to_numpy()
+            moved = df["moved"].to_numpy() & kept
+            checked = same = 0
+            rd = WSIReader(row["wsi_path"], scale=s)
+            try:
+                for r in df[moved].itertuples():
+                    ox, oy = crop_origins(np.array([r.ex]), np.array([r.ey]), n)
+                    sx, sy = crop_origins(np.array([r.cx * s]), np.array([r.cy * s]), n)
+                    if sy[0] < rm.from_row * s or sx[0] < 0 or sx[0] + n > rd.ext_width or sy[0] + n > rd.ext_height:
+                        continue
+                    got = rd.read_ext(int(ox[0]), int(oy[0]), n, n)
+                    want = rd.read_ext(int(sx[0]), int(sy[0]), n, n)[..., [2, 0, 1]]     # the copy, colours restored
+                    checked += 1
+                    same += bool(np.array_equal(got, want))
+            finally:
+                rd.close()
+            ry = np.floor(df["ey"].to_numpy() + 0.5)
+            reach = int((ry[kept] + g.filters.border_px > rm.from_row * s).sum())
+            n_drop = int((df["drop"] == "remap").sum())
+            print(f"  {name}: {int(moved.sum())} kept cells read from the original part, {same}/{checked} crops equal "
+                  f"to the copy's with colours restored; {n_drop} dropped (crop reaches the copy); kept crops "
+                  f"reaching the copy: {reach}")
+            return 0 if checked > 0 and same == checked and reach == 0 and n_drop > 0 else 1
+        _step(results, "remap: the copied part's cells are read from the original part", check_remap)
 
         def check_replaced_image():
             """A slide file replaced by another version (as scripts/reconvert_slide.py does): its dark-spot map,

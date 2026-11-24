@@ -48,11 +48,12 @@ def _sizes(cfg, models: Optional[List[str]]) -> Dict[int, List[str]]:
 
 
 def pick_cells(cx: np.ndarray, cy: np.ndarray, types: np.ndarray, width_ext: int, height_ext: int, scale: float,
-               margin_ext: float, k: int, seed: int) -> np.ndarray:
-    """k cells whose largest crop lies inside the image, of different cell types where possible."""
+               margin_ext: float, k: int, seed: int, allowed: Optional[np.ndarray] = None) -> np.ndarray:
+    """k cells whose largest crop lies inside the image (and are `allowed`), of different cell types where
+    possible."""
     ex, ey = cx * scale, cy * scale
     ok = np.flatnonzero((ex >= margin_ext) & (ey >= margin_ext) & (ex < width_ext - margin_ext)
-                        & (ey < height_ext - margin_ext))
+                        & (ey < height_ext - margin_ext) & (True if allowed is None else allowed))
     if len(ok) == 0:
         return ok
     rng = np.random.default_rng(seed)
@@ -88,12 +89,17 @@ def slide_sheet(cfg, row: dict, sizes: Dict[int, List[str]], k: int, seed: int):
 
     mpp = _num(row.get("mpp"))
     scale = _num(row.get("scale")) or scale_for(mpp, cfg.resolution.resample_below_mpp, cfg.resolution.target_mpp)
-    cx, cy, ids, types = load_coords(row["coords_path"], cfg.geometry.centre_offset_px)
+    from bench.data.remap import read_positions, remap_drop, remap_for
+    cx0, cy0, ids, types = load_coords(row["coords_path"], cfg.geometry.centre_offset_px)
+    rm = remap_for(cfg, row["slide"])
+    cx, cy, steps = read_positions(rm, cx0, cy0)               # where bench extract reads each cell
     types = np.array([t.decode() if isinstance(t, bytes) else str(t) for t in types], dtype=object)
     rd = WSIReader(row["wsi_path"], scale=scale)
     try:
         largest = max(sizes)
-        sel = pick_cells(cx, cy, types, rd.ext_width, rd.ext_height, scale, largest / 2 + 2, k, seed)
+        allowed = ~remap_drop(rm, np.floor(cx * scale + 0.5), np.floor(cy * scale + 0.5), steps > 0, scale,
+                              largest / 2 + 2, rd.ext_width)
+        sel = pick_cells(cx, cy, types, rd.ext_width, rd.ext_height, scale, largest / 2 + 2, k, seed, allowed)
         ncol = len(sizes)
         page = Image.new("RGB", (LABEL_W + ncol * TILE, HEAD + COL_HEAD + max(len(sel), 1) * TILE), "white")
         d = ImageDraw.Draw(page)
@@ -117,7 +123,9 @@ def slide_sheet(cfg, row: dict, sizes: Dict[int, List[str]], k: int, seed: int):
             cid = ids[i].decode() if isinstance(ids[i], bytes) else str(ids[i])
             d.text((8, y0 + 8), cid[-28:], fill="black", font=f_small)
             d.text((8, y0 + 26), types[i][:28], fill="black", font=f_small)
-            d.text((8, y0 + 44), f"x={cx[i]:.0f} y={cy[i]:.0f} px", fill=(90, 90, 90), font=f_small)
+            d.text((8, y0 + 44), f"x={cx0[i]:.0f} y={cy0[i]:.0f} px", fill=(90, 90, 90), font=f_small)
+            if steps[i]:
+                d.text((8, y0 + 62), f"read at x={cx[i]:.0f} y={cy[i]:.0f} (remap)", fill=(200, 0, 0), font=f_small)
             for j, n in enumerate(size_list):
                 ex, ey = cx[i] * scale, cy[i] * scale
                 ox, oy = crop_origins(np.array([ex]), np.array([ey]), n)

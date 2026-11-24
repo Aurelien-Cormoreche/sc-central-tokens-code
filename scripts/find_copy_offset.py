@@ -17,6 +17,7 @@ Everything is measured on the slide, nothing assumed:
      box the shift points to | their difference; <slide>_copy_cells.png: a green box with its cells | the purple
      box with those cells mapped (cyan) and its own cells (yellow); <slide>_copy_offset.json: green part = rows
      >= green_from_row; there (x, y) -> (x - dx, y - dy)
+  6. the configs/bench.yaml `remap` entry that makes bench read those cells there (bench/data/remap.py)
 
   python scripts/find_copy_offset.py GSM9509150_NSCLC_lung_L4_L4
   python scripts/find_copy_offset.py GSM9509150_NSCLC_lung_L4_L4 --landmarks XG YG XP YP
@@ -531,6 +532,10 @@ def main(argv=None) -> int:
     jp = out / f"{a.slide}_copy_offset.json"
     jp.write_text(json.dumps(res, indent=1))
     print(f"{cmp_png}\n{png}\n{jp}")
+    print(f"\nto read the green part's cells from the purple part in bench, add to configs/bench.yaml:\n"
+          f"remap:\n  {a.slide}: {{from_row: {start}, dy: {dy}, dx: {dx}}}\n"
+          f"then: bench darkspots --datasets {a.slide} --local; bench manifest --datasets {a.slide}; "
+          f"bench crops --datasets {a.slide}")
     return 0
 
 

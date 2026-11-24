@@ -32,10 +32,17 @@ mpp_overrides: {}                        # slide: um/px (bench inspect; informat
 regions:
   GSM9509144_NSCLC_chuvio_L4_L4:
     y_max: 19038
-    note: "below this line the image is misread (bytes one position off, rows shifted: like GSM9509150, the
-      other SPLIT slide with > 4 GiB of pixels; scripts/check_converted_slide.py). Kept as a cut by choice
-      (line from scripts/find_cut_line.py, checked 2026-11-23); GSM9509150 is re-converted instead
-      (scripts/reconvert_slide.py)"
+    note: "below this line the raw image repeats itself (a shifted copy, colours swapped: like GSM9509150, the
+      other SPLIT slide with > 4 GiB of pixels). Kept as a cut by choice (line from scripts/find_cut_line.py,
+      checked 2026-11-23); GSM9509150 is remapped instead (below)"
+
+# Per-slide copied part: from row from_row down, the image is a copy of the part above shifted by (dy, dx), colours
+# swapped (the raw file repeats itself). Cells there are read at (x - dx, y - dy), i.e. from the original part
+# (bench/data/remap.py); crops that would reach into the copy are dropped ("remap"). Values: the last lines of
+# scripts/find_copy_offset.py <slide> (<slide>_copy_offset.json). After a change: bench darkspots + manifest.
+remap: {}
+#  GSM9509150_NSCLC_lung_L4_L4: {from_row: <green_from_row>, dy: <dy>, dx: <dx>,
+#                                note: "raw file repeats itself below from_row; shift from find_copy_offset.py"}
 
 # Global cell filter (identical for every model, readout and stage).
 filters:
