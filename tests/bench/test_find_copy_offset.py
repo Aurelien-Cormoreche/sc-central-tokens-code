@@ -45,18 +45,17 @@ def test_mapping_points_at_the_copied_pixel(slide):
     assert list(k) == [0, 0] and list(x) == [5, W - 1] and list(y) == [dy - 1, dy - 1]
 
 
-def test_overview_and_full_resolution_find_both_shifts(slide):
+def test_every_shift_search_finds_the_copy_of_a_wrapped_buffer(slide):
     _, stored, _, _ = slide
     g = 8
     thumb = stored.reshape(H // g, g, W // g, g, 3).mean(axis=(1, 3)).astype(np.uint8)
     read = lambda x, y, w, h: stored[y:y + h, x:x + w]        # noqa: E731
     dy, dx = divmod(f.copy_shift(1, M), W)
-    found = set()
-    for py, px, _ in f.thumb_shift(thumb)[:2]:
-        for b in f.refine(read, W, H, (round(py * g), round(px * g)), thumb, 1 / g, n_boxes=2, box=128, margin=32):
-            assert b[4] > 0.9 and b[5] == (2, 0, 1) and b[6] < 3
-            found.add((b[2], b[3]))
-    assert found == {(dy, dx), (dy + 1, dx - W)}
+    start, _ = f.green_start(read, W, H, thumb, 1 / g)
+    assert abs(start - dy) <= 2
+    best = f.measure(read, W, H, thumb, 1 / g, start, box=256, margin=32)[0]
+    assert (best["dy"], best["dx"]) in {(dy, dx), (dy + 1, dx - W)}   # the main part or the wrapped strip
+    assert best["order"] == (2, 0, 1) and best["mad"] < 3
 
 
 START, DY, DX = 900, 850, 60

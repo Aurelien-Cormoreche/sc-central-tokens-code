@@ -5,16 +5,18 @@
 Everything is measured on the slide, nothing assumed:
   1. where the green part starts: the row where the tissue colour flips (overview, refined at full resolution
      on a few columns)
-  2. the shift: phase correlation of the green and the purple tissue on the overview, refined to the pixel on
-     full-resolution boxes of green tissue (NCC of tissue density, which ignores the colour swap); the channel
-     order that turns the green back into the purple
+  2. the shift: on the overview, every shift (dy, dx) is tried: the green tissue moved back by it and compared
+     pixel by pixel with the purple part (mean squared difference; all shifts at once with FFTs); the best is then
+     refined to the pixel on full-resolution boxes of green tissue; and the channel order that turns the green
+     back into the purple
   3. how much of the green part that one shift explains: a grid of green-tissue boxes, each compared with the
      purple box the shift points to
   4. the cells in the green part, mapped by the shift: do their centroids sit on the nuclei of the green tissue
      as placed (as the purple part's cells do on theirs), and do the mapped positions fall on purple-part cells
-  5. {bench_root}/qc/conversion/<slide>_copy_offset.png (a green box with its cells | the purple box the shift
-     points to, with those cells mapped in cyan and the purple part's own cells in yellow) and
-     <slide>_copy_offset.json: green part = rows >= green_from_row; there (x, y) -> (x - dx, y - dy)
+  5. {bench_root}/qc/conversion/<slide>_copy_offset.png: green boxes as stored | colours restored | the purple
+     box the shift points to | their difference; <slide>_copy_cells.png: a green box with its cells | the purple
+     box with those cells mapped (cyan) and its own cells (yellow); <slide>_copy_offset.json: green part = rows
+     >= green_from_row; there (x, y) -> (x - dx, y - dy)
 
   python scripts/find_copy_offset.py GSM9509150_NSCLC_lung_L4_L4
   python scripts/find_copy_offset.py GSM9509150_NSCLC_lung_L4_L4 --landmarks XG YG XP YP
@@ -112,23 +114,36 @@ def green_start(read, W: int, H: int, thumb: np.ndarray, kf: float, n_cols: int 
 
 # ── the shift ──
 
-def thumb_shift(thumb: np.ndarray, n_peaks: int = 3):
-    """[(dy, dx, strength)] in overview px: shifts s with green(p) ~ purple(p - s), by phase correlation of the
-    green and the purple tissue (zero-padded, so shifts are not taken modulo the image size)."""
-    d = _density(thumb)
-    g = green(thumb)
-    a = np.where(tissue(thumb) & ~g, d, 0.0)
-    b = np.where(g, d, 0.0)
+def _xcorr(A: np.ndarray, B: np.ndarray, shape) -> np.ndarray:
+    """C[s] = sum_p A[p] * B[p - s] for every shift s at once (zero-padded to `shape`; index = s mod shape)."""
+    return np.fft.irfft2(np.fft.rfft2(A, shape) * np.conj(np.fft.rfft2(B, shape)), shape)
+
+
+def search_shift(thumb: np.ndarray, start_t: int, min_overlap: float = 0.3, n_best: int = 3):
+    """Every shift (dy, dx) of the overview tried at once: the green part's tissue moved back by it and compared
+    with the purple part, pixel by pixel (mean squared difference of tissue density, which ignores the colour
+    swap). [(dy, dx, rms difference, share of the green tissue compared)], best first, in overview px; shifts
+    that compare under `min_overlap` of the green tissue are not considered."""
+    d = _density(thumb).astype(np.float64)
     H, W = d.shape
-    s = (2 * H, 2 * W)
-    R = np.fft.rfft2(b, s) * np.conj(np.fft.rfft2(a, s))
-    R /= np.abs(R) + 1e-9
-    r = np.fft.irfft2(R, s)
+    rows = np.arange(H)[:, None]
+    Mg = (tissue(thumb) & (rows >= start_t)).astype(np.float64)       # green tissue
+    Mp = np.broadcast_to(rows < start_t, d.shape).astype(np.float64)  # anything in the purple part
+    shape = (2 * H, 2 * W)
+    n = _xcorr(Mg, Mp, shape)
+    sq = _xcorr(Mg * d * d, Mp, shape) - 2 * _xcorr(Mg * d, Mp * d, shape) + _xcorr(Mg, Mp * d * d, shape)
+    tot = max(Mg.sum(), 1.0)
+    dy = np.where(np.arange(2 * H) < H, np.arange(2 * H), np.arange(2 * H) - 2 * H)[:, None]
+    dx = np.where(np.arange(2 * W) < W, np.arange(2 * W), np.arange(2 * W) - 2 * W)[None, :]
+    ok = (n >= min_overlap * tot) & (dy > 0)
+    mse = np.where(ok, np.maximum(sq, 0) / np.maximum(n, 1.0), np.inf)
     out = []
-    for _ in range(n_peaks):
-        i, j = np.unravel_index(int(np.argmax(r)), r.shape)
-        out.append((i if i < H else i - 2 * H, j if j < W else j - 2 * W, float(r[i, j])))
-        r[max(0, i - 3):i + 4, max(0, j - 3):j + 4] = 0
+    for _ in range(n_best):
+        i, j = np.unravel_index(int(np.argmin(mse)), mse.shape)
+        if not np.isfinite(mse[i, j]):
+            break
+        out.append((int(dy[i, 0]), int(dx[0, j]), float(np.sqrt(mse[i, j])), float(n[i, j] / tot)))
+        mse[max(0, i - 5):i + 6, max(0, j - 5):j + 6] = np.inf
     return out
 
 
@@ -215,9 +230,11 @@ def measure(read, W: int, H: int, thumb: np.ndarray, kf: float, start=None, box:
     """Candidate shifts, best first: [{"dy", "dx", "boxes", "ncc", "order", "mad", "mad_as_stored",
     "overview"}]."""
     cands = []
-    peaks = thumb_shift(thumb)
-    for py, px, st in peaks:
-        if st < 0.2 * peaks[0][2]:
+    start_t = int(round((start or 0) * kf))
+    best = search_shift(thumb, start_t)
+    margin = max(margin, int(2 / kf) + 8)                  # the overview's shift is good to about 1 / kf px
+    for py, px, rms, ov in best:
+        if rms > 2 * best[0][2]:
             continue
         bx = [b for b in refine(read, W, H, (int(round(py / kf)), int(round(px / kf))), thumb, kf,
                                 box=box, margin=margin, start=start) if b[4] > 0.5]
@@ -231,7 +248,8 @@ def measure(read, W: int, H: int, thumb: np.ndarray, kf: float, start=None, box:
                       "order": Counter(b[5] for b in same).most_common(1)[0][0],
                       "mad": float(np.median([b[6] for b in same])),
                       "mad_as_stored": float(np.median([b[7] for b in same])),
-                      "overview": (round(py / kf), round(px / kf), round(st, 3)), "where": [(b[0], b[1]) for b in same]})
+                      "overview": (round(py / kf), round(px / kf), round(rms, 1), round(ov, 2)),
+                      "where": [(b[0], b[1]) for b in same]})
     return sorted(cands, key=lambda c: (-c["boxes"], -c["ncc"]))
 
 
@@ -294,7 +312,37 @@ def cell_report(read, cx, cy, mx, my, steps, W: int, H: int) -> dict:
     return r
 
 
-# ── picture ──
+# ── pictures ──
+
+def compare_sheet(slide, read, where, dy: int, dx: int, order, out_png, S: int = 512, D: int = 2):
+    """Per green box: as stored | colours restored | the purple box the shift points to | |difference| x 3."""
+    from PIL import Image, ImageDraw
+    from bench.data.crop_sheet import _font
+    where = where[:3]
+    if not where:
+        return None
+    w = S // D
+    page = Image.new("RGB", (4 * (w + 10) + 10, len(where) * (w + 30) + 40), "white")
+    d = ImageDraw.Draw(page)
+    f, fs = _font(16), _font(13)
+    d.text((10, 6), f"{slide}: shift (dy, dx) = ({dy}, {dx}); green (x, y) = purple (x - {dx}, y - {dy})",
+           fill="black", font=f)
+    for r, (x, y) in enumerate(where):
+        g = read(x, y, S, S)
+        fixed = g[..., list(order)]
+        pu = read(x - dx, y - dy, S, S)
+        diff = np.clip(np.abs(fixed.astype(np.int16) - pu.astype(np.int16)) * 3, 0, 255).astype(np.uint8)
+        mad = float(np.abs(fixed.astype(np.int16) - pu.astype(np.int16)).mean())
+        Y = 34 + r * (w + 30)
+        for c, (title, img) in enumerate((("green, as stored", g), ("colours restored", fixed),
+                                          (f"purple at ({x - dx}, {y - dy})", pu),
+                                          (f"|difference| x3 (mean {mad:.1f})", 255 - diff))):
+            X = 10 + c * (w + 10)
+            d.text((X, Y), f"{title}" + (f"  ({x}, {y})" if c == 0 else ""), fill="black", font=fs)
+            page.paste(Image.fromarray(img.reshape(w, D, w, D, 3).mean(axis=(1, 3)).astype(np.uint8)), (X, Y + 18))
+    page.save(out_png)
+    return out_png
+
 
 def sheet(slide, read, W, H, cx, cy, mx, my, steps, start, dy, dx, out_png, S: int = 1024, D: int = 2):
     from PIL import Image, ImageDraw
@@ -403,6 +451,9 @@ def main(argv=None) -> int:
         if not cands:
             print("no shift found: no box of green tissue matched the purple tissue")
             return 1
+        print("overview, every shift compared (dy, dx, rms difference, share of green tissue compared): "
+              + "; ".join(f"({v[0] / kf:.0f}, {v[1] / kf:.0f}, {v[2]:.1f}, {v[3]:.2f})"
+                          for v in search_shift(thumb, int(round(start * kf)))))
         for i, c in enumerate(cands):
             print(f"{'shift' if i == 0 else 'other shift'} (dy, dx) = ({c['dy']}, {c['dx']}): green (x, y) = purple "
                   f"(x - {c['dx']}, y - {c['dy']}); {c['boxes']} boxes, NCC {c['ncc']:.3f}, colours: stored channels "
@@ -419,9 +470,11 @@ def main(argv=None) -> int:
         gdy, gdx = divmod(copy_shift(1), W)
         print(f"(for comparison, the 2**32-byte guess was ({gdy}, {gdx}) from row {gdy})")
 
+        cmp_png = compare_sheet(a.slide, read, best.get("where") or [(x, y) for x, y, _, ok in cov if ok],
+                                dy, dx, best["order"], out / f"{a.slide}_copy_offset.png")
         mx, my, steps = map_cells(cx, cy, start, dy, dx)
         rep = cell_report(read, cx, cy, mx, my, steps, W, H)
-        png = sheet(a.slide, read, W, H, cx, cy, mx, my, steps, start, dy, dx, out / f"{a.slide}_copy_offset.png")
+        png = sheet(a.slide, read, W, H, cx, cy, mx, my, steps, start, dy, dx, out / f"{a.slide}_copy_cells.png")
     print("cells:")
     for key, v in rep.items():
         print(f"  {key:45s} {v:.3f}" if isinstance(v, float) else f"  {key:45s} {v:,}")
@@ -432,7 +485,7 @@ def main(argv=None) -> int:
            "other_shifts": [[c["dy"], c["dx"], c["boxes"]] for c in cands[1:]], "cells": rep}
     jp = out / f"{a.slide}_copy_offset.json"
     jp.write_text(json.dumps(res, indent=1))
-    print(f"{png}\n{jp}")
+    print(f"{cmp_png}\n{png}\n{jp}")
     return 0
 
 
