@@ -112,6 +112,43 @@ def green_start(read, W: int, H: int, thumb: np.ndarray, kf: float, n_cols: int 
     return int(np.median([m[1] for m in meas])), meas
 
 
+def purple_end(thumb: np.ndarray, kf: float, before_t: int) -> int:
+    """Slide row of the last overview row above `before_t` (overview px) whose tissue is mostly purple: the copy
+    cannot start before it."""
+    g, t = green(thumb), tissue(thumb)
+    nt = t.sum(1)
+    pur = (nt >= 5) & ((t & ~g).sum(1) > 0.5 * np.maximum(nt, 1))
+    r = np.flatnonzero(pur[:max(0, before_t)])
+    return int(r[-1] / kf) if len(r) else 0
+
+
+def copy_start(read, W: int, H: int, lo: int, hi: int, dy: int, dx: int, order, tol: float = 20.0,
+               chunk: int = 256):
+    """(first row of the copy, first row with tissue that matches, [(row, share matched)]). A row matches when
+    its stored pixels, colours restored, equal the purple pixels the shift points to. Rows with under 50 tissue
+    pixels (glass in both) are undecided: the copy starts right after the last row that clearly does not match
+    (or at the first row the shift allows), which only moves glass rows from one side to the other."""
+    xa, xb = max(0, dx), min(W, W + dx)                     # columns whose source is inside the image
+    lo, hi = max(lo, dy), min(hi, H)
+    prof = []
+    for y0 in range(lo, hi, chunk):
+        h = min(chunk, hi - y0)
+        st = read(xa, y0, xb - xa, h)[..., list(order)].astype(np.int16)
+        src = read(xa - dx, y0 - dy, xb - xa, h)
+        t = tissue(st.astype(np.uint8)) | tissue(src)
+        ok = np.abs(st - src.astype(np.int16)).mean(axis=2) < tol
+        n = t.sum(1)
+        m = (ok & t).sum(1)
+        prof += [(y0 + i, float(m[i] / n[i]) if n[i] >= 50 else float("nan")) for i in range(h)]
+    det = [(y, v) for y, v in prof if v == v]
+    for i, (y, v) in enumerate(det):
+        nxt = [u for _, u in det[i:i + 20]]
+        if v >= 0.8 and np.mean(np.array(nxt) >= 0.8) >= 0.9:
+            before = [yy for yy, u in det[:i] if u < 0.5]
+            return (before[-1] + 1 if before else lo), y, prof
+    return None, None, prof
+
+
 # ── the shift ──
 
 def _xcorr(A: np.ndarray, B: np.ndarray, shape) -> np.ndarray:
@@ -461,6 +498,14 @@ def main(argv=None) -> int:
                   f"overview {c['overview']}")
         best = cands[0]
         dy, dx = best["dy"], best["dx"]
+        if a.start is None:
+            lo = min(purple_end(thumb, kf, int(start * kf)), start) - int(2 / kf)
+            s0, first_match, _ = copy_start(read, W, H, lo, start + int(2 / kf), dy, dx, best["order"])
+            if s0 is not None:
+                print(f"the copy starts at row {s0}: row {s0 - 1} does not match the purple at the shift"
+                      + (f", rows from {first_match} do" if first_match != s0 else ", rows from it do")
+                      + (" (rows in between: glass in both)" if first_match != s0 else ""))
+                start = s0
         cov = coverage(read, W, H, thumb, kf, start, (dy, dx))
         n_ok = sum(c[3] for c in cov)
         print(f"this shift explains {n_ok} of {len(cov)} green-tissue boxes spread over the green part")

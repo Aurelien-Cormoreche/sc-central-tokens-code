@@ -51,11 +51,13 @@ def test_every_shift_search_finds_the_copy_of_a_wrapped_buffer(slide):
     thumb = stored.reshape(H // g, g, W // g, g, 3).mean(axis=(1, 3)).astype(np.uint8)
     read = lambda x, y, w, h: stored[y:y + h, x:x + w]        # noqa: E731
     dy, dx = divmod(f.copy_shift(1, M), W)
-    start, _ = f.green_start(read, W, H, thumb, 1 / g)
-    assert abs(start - dy) <= 2
+    start, _ = f.green_start(read, W, H, thumb, 1 / g)          # first green tissue: after the copied glass
     best = f.measure(read, W, H, thumb, 1 / g, start, box=256, margin=32)[0]
     assert (best["dy"], best["dx"]) in {(dy, dx), (dy + 1, dx - W)}   # the main part or the wrapped strip
     assert best["order"] == (2, 0, 1) and best["mad"] < 3
+    lo = f.purple_end(thumb, 1 / g, int(start / g)) - 2 * g
+    s0, _, _ = f.copy_start(read, W, H, lo, start + 2 * g, best["dy"], best["dx"], best["order"])
+    assert s0 in (dy, dy + 1)                                   # exact, where the green tissue started later
 
 
 START, DY, DX = 900, 850, 60
@@ -100,6 +102,8 @@ def test_translation_is_measured(translated):
     best = f.measure(read, W, H, thumb, 1 / g, start)[0]
     assert (best["dy"], best["dx"]) == (DY, DX)
     assert best["order"] == (2, 0, 1) and best["mad"] < 2
+    s0, before, _ = f.copy_start(read, W, H, start - 40, start + 16, DY, DX, best["order"])
+    assert s0 == START
     cov = f.coverage(read, W, H, thumb, 1 / g, start, (DY, DX))
     assert len(cov) >= 10 and all(c[3] for c in cov)
     mx, my, steps = f.map_cells(np.array([100.0, 500.0]), np.array([1200.0, 300.0]), start, DY, DX)
