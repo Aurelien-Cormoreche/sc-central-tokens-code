@@ -52,6 +52,30 @@ def plan_regions(ox: np.ndarray, oy: np.ndarray, n: int, region_px: int) -> List
     return regions
 
 
+def read_crops(read, dx: np.ndarray, dy: np.ndarray, n: int, out: np.ndarray, error=Exception) -> int:
+    """Fill `out` (a region's array) at every crop (origins dx, dy in it, n x n) when the region cannot be read
+    as a whole: read the bounding box of the crops; when that fails (`error`), split the crops in two along the
+    box's longer side and read each half the same way. A corrupt tile inside the region but away from every crop
+    (the manifest keeps crops clear of unreadable blocks) is skipped this way; a crop that cannot be read itself
+    raises. `read(x, y, w, h)` reads in region coordinates. Returns the number of reads that failed."""
+    failed = 0
+    stack = [np.arange(len(dx))]
+    while stack:
+        idx = stack.pop()
+        x0, y0 = int(dx[idx].min()), int(dy[idx].min())
+        x1, y1 = int(dx[idx].max()) + n, int(dy[idx].max()) + n
+        try:
+            out[y0:y1, x0:x1] = read(x0, y0, x1 - x0, y1 - y0)
+        except error:
+            failed += 1
+            if len(idx) == 1 or (x1 - x0 == n and y1 - y0 == n):     # one crop (or crops at one origin)
+                raise
+            key = dx if x1 - x0 >= y1 - y0 else dy
+            o = idx[np.argsort(key[idx], kind="stable")]
+            stack += [o[: len(o) // 2], o[len(o) // 2:]]
+    return failed
+
+
 def emission_order(regions: List[Region]) -> np.ndarray:
     """Cell indices in the order the extractor emits them (= row order of the output h5)."""
     if not regions:

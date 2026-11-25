@@ -5,7 +5,8 @@ workers each own a WSI handle and read one region per item (resampled once if ne
 gathers the crops of a region by indexing, batches across regions, runs one bf16
 inference_mode forward per batch and computes both readouts; a writer thread appends float16
 rows to a temporary h5 that is renamed into place when complete. A failed read is retried once
-after reopening the slide; a second failure fails the slide (no placeholder crops).
+after reopening the slide; a region that still cannot be read whole (a corrupt tile between its crops) is
+read in parts around its crops; a crop that cannot be read fails the slide (no placeholder crops).
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from bench.config import BenchConfig
-from bench.data.reader import WSIReader
-from bench.data.regions import crop_origins, emission_order, plan_regions
+from bench.data.reader import ReadError, WSIReader
+from bench.data.regions import crop_origins, emission_order, plan_regions, read_crops
 from bench.extract import planner
 from bench.extract.store import H5Writer
 from bench.models.encoders import Encoder, build_encoder
@@ -36,8 +37,14 @@ job_done = planner.job_done
 # ── data loading ──
 
 class _Regions(Dataset):
-    def __init__(self, wsi_path: str, scale: float, boxes: List[tuple], pad_outside: bool):
+    """One item = one region's pixels. With `crops` ([(dx, dy)] per region and their size n_px), a region that
+    cannot be read as a whole (a corrupt tile inside it, away from every crop) is read in parts that cover every
+    crop (bench.data.regions.read_crops); the pixels outside the crops are then white and never used."""
+
+    def __init__(self, wsi_path: str, scale: float, boxes: List[tuple], pad_outside: bool,
+                 crops: Optional[List[tuple]] = None, n_px: int = 0):
         self.wsi_path, self.scale, self.boxes, self.pad = wsi_path, scale, boxes, pad_outside
+        self.crops, self.n_px = crops, n_px
         self._reader: Optional[WSIReader] = None
 
     def __len__(self) -> int:
@@ -47,7 +54,18 @@ class _Regions(Dataset):
         if self._reader is None:
             self._reader = WSIReader(self.wsi_path, self.scale)
         x0, y0, w, h = self.boxes[i]
-        arr = self._reader.read_ext(x0, y0, w, h, pad_value=255, allow_outside=self.pad)
+        try:
+            arr = self._reader.read_ext(x0, y0, w, h, pad_value=255, allow_outside=self.pad)
+        except ReadError:
+            if self.crops is None:
+                raise
+            LOG.warning("region (%d,%d,%d,%d) of %s cannot be read whole: reading it in parts around its %d crops",
+                        x0, y0, w, h, self.wsi_path, len(self.crops[i][0]))
+            arr = np.full((h, w, 3), 255, dtype=np.uint8)
+            rd = self._reader
+            n_bad = read_crops(lambda x, y, ww, hh: rd.read_ext(x0 + x, y0 + y, ww, hh), self.crops[i][0],
+                               self.crops[i][1], self.n_px, arr, ReadError)
+            LOG.warning("region (%d,%d,%d,%d): every crop read (%d partial reads failed)", x0, y0, w, h, n_bad)
         return i, torch.from_numpy(np.ascontiguousarray(arr))
 
 
@@ -130,7 +148,8 @@ def extract_slide(cfg: BenchConfig, enc: Encoder, job: dict, row: dict, max_cell
     writer = H5Writer(job["out"], len(df), dims, _meta_arrays(df, order), cfg.storage.dtype, tag=job["key"].replace("/", "_")[-60:])
     wt = _Writer(writer)
     try:
-        ds = _Regions(row["wsi_path"], float(row["scale"]), [(r.x0, r.y0, r.w, r.h) for r in regions], pad_outside=False)
+        ds = _Regions(row["wsi_path"], float(row["scale"]), [(r.x0, r.y0, r.w, r.h) for r in regions], pad_outside=False,
+                      crops=[(r.dx, r.dy) for r in regions], n_px=n_px)
         ar = torch.arange(n_px, device=enc.device)
         pend: List[torch.Tensor] = []
         n_pend, written = 0, 0
